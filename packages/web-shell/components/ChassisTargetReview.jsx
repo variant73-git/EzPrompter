@@ -156,7 +156,7 @@ function ContractLedger({ contract }) {
       </div>
 
       <div className="ref-target-guidance">
-        <div><span>Worth borrowing</span><p>{contract.guidance.worthBorrowing || 'No curator note recorded.'}</p></div>
+        <div><span>Context for model</span><p>{contract.guidance.worthBorrowing || 'No curator context recorded.'}</p></div>
         <div><span>Avoid</span><p>{contract.guidance.avoid || 'No exclusion note recorded.'}</p></div>
       </div>
 

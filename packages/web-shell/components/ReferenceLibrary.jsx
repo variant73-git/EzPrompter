@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, BookOpenCheck, LayoutGrid, ListChecks, Lock, Search, SlidersHorizontal, WandSparkles, X } from 'lucide-react';
+import { Archive, ArrowUpRight, BookOpenCheck, LayoutGrid, ListChecks, Lock, Search, SlidersHorizontal, WandSparkles, X } from 'lucide-react';
 import ReferencePlanner from './ReferencePlanner.jsx';
 import ReferenceReviewPanel from './ReferenceReviewPanel.jsx';
 
@@ -134,7 +134,7 @@ export default function ReferenceLibrary({
       source,
       category,
       sort,
-      view: ['review', 'curate'].includes(view) ? view : 'browse',
+      view: ['review', 'curate', 'bucket'].includes(view) ? view : 'browse',
       offset: append ? String(items.length) : '0',
       limit: '48',
     });
@@ -249,6 +249,7 @@ export default function ReferenceLibrary({
       <div className="ref-view-tabs" aria-label="Reference workspace">
         <button type="button" aria-pressed={view === 'browse'} onClick={() => setView('browse')}><LayoutGrid aria-hidden="true" />Browse</button>
         <button type="button" aria-pressed={view === 'review'} onClick={() => setView('review')}><BookOpenCheck aria-hidden="true" />Review queue<span>{reviewStats.reviewed}/{reviewStats.total}</span></button>
+        <button type="button" aria-pressed={view === 'bucket'} onClick={() => setView('bucket')}><Archive aria-hidden="true" />Bucket</button>
         {canManagePrivateReferences && <button type="button" aria-pressed={view === 'curate'} onClick={() => setView('curate')}><ListChecks aria-hidden="true" />Curate</button>}
         <button type="button" aria-pressed={view === 'plan'} onClick={() => setView('plan')}><WandSparkles aria-hidden="true" />Plan<span>chassis</span></button>
       </div>
@@ -282,13 +283,15 @@ export default function ReferenceLibrary({
       <div className="ref-source-row" aria-label="Filter by source">
         {sourceOptions.map((item) => (
           <button type="button" key={item.value} aria-pressed={source === item.value} onClick={() => setSource(item.value)}>
-            {SOURCE_LABELS[item.value] || item.value}<span aria-label={`${item.count} total, ${item.decided || 0} decided`}>{item.count}/{item.decided || 0}</span>
+            {SOURCE_LABELS[item.value] || item.value}{view === 'bucket'
+              ? <span aria-label={`${item.count} approved`}>{item.count}</span>
+              : <span aria-label={`${item.count} total, ${item.decided || 0} decided`}>{item.count}/{item.decided || 0}</span>}
           </button>
         ))}
       </div>
 
       <div className="ref-results-heading" aria-live="polite">
-        <p>{loading ? 'Updating references…' : view === 'review' ? `${reviewStats.reviewed} of ${reviewStats.total} candidates decided` : view === 'curate' ? `${total.toLocaleString()} references available for internal curation` : `${total.toLocaleString()} ${total === 1 ? 'reference' : 'references'}`}</p>
+        <p>{loading ? 'Updating references…' : view === 'review' ? `${reviewStats.reviewed} of ${reviewStats.total} candidates decided` : view === 'bucket' ? `${total.toLocaleString()} approved ${total === 1 ? 'reference' : 'references'} in the bucket` : view === 'curate' ? `${total.toLocaleString()} references available for internal curation` : `${total.toLocaleString()} ${total === 1 ? 'reference' : 'references'}`}</p>
         {view === 'review' && reviewCohort && <span className="ref-cohort-status"><Lock aria-hidden="true" />{reviewCohort.name} · {reviewCohort.status}</span>}
         {filtersActive && <button type="button" onClick={clearFilters}>Clear filters</button>}
       </div>
@@ -316,8 +319,8 @@ export default function ReferenceLibrary({
       ) : (
         <div className="ref-empty">
           <Search aria-hidden="true" />
-          <h2>No references match this view.</h2>
-          <p>Try a broader term or clear one of the filters.</p>
+          <h2>{view === 'bucket' ? 'No approved references match these filters.' : 'No references match this view.'}</h2>
+          <p>{view === 'bucket' ? 'Try broader filters or approve references from the review queue.' : 'Try a broader term or clear one of the filters.'}</p>
           <button type="button" onClick={clearFilters}>Clear filters</button>
         </div>
       )}

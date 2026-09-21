@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   REFERENCE_AUTHORITY,
+  CURATOR_GUIDANCE_POLICY,
   buildReferenceDirective,
   referencesMode,
 } from './reference-directive.js';
@@ -8,6 +9,7 @@ import {
 function plano(extra = {}) {
   return {
     schemaVersion: 3,
+    selectionMode: 'curated-keeps',
     rule: 'No fixed roles per site. One contextual scale owner; optional references contribute bounded section structures.',
     selectedReferences: [
       {
@@ -67,6 +69,28 @@ describe('buildReferenceDirective', () => {
     const texto = buildReferenceDirective(plano());
     expect(texto).toMatch(/PRESERVE[\s\S]*section topology and reading order/);
     expect(texto).toMatch(/REPLACE[\s\S]*brand identity/);
+  });
+
+  it('treats curator comments as semantic substitutions rather than literal deletions', () => {
+    const contextualComment = 'The page needs to feel welcoming to mixed-age family groups. The current opening is too fashion-led, so use other hero while keeping the immediate create-a-group action visible.';
+    const contextualPlan = plano();
+    contextualPlan.selectedReferences[0].guidance = { worthBorrowing: contextualComment, avoid: '' };
+    const texto = buildReferenceDirective(contextualPlan);
+    expect(texto).toContain(CURATOR_GUIDANCE_POLICY);
+    expect(texto).toContain(contextualComment);
+    expect(texto).toMatch(/use other hero[\s\S]*keep a hero/i);
+    expect(texto).toMatch(/Deleting the hero[\s\S]*does not satisfy/i);
+    expect(texto).toMatch(/supporting reference[\s\S]*bounded section/i);
+    expect(texto).toMatch(/complete comment[\s\S]*rationale[\s\S]*conditions/i);
+    expect(texto).toMatch(/Do not use exact-phrase, keyword, substring/i);
+    expect(texto).toMatch(/Context for model[\s\S]*semantically neutral/i);
+    expect(texto).toMatch(/Do not assume it means preserve/i);
+  });
+
+  it('does not apply curated-bank comments to a direct reference supplied by the user', () => {
+    const texto = buildReferenceDirective(plano({ selectionMode: 'direct-url' }));
+    expect(texto).not.toContain(CURATOR_GUIDANCE_POLICY);
+    expect(texto).not.toMatch(/apply this policy only when the user asked to build from a prompt/i);
   });
 
   it('passes the plan warnings through instead of swallowing them', () => {

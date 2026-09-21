@@ -112,6 +112,37 @@ describe('ReferenceLibrary', () => {
     expect(global.fetch.mock.calls[0][0]).toContain('source=codrops');
   });
 
+  it('opens the approved bucket and keeps its filters scoped to that view', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...initialPage,
+        items: [{ ...reference, preference: { decision: 'keep' } }],
+        facets: {
+          all: { count: 1, decided: 1 },
+          sources: [{ value: 'codrops', count: 1, decided: 1 }],
+          categories: [{ value: 'Studio', count: 1 }],
+        },
+      }),
+    });
+    render(<ReferenceLibrary initialPage={initialPage} />);
+
+    await user.click(screen.getByRole('button', { name: 'Bucket' }));
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(global.fetch.mock.calls.at(-1)[0]).toContain('view=bucket');
+    expect(await screen.findByText('1 approved reference in the bucket')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Codrops/ })).toHaveTextContent('1');
+
+    await user.click(screen.getByRole('button', { name: /Codrops/ }));
+    await waitFor(() => expect(global.fetch.mock.calls.at(-1)[0]).toContain('source=codrops'));
+    expect(global.fetch.mock.calls.at(-1)[0]).toContain('view=bucket');
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Category' }), 'Studio');
+    await waitFor(() => expect(global.fetch.mock.calls.at(-1)[0]).toContain('category=Studio'));
+    expect(global.fetch.mock.calls.at(-1)[0]).toContain('view=bucket');
+  });
+
   it('identifies private references in the internal review surface', () => {
     render(<ReferenceLibrary initialPage={{
       ...initialPage,

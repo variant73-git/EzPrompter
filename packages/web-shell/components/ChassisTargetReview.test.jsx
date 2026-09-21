@@ -85,6 +85,8 @@ describe('ChassisTargetReview', () => {
     expect(await screen.findByText('A strategy, not a questionnaire.')).toBeInTheDocument();
     expect(screen.getByText('Modernize the reading, not the product identity.')).toBeInTheDocument();
     expect(screen.getByText('The selected bank reference supplies the chassis only. Target truth supplies identity.')).toBeInTheDocument();
+    expect(screen.getByText('Context for model')).toBeInTheDocument();
+    expect(screen.getByText('Hero pacing.')).toBeInTheDocument();
     expect(screen.getByText('480 visible characters')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Evolve it/ })).toHaveAttribute('aria-pressed', 'true');
 

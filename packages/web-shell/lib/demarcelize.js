@@ -128,7 +128,12 @@ TRANSPLANT
 3. Map target media into the recorded semantic slots. Preserve whether a slot behaves as a background, transparent foreground object, inline image, video, canvas, or other layer.
 4. Preserve animation drivers and spatial choreography, but adapt timing and semantics to the replacement content and media.
 5. Respect the target's real content capacity. Condense only by prioritizing existing target material. Never invent testimonials, prices, metrics, customers, capabilities, or commercial proof.
-6. Remove every item named in curator Avoid guidance. Prefer every applicable item named in Worth borrowing guidance.
+6. First read the approved contract's reference source. Apply curated-bank comments such as “use other hero” only when the contract explicitly says the reference was selected implicitly for a site requested directly from a prompt. Never apply that bank-only policy to a direct reference supplied by the user.
+7. In that implicit curated-bank mode, read every curator comment in full and interpret it semantically in the context of the target and observed reference. “Context for model” is semantically neutral free-form guidance and does not mean preserve. “Avoid” identifies concerns but is not a literal delete command. A comment may contain rationale, conditions, exceptions, preservation requests, and multiple changes. Do not use exact-phrase, keyword, substring, or language-specific matching. Ground every interpreted instruction in the original comment.
+8. For each applicable instruction, reason about the referenced role or treatment, requested action, purpose that must survive, implementation that must change, rationale, and conditions. Unless a curator explicitly removes a section from the narrative, preserve the section's job and required content capacity while replacing the rejected treatment.
+9. A contextual comment containing “use other hero” or “usar outro hero” means keep a hero that performs the target's opening job, reject this reference's hero solution, and produce a materially different hero suited to the target's intent, truthful content, identity, media, responsive needs, and the comment's surrounding rationale. Deleting the hero, merely recolouring it, lightly restyling the same composition, or ignoring the rest of the comment does not comply.
+10. If the approved contract supplies a bounded supporting reference for a replacement section, use only that approved section evidence and preserve its provenance. Never claim to have searched or used a reference that was not supplied.
+11. Apply every relevant instruction from Context for model according to its meaning. Replace every treatment rejected by applicable curator guidance without removing unrelated structure.
 
 FAILURE CONDITIONS
 - Any visible reference brand, copy, palette, typography, or semantically specific imagery survives.
@@ -136,6 +141,7 @@ FAILURE CONDITIONS
 - Section order, grid authority, media roles, responsive logic, or primary motion spine changes without an ADAPT directive.
 - New factual or commercial claims are invented.
 - The output ignores an explicit exclusion.
+- A rejected section treatment survives through cosmetic changes, or the section is deleted even though only its treatment was rejected.
 
 OUTPUT
 One complete self-contained HTML5 document starting with <!DOCTYPE html>. No commentary, markdown fence, preface, or truncation.`;

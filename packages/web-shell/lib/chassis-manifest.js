@@ -97,7 +97,9 @@ export function buildChassisManifest({ reference = {}, captures = [], guidance =
     createdAt,
     reference: {
       id: reference.id || null, title: reference.title || reference.url,
-      url: reference.url, siteTypes: inferReferenceTypes(reference),
+      url: reference.url,
+      source: reference.source || null,
+      siteTypes: inferReferenceTypes(reference),
     },
     evidence: {
       mode: 'runtime-dom',
@@ -127,12 +129,10 @@ export function buildChassisManifest({ reference = {}, captures = [], guidance =
       preserve: [
         'section order and reading hierarchy', 'grid, alignment, proportions, and density rhythm',
         'text anchoring and media-slot roles', 'animation drivers and responsive composition logic',
-        ...(curatorGuidance.worthBorrowing ? [`Curator guidance: ${curatorGuidance.worthBorrowing}`] : []),
       ],
       adapt: ['copy length to measured text capacity', 'media crop to the recorded slot aspect ratio', 'motion timing to replacement media and content semantics'],
       replace: [
         'brand identity, typography, color tokens, copy, imagery, and decorative treatment',
-        ...(curatorGuidance.avoid ? [`Exclude from transfer: ${curatorGuidance.avoid}`] : []),
       ],
     },
   };

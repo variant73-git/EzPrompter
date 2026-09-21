@@ -89,13 +89,16 @@ function fallbackPage(options) {
   const catalog = getReferenceCatalog({ includePrivate: options.includePrivate });
   const rankById = new Map(catalog.map((item, index) => [item.id, index + 1]));
   const reviewIds = options.view === 'review' ? catalog.slice(0, 24).map((item) => item.id) : null;
-  const page = queryReferenceCatalog({ ...options, referenceIds: reviewIds, includePrivate: options.includePrivate });
+  const referenceIds = options.view === 'bucket' ? [] : reviewIds;
+  const page = queryReferenceCatalog({ ...options, referenceIds, includePrivate: options.includePrivate });
+  const bucketFallback = options.view === 'bucket';
   return {
     ...page,
     facets: {
       ...page.facets,
-      all: { count: catalog.length, decided: 0 },
-      sources: (page.facets?.sources || []).map((item) => ({ ...item, decided: 0 })),
+      all: { count: bucketFallback ? 0 : catalog.length, decided: 0 },
+      sources: bucketFallback ? [] : (page.facets?.sources || []).map((item) => ({ ...item, decided: 0 })),
+      categories: bucketFallback ? [] : page.facets?.categories || [],
     },
     items: page.items.map((item) => ({
       ...item,
@@ -124,7 +127,7 @@ export async function queryPersistentReferenceCatalog({
 } = {}) {
   const safeOffset = Math.max(0, Number(offset) || 0);
   const safeLimit = Math.min(96, Math.max(1, Number(limit) || 48));
-  const safeView = ['review', 'curate'].includes(view) ? view : 'browse';
+  const safeView = ['review', 'curate', 'bucket'].includes(view) ? view : 'browse';
   const safeSort = ['curated', 'newest', 'name'].includes(sort) ? sort : 'curated';
   const trimmedQuery = String(query || '').trim();
   if (!process.env.DATABASE_URL) return fallbackPage({ query, source, category, sort: safeSort, view: safeView, includePrivate, offset: safeOffset, limit: safeLimit });
@@ -179,6 +182,7 @@ export async function queryPersistentReferenceCatalog({
         WHERE site.lifecycle_state <> 'removed'
           AND (${Boolean(includePrivate)} OR site.is_private = FALSE)
           AND (${safeView} <> 'review' OR cohort_member.reference_site_id IS NOT NULL)
+          AND (${safeView} <> 'bucket' OR preference.decision = 'keep')
           AND (${source} = 'all' OR EXISTS (
             SELECT 1 FROM reference_appearances source_appearance
             WHERE source_appearance.reference_site_id = site.id
@@ -216,13 +220,19 @@ export async function queryPersistentReferenceCatalog({
         ON preference.reference_site_id = site.id AND preference.user_id = ${userId}
       WHERE site.lifecycle_state <> 'removed'
         AND (${Boolean(includePrivate)} OR site.is_private = FALSE)
+        AND (${safeView} <> 'bucket' OR preference.decision = 'keep')
       GROUP BY source_id
       ORDER BY count DESC, value ASC
     `,
     sql`
       SELECT category AS value, COUNT(*)::int AS count
-      FROM reference_sites, LATERAL unnest(categories) AS category
-      WHERE lifecycle_state <> 'removed' AND (${Boolean(includePrivate)} OR is_private = FALSE)
+      FROM reference_sites site
+      LEFT JOIN reference_preferences preference
+        ON preference.reference_site_id = site.id AND preference.user_id = ${userId}
+      CROSS JOIN LATERAL unnest(site.categories) AS category
+      WHERE site.lifecycle_state <> 'removed'
+        AND (${Boolean(includePrivate)} OR site.is_private = FALSE)
+        AND (${safeView} <> 'bucket' OR preference.decision = 'keep')
       GROUP BY category
       ORDER BY count DESC, value ASC
     `,
@@ -235,6 +245,7 @@ export async function queryPersistentReferenceCatalog({
         ON preference.reference_site_id = site.id AND preference.user_id = ${userId}
       WHERE site.lifecycle_state <> 'removed'
         AND (${Boolean(includePrivate)} OR site.is_private = FALSE)
+        AND (${safeView} <> 'bucket' OR preference.decision = 'keep')
     `,
     sql`
       SELECT

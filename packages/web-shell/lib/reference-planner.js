@@ -54,19 +54,17 @@ function guidanceFor(candidate) {
   };
 }
 
-function compositionFor(guidance) {
+function compositionFor() {
   return {
     preserve: [
       'section topology and reading order',
       'grid, alignment, proportions, and density rhythm',
       'text anchoring and media-slot roles',
       'animation and responsive composition logic',
-      ...(guidance.worthBorrowing ? [`Curator guidance: ${guidance.worthBorrowing}`] : []),
     ],
     adapt: ['copy length to the chassis capacity', 'motion semantics to the new content and audience'],
     replace: [
       'brand identity, typography, colors, copy, imagery, and decorative treatment',
-      ...(guidance.avoid ? [`Exclude from transfer: ${guidance.avoid}`] : []),
     ],
   };
 }
@@ -87,7 +85,7 @@ function asPreviewOption(scored) {
     guidance,
     source: scored.candidate.manual ? 'direct-url' : 'curated-keep',
     reasons: scored.reasons,
-    composition: compositionFor(guidance),
+    composition: compositionFor(),
   };
 }
 

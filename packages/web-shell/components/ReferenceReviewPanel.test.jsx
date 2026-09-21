@@ -17,7 +17,7 @@ describe('ReferenceReviewPanel', () => {
     render(<ReferenceReviewPanel reference={biograph} />);
     expect(screen.getByRole('switch', { name: 'Use Biograph' })).not.toBeChecked();
     expect(screen.getByRole('button', { name: 'landing-page' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByLabelText('Worth borrowing')).toBeInTheDocument();
+    expect(screen.getByLabelText('Context for model')).toBeInTheDocument();
     expect(screen.getByLabelText('Avoid')).toBeInTheDocument();
     expect(screen.queryByText('Taste score')).not.toBeInTheDocument();
     expect(screen.queryByText('Style · choose up to 2')).not.toBeInTheDocument();
@@ -50,7 +50,7 @@ describe('ReferenceReviewPanel', () => {
     expect(included).toBeDisabled();
     expect(included).toHaveAttribute('data-state', 'keep');
 
-    await user.type(screen.getByLabelText('Worth borrowing'), 'Strong editorial rhythm');
+    await user.type(screen.getByLabelText('Context for model'), 'Strong editorial rhythm');
     expect(screen.getByRole('button', { name: 'Save review' })).toBeEnabled();
   });
 

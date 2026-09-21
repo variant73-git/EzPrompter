@@ -27,8 +27,12 @@ describe('chassis manifest', () => {
     expect(validateChassisManifest(manifest)).toEqual({ ok: true, issues: [] });
     expect(manifest.reference.siteTypes).toEqual(['landing-page']);
     expect(manifest.responsive).toMatchObject({ compared: true, score: 100 });
-    expect(manifest.transplant.preserve).toContain('Curator guidance: Keep the anchored headline.');
-    expect(manifest.transplant.replace).toContain('Exclude from transfer: Do not use the WebGL orb.');
+    expect(manifest.guidance).toEqual({
+      worthBorrowing: 'Keep the anchored headline.',
+      avoid: 'Do not use the WebGL orb.',
+    });
+    expect(manifest.transplant.preserve).not.toContain('Curator guidance: Keep the anchored headline.');
+    expect(manifest.transplant.replace).not.toContain('Exclude from transfer: Do not use the WebGL orb.');
     expect(manifest.hash).toBe(hashChassisManifest(manifest));
   });
 

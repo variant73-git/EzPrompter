@@ -49,8 +49,8 @@ describe('reference single-chassis planner v5', () => {
       id: 'chassis', influence: 'chassis', scoreBreakdown: { typeFit: 67 },
       guidance: { worthBorrowing: 'Text composition and media placement.', avoid: 'The WebGL hero effect.' },
     });
-    expect(result.preview.options[0].composition.preserve).toContain('Curator guidance: Text composition and media placement.');
-    expect(result.preview.options[0].composition.replace).toContain('Exclude from transfer: The WebGL hero effect.');
+    expect(result.preview.options[0].composition.preserve).not.toContain('Curator guidance: Text composition and media placement.');
+    expect(result.preview.options[0].composition.replace).not.toContain('Exclude from transfer: The WebGL hero effect.');
   });
 
   it('does not use taste, style, or motion to rank matching chassis', () => {

@@ -20,6 +20,34 @@ describe('chassis transplant contract', () => {
     expect(renderTransplantInstructions(blueprint)).toContain('Target brand: Flux');
   });
 
+  it('keeps raw curator comments in the locked instructions and preserves a rejected section role', () => {
+    const contextualComment = 'Keep the friendly tone, but this opening overemphasizes fashion photography; use other hero that makes the group exchange immediately understandable.';
+    const guidedManifest = buildChassisManifest({
+      reference: { title: 'Old Brand', url: 'https://old.example', source: 'curated-keep' },
+      captures: [capture],
+      guidance: { avoid: contextualComment },
+    });
+    const blueprint = createTransplantBlueprint({ manifest: guidedManifest, target: { brand: 'Flux' } });
+    const instructions = renderTransplantInstructions(blueprint);
+    expect(blueprint.guidance.avoid).toBe(contextualComment);
+    expect(instructions).toContain(`Avoid or replace: ${contextualComment}`);
+    expect(instructions).toMatch(/Preserve a section's job unless removal is explicit/i);
+    expect(instructions).toMatch(/contextual comment[\s\S]*keep the opening role[\s\S]*materially different/i);
+    expect(instructions).toMatch(/Do not search for an exact phrase or keyword/i);
+  });
+
+  it('does not apply the bank-only hero substitution rule to a direct reference', () => {
+    const directManifest = buildChassisManifest({
+      reference: { title: 'Chosen by user', url: 'https://direct.example', source: 'direct-url' },
+      captures: [capture],
+      guidance: { avoid: 'use other hero' },
+    });
+    const instructions = renderTransplantInstructions(createTransplantBlueprint({ manifest: directManifest, target: { brand: 'Flux' } }));
+    expect(instructions).toMatch(/not an implicitly selected curated-bank reference/i);
+    expect(instructions).toMatch(/follow the direct reference and explicit user instructions/i);
+    expect(instructions).not.toMatch(/keep the opening role/i);
+  });
+
   it('audits structure, identity replacement, media coverage, and responsive evidence', () => {
     const blueprint = createTransplantBlueprint({ manifest, target: { brand: 'Flux' } });
     expect(auditChassisTransfer({

@@ -22,6 +22,21 @@ export const REFERENCE_AUTHORITY = [
   '- Borrow the reference\'s proportions; never borrow its brand. Identity, copy and imagery always come from the graph.',
 ].join('\n');
 
+export const CURATOR_GUIDANCE_POLICY = [
+  'SCOPE: apply this policy only when the user asked to build from a prompt and the product selected references implicitly from the curated bank. Do not apply it to a direct reference supplied by the user.',
+  'CURATOR COMMENTS ARE SEMANTIC DESIGN INSTRUCTIONS, NOT A LITERAL DELETE LIST:',
+  '- Read the complete comment before acting. A comment may combine rationale, conditions, exceptions, things to preserve, and several requested changes in natural language.',
+  '- “Context for model” is semantically neutral free-form guidance. It may explain what works, what should change, why, conditions, exceptions, or several directions at once. Do not assume it means preserve.',
+  '- “Avoid” is an organization hint for concerns, not a literal delete command. The semantic meaning of each clause decides whether to preserve, adapt, replace, or remove something.',
+  '- Infer each instruction from the meaning of its clause in the context of the target brief, target evidence, and observed reference composition. Do not use exact-phrase, keyword, substring, or language-specific matching.',
+  '- For each instruction, reason about: the referenced page role or treatment; the requested action; what purpose must survive; what implementation must change; why; and under which conditions. Keep this interpretation grounded in the original comment.',
+  '- Unless the comment explicitly removes a section from the product narrative, preserve the section\'s job and required content capacity while replacing the rejected visual or structural treatment.',
+  '- Therefore a contextual sentence that includes “use other hero” or “usar outro hero” means: keep a hero that performs the target\'s opening job, reject this reference\'s hero solution, and choose a materially different hero suited to the target. The surrounding explanation remains relevant to choosing that replacement.',
+  '- Deleting the hero, merely recolouring it, lightly restyling the same composition, or ignoring the rest of the comment does not satisfy that instruction.',
+  '- When an approved supporting reference is available, use only the bounded section named in its evidence and record that provenance. A supporting reference never becomes a second page-wide chassis.',
+  '- When no supporting reference is supplied, create a different solution from the target\'s intent, truthful content, identity, media, and responsive needs. Never pretend that an unsupplied bank reference was consulted.',
+].join('\n');
+
 /** Está o banco valendo nesta execução? Serve para rotular uma comparação. */
 export function referencesMode(env = process.env) {
   return String(env.UNCRAFT_REFERENCES || '').trim().toLowerCase() === 'off' ? 'off' : 'on';
@@ -58,6 +73,8 @@ export function buildReferenceDirective(plan, opts = {}) {
       `   governs: ${referencia.owns}`,
     ];
     if (referencia.reasons?.length) linhas.push(`   chosen because: ${referencia.reasons.join('; ')}`);
+    if (referencia.guidance?.worthBorrowing) linhas.push(`   curator comment — context for model: ${referencia.guidance.worthBorrowing}`);
+    if (referencia.guidance?.avoid) linhas.push(`   curator comment — concerns or changes: ${referencia.guidance.avoid}`);
     const medida = evidencia[referencia.id];
     if (medida) {
       if (medida.sections?.length) linhas.push(`   measured sections: ${medida.sections.join(', ')}`);
@@ -74,6 +91,7 @@ export function buildReferenceDirective(plan, opts = {}) {
   partes.push(bloco('PRESERVE from the reference', plan.composition?.preserve));
   partes.push(bloco('ADAPT from the supporting references', plan.composition?.adapt));
   partes.push(bloco('REPLACE with the graph\'s own material', plan.composition?.replace));
+  if (plan.selectionMode !== 'direct-url') partes.push(CURATOR_GUIDANCE_POLICY);
   partes.push(REFERENCE_AUTHORITY);
   partes.push(bloco('WARNINGS from the planner', plan.warnings));
 

@@ -64,4 +64,19 @@ describe('persistent reference row mapping', () => {
       else process.env.DATABASE_URL = previousDatabaseUrl;
     }
   });
+
+  it('keeps the bucket empty when persistence cannot prove an approved decision', async () => {
+    const previousDatabaseUrl = process.env.DATABASE_URL;
+    delete process.env.DATABASE_URL;
+    try {
+      const page = await queryPersistentReferenceCatalog({ userId: 1, view: 'bucket', limit: 48 });
+      expect(page.persistence).toBe('seed');
+      expect(page.total).toBe(0);
+      expect(page.items).toEqual([]);
+      expect(page.facets).toMatchObject({ all: { count: 0 }, sources: [], categories: [] });
+    } finally {
+      if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previousDatabaseUrl;
+    }
+  });
 });

@@ -182,15 +182,15 @@ export default function ReferenceReviewPanel({ reference, canManagePrivateRefere
       <TagGroup label="Product / site type" values={REFERENCE_TAGS.product} selected={draft.businessTags} onChange={(businessTags) => setDraft((current) => ({ ...current, businessTags }))} />
 
       <label className="ref-review-notes">
-        <span>Worth borrowing</span>
-        <textarea value={draft.worthBorrowing} maxLength={1800} onChange={(event) => setDraft((current) => ({ ...current, worthBorrowing: event.target.value }))} placeholder="Text composition, section order, media placement, animation logic…" />
+        <span>Context for model</span>
+        <textarea value={draft.worthBorrowing} maxLength={1800} onChange={(event) => setDraft((current) => ({ ...current, worthBorrowing: event.target.value }))} placeholder="Explain what works, what should change, why, conditions, exceptions, or any other direction…" />
       </label>
 
       <label className="ref-review-notes">
         <span>Avoid</span>
         <textarea value={draft.avoid} maxLength={1800} onChange={(event) => setDraft((current) => ({ ...current, avoid: event.target.value }))} placeholder="A specific header, effect, section, transition…" />
       </label>
-      <p className="ref-guidance-note">Used after this chassis is selected, never to rank it.</p>
+      <p className="ref-guidance-note">Read as complete context after this reference is selected. It never affects ranking.</p>
 
       <div className="ref-review-actions">
         <button

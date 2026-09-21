@@ -35,6 +35,10 @@ export function createTransplantBlueprint({ manifest, target = {} } = {}) {
       mediaSource: target.mediaSource || 'replacement-assets',
     },
     sections,
+    guidance: {
+      worthBorrowing: String(manifest.guidance?.worthBorrowing || '').trim(),
+      avoid: String(manifest.guidance?.avoid || '').trim(),
+    },
     directives: manifest.transplant,
     acceptance: {
       required: [
@@ -51,6 +55,7 @@ export function createTransplantBlueprint({ manifest, target = {} } = {}) {
 
 export function renderTransplantInstructions(blueprint) {
   if (!blueprint?.manifestHash || !blueprint?.sections?.length) throw new Error('invalid_transplant_blueprint');
+  const implicitCuratedReference = blueprint.reference?.source === 'curated-keep';
   const lines = [
     '# Chassis Transfer Contract',
     `Reference: ${blueprint.reference.url}`,
@@ -65,6 +70,19 @@ export function renderTransplantInstructions(blueprint) {
     '',
     '## Replace',
     ...blueprint.directives.replace.map((item) => `- ${item}`),
+    '',
+    '## Curator comments',
+    `- Context for model: ${blueprint.guidance?.worthBorrowing || 'None recorded.'}`,
+    `- Avoid or replace: ${blueprint.guidance?.avoid || 'None recorded.'}`,
+    ...(implicitCuratedReference ? [
+      '- This reference was selected implicitly from the curated bank for a prompt-built site. Interpret its comments semantically.',
+      '- “Context for model” is semantically neutral; it does not mean preserve. “Avoid or replace” identifies concerns but is not a literal delete command. Infer the action from each clause\'s meaning.',
+      '- Read each complete comment and infer its clauses, rationale, conditions, preservation needs, and requested changes. Do not search for an exact phrase or keyword.',
+      '- Preserve a section\'s job unless removal is explicit; replace the rejected solution rather than deleting the section.',
+      '- A contextual comment containing “use other hero” or “usar outro hero” means keep the opening role but use a materially different, target-appropriate hero, with the surrounding rationale guiding the replacement. Recolouring or lightly restyling the same hero is not a replacement.',
+    ] : [
+      '- This is not an implicitly selected curated-bank reference. Do not apply the bank-only “use other hero” policy; follow the direct reference and explicit user instructions.',
+    ]),
     '',
     '## Section ledger',
     ...blueprint.sections.map((section) => `- ${section.order}. ${section.role} (${section.chassisSectionId}): ${section.mediaSlots.length} media slot(s), ${section.motionTracks.length} motion track(s)`),
