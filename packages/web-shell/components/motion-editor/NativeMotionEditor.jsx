@@ -1009,6 +1009,15 @@ const TIMELINE_MAX_HEIGHT = 332;
 const LABELS_MIN_WIDTH = 110;
 const LABELS_MAX_WIDTH = 340;
 const LABELS_DEFAULT_WIDTH = 152;
+export function stripDragShouldApply(draggingStrip, event) {
+  if (!draggingStrip) return false;
+  if (event.pointerId !== draggingStrip.pointerId) return false;
+  // O botao primario (bit 1) tem que estar segurado: um pointermove no HOVER
+  // (buttons sem o bit 1) NAO e arrasto e nunca move a strip (bug 2026-09-22).
+  if ((event.buttons & 1) === 0) return false;
+  return true;
+}
+
 // Breathing room before strips start (matches the transparent border-left on
 // .rowTrack) — every x computation must account for it.
 const TRACK_INSET = 5;
@@ -1374,6 +1383,7 @@ export function TimelinePanel({
   // a time strip is a trigger point here; its extent is edited as duration.
   function beginStripDrag(event, row, edge, kind = 'scroll') {
     if (event.button !== 0) return;
+    if (draggingStrip) return; // uma sessao por vez — rejeita novo arrasto sobre um ativo (Astra)
     const canvas = event.currentTarget.closest(`.${styles.rowTrack}`);
     if (!canvas) return;
     event.preventDefault();
@@ -1417,8 +1427,22 @@ export function TimelinePanel({
   // último evento e aplica-se UM por quadro.
   const quadroDoArraste = useRef(null);
   const eventoPendente = useRef(null);
+  // Encerra a sessao por QUALQUER caminho (pointerup, cancel, perda de captura,
+  // hover-sem-botao): cancela o quadro pendente, limpa o buffer, solta a
+  // captura com seguranca e zera o estado. Idempotente (Astra 2026-09-22).
+  function endStripSession(event) {
+    if (quadroDoArraste.current) { cancelAnimationFrame(quadroDoArraste.current); quadroDoArraste.current = null; }
+    eventoPendente.current = null;
+    try { event?.currentTarget?.releasePointerCapture?.(event.pointerId); } catch { /* ja solto */ }
+    setDraggingStrip(null);
+  }
   function updateStripDrag(eventoBruto, row) {
-    const evento = { clientX: eventoBruto.clientX, clientY: eventoBruto.clientY, pointerId: eventoBruto.pointerId };
+    // Valida o evento CRU (a copia perderia `buttons`). Sem o botao primario
+    // segurado e HOVER, nao arrasto — nunca move a strip. Sessao ativa sem
+    // botao = orfa (limpeza perdida): encerra.
+    if (!draggingStrip || eventoBruto.pointerId !== draggingStrip.pointerId) return;
+    if ((eventoBruto.buttons & 1) === 0) { endStripSession(eventoBruto); return; }
+    const evento = { clientX: eventoBruto.clientX, clientY: eventoBruto.clientY, pointerId: eventoBruto.pointerId, buttons: eventoBruto.buttons };
     // O PRIMEIRO movimento do quadro é aplicado na hora — resposta instantânea.
     // Os seguintes só guardam o último e um único quadro os aplica, para não
     // renderizar várias vezes entre dois desenhos da tela.
@@ -1438,7 +1462,7 @@ export function TimelinePanel({
   useEffect(() => () => { if (quadroDoArraste.current) cancelAnimationFrame(quadroDoArraste.current); }, []);
 
   function aplicaArrasteDeStrip(event, row) {
-    if (!draggingStrip || event.pointerId !== draggingStrip.pointerId) return;
+    if (!stripDragShouldApply(draggingStrip, event)) return;
     if (draggingStrip.kind === 'duration') {
       // Delta px → delta ms: stretching right = longer = slower.
       const durationMs = Math.max(50, Math.round(draggingStrip.initialDurationMs + (event.clientX - draggingStrip.startX) / (TIME_PX_PER_MS * zoom)));
@@ -1457,9 +1481,8 @@ export function TimelinePanel({
 
   function finishStripDrag(event, row) {
     if (!draggingStrip || event.pointerId !== draggingStrip.pointerId) return;
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
     const finished = draggingStrip;
-    setDraggingStrip(null);
+    endStripSession(event);
     if (!finished.moved) return;
     if (finished.kind === 'duration') {
       onStripEdit?.(row, { durationMs: finished.durationMs });
@@ -2111,7 +2134,8 @@ export function TimelinePanel({
                           onPointerDown={(event) => beginStripDrag(event, row, edge)}
                           onPointerMove={(event) => updateStripDrag(event, row)}
                           onPointerUp={(event) => finishStripDrag(event, row)}
-                          onPointerCancel={() => setDraggingStrip(null)}
+                          onPointerCancel={(event) => endStripSession(event)}
+                          onLostPointerCapture={(event) => endStripSession(event)}
                         />
                       ))}
                       {durationEditable && (
@@ -2125,7 +2149,8 @@ export function TimelinePanel({
                           onPointerDown={(event) => beginStripDrag(event, row, 'end', 'duration')}
                           onPointerMove={(event) => updateStripDrag(event, row)}
                           onPointerUp={(event) => finishStripDrag(event, row)}
-                          onPointerCancel={() => setDraggingStrip(null)}
+                          onPointerCancel={(event) => endStripSession(event)}
+                          onLostPointerCapture={(event) => endStripSession(event)}
                         />
                       )}
                     </div>

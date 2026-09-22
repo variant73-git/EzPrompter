@@ -6,7 +6,7 @@ import {
   MOTION_EDITOR_PROTOCOL_V2,
   SUPPORTED_MOTION_EDITOR_PROTOCOLS,
 } from '../../lib/motion-editor/protocol.js';
-import NativeMotionEditor, { MotionPanel, TimelinePanel } from './NativeMotionEditor.jsx';
+import NativeMotionEditor, { MotionPanel, TimelinePanel, stripDragShouldApply } from './NativeMotionEditor.jsx';
 
 const motion = {
   id: 'waapi-fade',
@@ -467,7 +467,7 @@ describe('timeline canvas layout', () => {
     // 1500ms to the active clip's own 1000ms.
     const handle = screen.getByRole('button', { name: 'Adjust duration' });
     fireEvent.pointerDown(handle, { pointerId: 8, button: 0, clientX: 300 });
-    fireEvent.pointerMove(handle, { pointerId: 8, clientX: 390 });
+    fireEvent.pointerMove(handle, { pointerId: 8, clientX: 390, buttons: 1 });
     fireEvent.pointerUp(handle, { pointerId: 8, clientX: 390 });
     expect(onStripEdit).toHaveBeenCalledOnce();
     const [row, next] = onStripEdit.mock.calls[0];
@@ -500,7 +500,7 @@ describe('timeline canvas layout', () => {
     // End edge sits at 900/4200 of the 1000px canvas (~214px). Drag +100px = +420 scroll px.
     const endHandle = screen.getByRole('button', { name: 'Adjust scroll end' });
     fireEvent.pointerDown(endHandle, { pointerId: 7, button: 0, clientX: 214 });
-    fireEvent.pointerMove(endHandle, { pointerId: 7, clientX: 314 });
+    fireEvent.pointerMove(endHandle, { pointerId: 7, clientX: 314, buttons: 1 });
     fireEvent.pointerUp(endHandle, { pointerId: 7, clientX: 314 });
 
     expect(onStripEdit).toHaveBeenCalledOnce();
@@ -509,6 +509,36 @@ describe('timeline canvas layout', () => {
     expect(next.end).toBeGreaterThan(1290);
     expect(next.end).toBeLessThan(1350);
     expect(next.start).toBeUndefined();
+    rect.mockRestore();
+  });
+
+  // Bug 2026-09-22 (Astra): apos manusear uma strip, passar o mouse por cima
+  // (HOVER, sem botao) movia a strip sem intencao — a sessao de arrasto ficava
+  // orfa e todo pointermove a reaplicava. Um move sem o botao primario segurado
+  // encerra a sessao e NAO move.
+  it('um hover (buttons:0) apos o botao soltar NAO continua movendo a strip', () => {
+    const onStripEdit = vi.fn();
+    const page = { scrollY: 0, viewportHeight: 800, scrollHeight: 5000, maxScroll: 4200 };
+    const scrollRows = [{ ...viewportRows[0], scrollStart: 400, scrollEnd: 900 }];
+    const scrollMotion = { ...motion, driver: { type: 'scroll' }, scroll: { start: '400', end: '900', scrub: true } };
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 200, width: 1000, height: 200, toJSON: () => ({}),
+    });
+    render(
+      <TimelineHarness rows={scrollRows} selectedElementId="el-a" onSelectElement={vi.fn()}
+        page={page} motion={scrollMotion} onStripEdit={onStripEdit} />,
+    );
+    const endHandle = screen.getByRole('button', { name: 'Adjust scroll end' });
+    fireEvent.pointerDown(endHandle, { pointerId: 7, button: 0, clientX: 214 });
+    fireEvent.pointerMove(endHandle, { pointerId: 7, clientX: 314, buttons: 1 }); // arrasto real
+    // botao soltou sem pointerup (captura perdida): um HOVER chega bem longe
+    fireEvent.pointerMove(endHandle, { pointerId: 7, clientX: 900, buttons: 0 });
+    fireEvent.pointerUp(endHandle, { pointerId: 7, clientX: 900 });
+    // A sessao foi encerrada pelo hover-sem-botao; o pointerUp nao acha arrasto,
+    // entao NADA e comitado com a posicao do hover (900). Sem o fix, o hover
+    // teria movido a strip para ~900 e o up comitaria esse valor.
+    const comHover = onStripEdit.mock.calls.some(([, next]) => (next.end || 0) > 3000);
+    expect(comHover).toBe(false);
     rect.mockRestore();
   });
 });
@@ -932,5 +962,23 @@ describe('motion timeline keyframes', () => {
       { motionId: 'waapi-fade', property: 'opacity', offset: 0 },
       'ease-in-out',
     );
+  });
+});
+
+describe('stripDragShouldApply (hover não move a strip — bug 2026-09-22, Astra)', () => {
+  it('só aplica quando há arrasto ativo, mesmo ponteiro E botão primário segurado', () => {
+    const drag = { pointerId: 1 };
+    // arrasto real: botão esquerdo segurado (buttons bit 1)
+    expect(stripDragShouldApply(drag, { pointerId: 1, buttons: 1 })).toBe(true);
+    // HOVER: sem botão → nunca move (o bug era mover no hover pós-arrasto)
+    expect(stripDragShouldApply(drag, { pointerId: 1, buttons: 0 })).toBe(false);
+    // sem sessão de arrasto → nunca move
+    expect(stripDragShouldApply(null, { pointerId: 1, buttons: 1 })).toBe(false);
+    // ponteiro diferente → não move a sessão ativa
+    expect(stripDragShouldApply(drag, { pointerId: 2, buttons: 1 })).toBe(false);
+    // soltar o esquerdo com o direito ainda pressionado (buttons=2) = NÃO é arrasto primário
+    expect(stripDragShouldApply(drag, { pointerId: 1, buttons: 2 })).toBe(false);
+    // esquerdo + direito juntos (buttons=3, bit 1 setado) = ainda arrastando
+    expect(stripDragShouldApply(drag, { pointerId: 1, buttons: 3 })).toBe(true);
   });
 });
