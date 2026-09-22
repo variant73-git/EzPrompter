@@ -138,14 +138,24 @@ describe('native clone gateway', () => {
 
 // ── O editor completo dentro do clone ───────────────────────────────────────
 describe('editor completo no clone', () => {
-  // ⭐ LIGADO POR PADRAO (decisao de produto do Adilson, 2026-08-25): o editor
-  // completo E' o produto do clone — fontes, texto, imagem, fundo, tudo com
-  // persistencia e undo honestos, provados. Desligar vira opt-out ('0'/'off').
-  it('fica LIGADO por padrao, com opt-out explicito', () => {
-    expect(fullEditorEnabled({})).toBe(true);
+  // DESLIGADO por padrao (Adilson, 2026-09-22): o clone e' o SITE, nao a
+  // ferramenta de edicao. Toda edicao vive nos paineis DE FORA; o editor-core
+  // dentro do iframe era "editor dentro de editor" e foi retirado do padrao.
+  // Opt-in explicito ('1'/'on'/'true') so' para depurar.
+  it('fica DESLIGADO por padrao, com opt-in explicito', () => {
+    expect(fullEditorEnabled({})).toBe(false);
+    expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: '1' })).toBe(true);
+    expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: 'on' })).toBe(true);
     expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: '0' })).toBe(false);
     expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: 'off' })).toBe(false);
-    expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: '1' })).toBe(true);
+  });
+
+  it('o padrao NAO injeta o editor-core no clone (so a ponte)', () => {
+    const html = injectRuntimeBridge('<html><body></body></html>');
+    expect(html).not.toContain('data-uncraft-full-editor');
+    expect(html).not.toContain('/editor-core/');
+    // a ponte continua, sempre — e' o que os paineis de fora usam para editar
+    expect((html.match(/data-uncraft-runtime-bridge/g) || []).length).toBe(1);
   });
 
   it('entra por caminho ABSOLUTO na origem do runtime', () => {
@@ -204,14 +214,15 @@ describe('o clone continua se mexendo enquanto se edita', () => {
   // A extensao e o editor legado do canvas FORCAM false — eles sao os ultimos a
   // escrever antes do editor subir. Sem isso, um site qualquer da internet
   // poderia declarar a chave e escapar do congelamento (Sol r3).
-  it('so o gateway do clone liga o preservador — e o opt-out desliga junto', () => {
-    // padrao = editor ligado = preservador junto
-    expect(injectRuntimeBridge('<html><body></body></html>')).toContain('preserveMotion');
-    // opt-out do editor tira o preservador tambem
+  it('preserveMotion so existe com o editor-core opt-in, nao no padrao', () => {
+    // padrao = SEM editor-core = SEM preservador (nao ha' congelador do editor
+    // para desligar; o clone corre e os paineis de fora o controlam)
+    expect(injectRuntimeBridge('<html><body></body></html>')).not.toContain('preserveMotion');
+    // opt-in do editor traz o preservador junto
     const antes = process.env.UNCRAFT_CLONE_FULL_EDITOR;
-    process.env.UNCRAFT_CLONE_FULL_EDITOR = '0';
+    process.env.UNCRAFT_CLONE_FULL_EDITOR = '1';
     try {
-      expect(injectRuntimeBridge('<html><body></body></html>')).not.toContain('preserveMotion');
+      expect(injectRuntimeBridge('<html><body></body></html>')).toContain('preserveMotion');
     } finally {
       if (antes === undefined) delete process.env.UNCRAFT_CLONE_FULL_EDITOR;
       else process.env.UNCRAFT_CLONE_FULL_EDITOR = antes;

@@ -147,13 +147,16 @@ const EDITOR_CORE_FILES = [
 
 /**
  * ⭐ LIGADO POR PADRÃO (decisão de produto do Adilson, 2026-08-25): o editor
- * completo É o produto do clone — fontes, texto, imagem, fundo, com
- * persistência e undo honestos, cada um provado no clone real. Desligar é
- * opt-out explícito ('0'/'off'), para depurar ou comparar.
+ * completo DENTRO do clone foi RETIRADO do padrão (Adilson, 2026-09-22):
+ * o clone é o site; toda edição vive nos painéis de fora. Opt-in só p/ depurar.
  */
 export function fullEditorEnabled(env = process.env) {
+  // DESLIGADO por padrão (Adilson, 2026-09-22): o clone é O SITE, não a
+  // ferramenta de edição — toda edição vive nos painéis DE FORA, que editam o
+  // clone pela ponte (injetada à parte). Injetar o editor-core dentro do iframe
+  // punha um "editor dentro de editor". Opt-in explícito só para depurar.
   const valor = String(env.UNCRAFT_CLONE_FULL_EDITOR || '').trim().toLowerCase();
-  return valor !== '0' && valor !== 'off' && valor !== 'false';
+  return valor === '1' || valor === 'on' || valor === 'true';
 }
 
 function fullEditorTags() {
