@@ -5730,18 +5730,20 @@ body.chat-dock-preview {
    progress ring (z-index 3) + its % sit above this. */
 .cnode-gen-overlay {
   position: absolute;
-  /* MUST match the topbar's real height (--tbh, floor 0.50). The topbar floors
-     its inverse-scale at 0.50; using 0.30 here made the overlay start lower than
-     the topbar bottom below 50% zoom, exposing a sliver of the site above it. */
-  top: calc(36px / max(0.50, var(--canvas-scale, 1)));
+  /* Cobre o node INTEIRO. O offset antigo (calc(36px / --tbh)) existia para
+     ficar ABAIXO da topbar do node — mas a topbar e' `display: none` agora
+     (a chrome virou float-tag/float-actions), entao o corpo do site preenche
+     desde o topo e o offset deixava a faixa de cima (o header do site)
+     DESCOBERTA (bug 2026-09-22). top: 0 = cobre tudo; os quatro cantos
+     arredondam para acompanhar o corpo. */
+  top: 0;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 2;
   pointer-events: none;
   overflow: hidden;
-  border-radius: 0 0
-    calc(10px / var(--chrome-scale, 1)) calc(10px / var(--chrome-scale, 1));
+  border-radius: calc(10px / var(--chrome-scale, 1));
 }
 /* Empty node: nothing behind to blur — match the topbar offblack so the
    whole generating node reads as one continuous surface (no blue card). */
