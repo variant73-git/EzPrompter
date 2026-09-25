@@ -8,6 +8,7 @@ import {
   invertPatch,
   isRuntimeMessage,
   matchesRuntimeContext,
+  runtimeMessageTargetOrigin,
   MOTION_EDITOR_PROTOCOL,
   MOTION_EDITOR_PROTOCOL_V2,
   removeRejectedPatch,
@@ -264,6 +265,7 @@ export function useNativeMotionController({
   const [runtimeRecovery, setRuntimeRecovery] = useState(null);
   const [recoveryNotice, setRecoveryNotice] = useState(null);
   const runtimeRecoveryRef = useRef(runtimeRecovery);
+  const uploadHandlerRef = useRef(null); // ponte de upload do editor completo (Task 12)
   const [pendingResponsiveScopeChange, setPendingResponsiveScopeChange] = useState(null);
   const motionDetailRef = useRef(motionDetail);
   const lastAutoExpandedRef = useRef(null);
@@ -505,7 +507,8 @@ export function useNativeMotionController({
     const message = context?.protocol === MOTION_EDITOR_PROTOCOL_V2
       ? commandV2(type, payload, { ...context, requestId: nextRequestId })
       : command(type, payload);
-    iframeRef.current?.contentWindow?.postMessage(message, '*');
+    // Alveja a origem REAL da sessão quando conhecida (lease); opaca → '*'.
+    iframeRef.current?.contentWindow?.postMessage(message, runtimeMessageTargetOrigin(context?.origin));
     return nextRequestId;
   }, [iframeRef]);
 
@@ -974,6 +977,21 @@ export function useNativeMotionController({
         const context = runtimeContextRef.current;
         if (!context || !matchesRuntimeContext(event.data, context, event.origin)) return;
       }
+      if (type === 'upload-request') {
+        // Ponte de upload do editor completo (Task 12): em modo lease o clone
+        // não tem cookie de login e a lease recusa POST, então o clone posta os
+        // bytes AQUI (já validado pelos 4 eixos acima) e o parent — que tem o
+        // cookie — chama a rota app-authed e devolve o caminho. `send` alveja a
+        // origem real da sessão.
+        const handler = uploadHandlerRef.current;
+        const uploadId = payload.uploadId;
+        if (!handler || typeof uploadId !== 'string') return;
+        const bytes = payload.bytes instanceof ArrayBuffer ? new Uint8Array(payload.bytes) : null;
+        Promise.resolve(bytes ? handler(bytes, payload.name) : { error: 'invalid' })
+          .then((result) => send('upload-result', { uploadId, ...result }))
+          .catch(() => send('upload-result', { uploadId, error: 'upload_failed' }));
+        return;
+      }
       if (type === 'runtime-ready') {
         announceRequestsRef.current = 0;
         announcePendingRef.current = false;
@@ -1011,7 +1029,7 @@ export function useNativeMotionController({
             runtimeGeneration: context.runtimeGeneration,
             bundleId: context.bundleId,
             sessionId: context.sessionId,
-          }, '*');
+          }, runtimeMessageTargetOrigin(context.origin));
         } else {
           runtimeContextRef.current = { protocol: MOTION_EDITOR_PROTOCOL, origin: event.origin, sessionId: 'motion-lab-session' };
           setStatus(runtimeRecoveryRef.current ? 'recovering' : 'ready');
@@ -2012,6 +2030,37 @@ export function useNativeMotionController({
       code,
       controlId: runtimeRecoveryRef.current?.controlId || pendingControlRecoveryRef.current?.controlId || null,
     }),
+    // Reload pedido pelo HUMANO na máscara: orçamento de recuperação zerado
+    // (a exaustão automática não pune o clique) e uma requisição fresca de
+    // reabertura — o viewport re-POSTa a sessão e remonta o iframe; sucesso
+    // anuncia runtime-ready (RELOADING -> ativo), falha re-esgota e a máquina
+    // devolve MASKED, nunca teardown.
+    reloadRuntime: () => {
+      if (editState.value !== EDIT_STATES.MASKED) return;
+      transitionEditor({ type: 'runtime-reload-requested' });
+      recoveryPolicyRef.current = createRecoveryPolicy();
+      setPatchError(null);
+      const request = {
+        requestId: ++recoverySequenceRef.current,
+        attempt: 0,
+        code: 'user_reload',
+        exhausted: false,
+      };
+      runtimeRecoveryRef.current = request;
+      setRuntimeRecovery(request);
+      setStatus('recovering');
+    },
+    // Renovação da lease falhou de forma TERMINAL (revogada/sessão morta/
+    // ownership perdido) ou a lease está prestes a vencer: máscara direta. Com
+    // o runtime já anunciado, a máquina vira MASKED (não teardown). O laço vive
+    // no viewport (é ele que sabe nodeId+expiry); aqui só a transição.
+    failRuntime: (code = 'lease_unavailable') => {
+      transitionEditor({ type: 'runtime-unavailable', code });
+      setStatus('unavailable');
+    },
+    // O viewport registra aqui o upload app-authed (conhece o nodeId). Recebe
+    // os bytes do clone via postMessage validado e devolve `{ path }`.
+    setUploadHandler: (fn) => { uploadHandlerRef.current = typeof fn === 'function' ? fn : null; },
     send,
     describeElement: (elementId) => send('describe-element', { elementId }),
     selectElement: (elementId) => send('select-element', { elementId }),

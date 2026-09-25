@@ -75,3 +75,68 @@ describe('native motion edit state machine', () => {
     expect(state).toMatchObject({ value: EDIT_STATES.UNAVAILABLE, selectionId: 'hero', code: 'runtime_unavailable' });
   });
 });
+
+describe('masked/reloading (runtime failure keeps the editor mounted)', () => {
+  function activeEditingState() {
+    // "Edição ativa" = o runtime anunciou pronto neste mount; o próprio
+    // runtime-ready é quem liga o flag — nada de fabricar shape à mão.
+    let state = transitionEditState(createEditState(), { type: 'runtime-ready' });
+    state = transitionEditState(state, { type: 'select', elementId: 'hero' });
+    return state;
+  }
+
+  it('runtime-ready marks the state as ready', () => {
+    expect(transitionEditState(createEditState(), { type: 'runtime-ready' }).ready).toBe(true);
+  });
+
+  it('runtime-unavailable during ACTIVE editing lands on MASKED with the failure code', () => {
+    const next = transitionEditState(activeEditingState(), {
+      type: 'runtime-unavailable',
+      code: 'session_scope_mismatch',
+    });
+    expect(next).toMatchObject({ value: EDIT_STATES.MASKED, code: 'session_scope_mismatch' });
+  });
+
+  it('runtime-unavailable during INITIAL opening (never ready) keeps the current teardown state', () => {
+    const next = transitionEditState(createEditState(), { type: 'runtime-unavailable', code: 'x' });
+    expect(next.value).toBe(EDIT_STATES.UNAVAILABLE);
+  });
+
+  it('ready survives ordinary editing transitions (select does not drop it)', () => {
+    let state = transitionEditState(createEditState(), { type: 'runtime-ready' });
+    state = transitionEditState(state, { type: 'select', elementId: 'hero' });
+    state = transitionEditState(state, { type: 'scroll-started' });
+    state = transitionEditState(state, { type: 'scroll-settled' });
+    expect(state.ready).toBe(true);
+  });
+
+  it('reload request enters RELOADING', () => {
+    const masked = transitionEditState(activeEditingState(), { type: 'runtime-unavailable', code: 'x' });
+    expect(transitionEditState(masked, { type: 'runtime-reload-requested' }).value).toBe(EDIT_STATES.RELOADING);
+  });
+
+  it('a FAILED reload returns to MASKED — never teardown', () => {
+    const masked = transitionEditState(activeEditingState(), { type: 'runtime-unavailable', code: 'x' });
+    const reloading = transitionEditState(masked, { type: 'runtime-reload-requested' });
+    const next = transitionEditState(reloading, { type: 'runtime-unavailable', code: 'still_down' });
+    expect(next).toMatchObject({ value: EDIT_STATES.MASKED, code: 'still_down' });
+  });
+
+  it('a successful reload (runtime-ready) leaves the mask into a fresh ready state', () => {
+    const masked = transitionEditState(activeEditingState(), { type: 'runtime-unavailable', code: 'x' });
+    const reloading = transitionEditState(masked, { type: 'runtime-reload-requested' });
+    const next = transitionEditState(reloading, { type: 'runtime-ready' });
+    expect(next).toMatchObject({ value: EDIT_STATES.NAVIGATING, ready: true, code: null });
+  });
+
+  it('reload request from any non-masked state is ignored', () => {
+    const state = activeEditingState();
+    expect(transitionEditState(state, { type: 'runtime-reload-requested' })).toBe(state);
+  });
+
+  it('released clears the mask and the ready flag (deliberate exit stays an exit)', () => {
+    const masked = transitionEditState(activeEditingState(), { type: 'runtime-unavailable', code: 'x' });
+    const next = transitionEditState(masked, { type: 'released' });
+    expect(next).toMatchObject({ value: EDIT_STATES.NAVIGATING, ready: false });
+  });
+});

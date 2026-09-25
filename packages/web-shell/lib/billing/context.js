@@ -167,7 +167,10 @@ async function runOperation({ sql, userId, op, boardId = null, nodeId = null, bi
     console.error(`[billing] settle-on-success FAILED (user=${userId} op=${op} opId=${operationId} charge=${credits}) — hold stranded (reconciliation will refund):`, settleErr);
     throw settleErr;
   }
-  return { result, credits, balanceAfter, opId: operationId, deduped: false };
+  // `microcents` e' LEITURA PURA do que ja foi somado aqui em cima — nada de
+  // cobranca muda por expo-lo. Sem isto, a telemetria do clone so' teria
+  // creditos (numero arredondado por faixa) e nunca o custo real medido.
+  return { result, credits, balanceAfter, opId: operationId, deduped: false, microcents: totalMicrocents };
 }
 
 // Paid operation. Pass `idemKey` in opts to enable retry-dedup (the requester's

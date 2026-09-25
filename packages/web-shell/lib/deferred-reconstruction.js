@@ -1,5 +1,6 @@
 import { reconstructPage } from './reconstruct.js';
 import { resolveCloneEngine, producerForEngine } from './clone-router.js';
+import { createCloneTimer, persistCloneTelemetry, readCloneTelemetry } from './clone-telemetry.js';
 import { recordUsage, runBilledOperation } from './billing/context.js';
 import { createConfiguredBundleStore } from './native-clone/bundle-store.js';
 import { registerNativeBundle } from './native-clone/register-bundle.js';
@@ -13,6 +14,74 @@ import {
 } from './motion-editor/diagnostics.js';
 
 const CONTROL_CONVERSION_DEADLINE_MS = 90_000;
+// The iter9 producer is a vision-reasoning pass measured at ~150s with ±40%
+// variance (doctrine 183: size ceilings by measured percentile and raise the
+// stack TOGETHER — this deadline < route maxDuration 300s; the client fetch
+// has no cap). One 90s deadline for both lanes timed out most nominal iter9
+// clones with a refunded `conversion_timeout`.
+const ITER9_CONVERSION_DEADLINE_MS = 240_000;
+// 240s applies ONLY to the user's single-item lane (reason 'edit' — the
+// /reconstruct route, one reconstruction per request). The /run route can
+// chain SEVERAL reconstructions under one 300s maxDuration; giving each 240s
+// would let two items burn 480s and die mid-request with the first already
+// billed (Sol). Its lanes keep the original 90s — that pre-existing 3×90s
+// squeeze is a NAMED residual of /run, unchanged by this fix.
+export function conversionDeadlineMs(producerFn, reason) {
+  if (producerFn === captureNativeBundle) return CONTROL_CONVERSION_DEADLINE_MS;
+  return reason === 'edit' ? ITER9_CONVERSION_DEADLINE_MS : CONTROL_CONVERSION_DEADLINE_MS;
+}
+
+// Vocabulário FECHADO de motivos — é o que `capture-bundle.js` escreve. Contar
+// só o que está nesta lista garante que o relatório nunca carregue texto vindo
+// do site clonado, que é a razão de o relatório ser sanitizado.
+const MOTIVOS_DE_DESCARTE = new Set([
+  'host nao publico', 'limite de arquivos', 'grande demais (declarado)',
+  'grande demais', 'corpo nao chegou', 'chegou apos a montagem',
+]);
+
+function sanitizeCaptureReport(relatorio) {
+  const hosts = [];
+  // ⭐ "1 descartado" sozinho não distingue "o site bloqueou o arquivo" de
+  // "o arquivo passou do tamanho" — e o remédio de um não serve para o outro.
+  // Sem o motivo, o número diz que ALGO se perdeu e não deixa agir.
+  const motivos = {};
+  for (const item of Array.isArray(relatorio?.descartados) ? relatorio.descartados : []) {
+    try {
+      const host = new URL(item?.u).hostname;
+      // O teto de 10 corta a LISTA DE HOSTS, e só ela: parar o laço aqui faria
+      // os motivos pararem de ser contados junto, sem ninguém saber.
+      if (host && !hosts.includes(host) && hosts.length < 10) hosts.push(host);
+    } catch { /* entrada sem URL válida não vira host */ }
+    if (MOTIVOS_DE_DESCARTE.has(item?.motivo)) motivos[item.motivo] = (motivos[item.motivo] || 0) + 1;
+  }
+  // A contagem boa é a do produtor, feita sobre a lista inteira. Sem ela sobra
+  // a amostra — que continua útil, mas vai ROTULADA como parcial: apresentar
+  // amostra como explicação completa é o mesmo defeito que o motivo veio curar.
+  const integral = relatorio?.motivosDescartados;
+  const temIntegral = integral && typeof integral === 'object';
+  const contagem = {};
+  for (const [motivo, n] of Object.entries(temIntegral ? integral : motivos)) {
+    if (MOTIVOS_DE_DESCARTE.has(motivo) && Number(n) > 0) contagem[motivo] = Number(n);
+  }
+  const somaClassificada = Object.values(contagem).reduce((s, n) => s + n, 0);
+  return {
+    files: Number(relatorio?.arquivos) || 0,
+    bytes: Number(relatorio?.bytes) || 0,
+    // O que chegou da rede e o que ficou guardado são quantidades DIFERENTES —
+    // a reescrita de referências encurta HTML/CSS/JS. Levar as duas evita que a
+    // diferença apareça depois como erro de contabilidade.
+    bundleBytes: Number(relatorio?.bytesNoPacote) || 0,
+    // SSIM medido na captura, arredondado — número puro, nunca screenshot/URL.
+    ...(Number.isFinite(relatorio?.similarity?.ssim)
+      ? { similarity: Math.round(relatorio.similarity.ssim * 1000) / 1000 }
+      : {}),
+    extraRefs: Number(relatorio?.refsExtras) || 0,
+    discarded: Number(relatorio?.totalDescartados) || 0,
+    discardedHosts: hosts,
+    discardedReasons: contagem,
+    discardedReasonsPartial: somaClassificada < (Number(relatorio?.totalDescartados) || 0),
+  };
+}
 
 function generationMeta(generated) {
   return {
@@ -37,8 +106,9 @@ async function persistNativeSnapshot({ sql, node, descriptor, motionManifest, cu
          FOR UPDATE
       ), updated_snapshot AS (
         UPDATE snapshots
-           SET html = NULL,
-               source = 'native-bundle',
+           -- O html FICA: e' o DOCUMENTO que o grafo consome (style transfer,
+           -- extrair .md, compose). O bundle e' o RUNTIME, para o editor.
+           SET source = 'native-bundle',
                design_md = NULL,
                native_bundle_id = ${descriptor.bundleId},
                motion_manifest = ${JSON.stringify(motionManifest)}::jsonb,
@@ -75,7 +145,14 @@ async function persistNativeSnapshot({ sql, node, descriptor, motionManifest, cu
           native_bundle_id, motion_manifest, motion_manifest_version
         )
         SELECT
-          ${node.id}, NULL, NULL, 'native-bundle', ${current?.id || null},
+          -- ⭐ A foto do snapshot anterior SEGUE: clonar de novo nao muda a
+          -- aparencia do site, mas gravar NULL aqui apagava a miniatura do node
+          -- para sempre (o primeiro clone sobrescreve a captura e preserva; do
+          -- segundo em diante era INSERT com NULL). Medido no node do dono.
+          ${node.id},
+          (SELECT html FROM snapshots WHERE id = ${current?.id || null}),
+          (SELECT screenshot_url FROM snapshots WHERE id = ${current?.id || null}),
+          'native-bundle', ${current?.id || null},
           ${descriptor.bundleId}, ${JSON.stringify(motionManifest)}::jsonb, ${motionManifest.schemaVersion}
         FROM current_node
         RETURNING id
@@ -189,23 +266,37 @@ export async function reconstructSiteNode({
   generateControls = generateControlsForReconstruction,
   persistBundle = persistNativeBundleDescriptor,
 }) {
-  const { result, credits, balanceAfter } = await runBilledOperation(
+  // ⏱️ Onde o clone gasta tempo: o cronometro nasce ANTES do billing porque a
+  // espera da pessoa inclui a reserva de credito, nao so' o trabalho.
+  const cronometro = createCloneTimer();
+  const motorEscolhido = resolveCloneEngine({ requested: engine, reason });
+  const { result, credits, balanceAfter, microcents, deduped } = await runBilledOperation(
     { sql, userId, op, boardId: node.board_id, nodeId: node.id, idemKey },
     async () => {
       const deadline = new AbortController();
       const deadlineError = Object.assign(new Error('control_conversion_timeout'), { code: 'control_conversion_timeout' });
       const aborted = new Promise((_, reject) => deadline.signal.addEventListener('abort', () => reject(deadline.signal.reason), { once: true }));
-      const timer = setTimeout(() => deadline.abort(deadlineError), CONTROL_CONVERSION_DEADLINE_MS);
+      const resolvedProducer = producer || chooseReconstructionProducer(reason, process.env, engine);
+      const timer = setTimeout(() => deadline.abort(deadlineError), conversionDeadlineMs(resolvedProducer, reason));
       try {
       let materialized;
       try {
-        materialized = await materializeReconstructionOutput(
-          await Promise.race([
-            (producer || chooseReconstructionProducer(reason, process.env, engine))(node.origin_url),
-            aborted,
-          ]),
-          { bundleStore },
-        );
+        // ⏱️ DUAS etapas, nao uma (achado do Sol). `materializeReconstructionOutput`
+        // grava TODOS os assets do bundle no store; embrulhar isso junto com o
+        // produtor atribuiria a persistencia ao motor — um produtor de 24s com
+        // 100 uploads de 100s apareceria como "o motor demora 124s", que e'
+        // exatamente a confusao que este instrumento existe para desfazer.
+        // O sinal do prazo VAI para o produtor (Astra r1 #2 / Claude r1 #3,
+        // 2026-09-06): sem ele, o prazo rejeitava e reembolsava, mas o
+        // navegador da captura seguia rolando/baixando depois do 504.
+        const bruto = await cronometro.measure('motor', async () => Promise.race([
+          resolvedProducer(node.origin_url, { signal: deadline.signal }),
+          aborted,
+        ]));
+        materialized = await cronometro.measure('bundle', async () => Promise.race([
+          materializeReconstructionOutput(bruto, { bundleStore }),
+          aborted,
+        ]));
       } catch (error) {
         if (deadline.signal.aborted) {
           const timeout = new Error('control_conversion_timeout');
@@ -227,7 +318,22 @@ export async function reconstructSiteNode({
 
       if (materialized.kind === 'native') {
           const descriptor = await persistBundle({ sql, descriptor: materialized.bundleDescriptor });
-          const generated = await Promise.race([generateControls({
+          // Generated controls are an overlay on top of the clone, and they
+          // require a validator. CONFIG ABSENCE is not a failure: when neither
+          // the producer supplies a validation path nor the sandbox validator
+          // service is configured (UNCRAFT_MOTION_CONTROL_VALIDATOR_URL), this
+          // deployment simply does not sell generated controls — the clone
+          // (native bundle + live editor, which inventories the runtime
+          // directly) ships whole. When a validator IS configured, generation
+          // stays mandatory and failures keep the hard-fail + refund contract
+          // (a transient outage must never settle as a silently degraded paid
+          // state — Sol review 2026-08-17).
+          const validatorConfigured = Boolean(
+            materialized.output?.controlValidationTransport
+            || materialized.output?.validateControlCandidate
+            || process.env.UNCRAFT_MOTION_CONTROL_VALIDATOR_URL,
+          );
+          const generated = !validatorConfigured ? null : await cronometro.measure('controles', async () => Promise.race([generateControls({
             descriptor,
             reconstructionOutput: materialized.output,
             signal: deadline.signal,
@@ -240,18 +346,25 @@ export async function reconstructSiteNode({
               cacheWrite: usage.cacheWriteTokens,
               meta: { stage: 'motion-control-generation' },
             }),
-          }), aborted]);
+          }), aborted]));
+          // Configured ⇒ a valid result is REQUIRED. Every downstream branch
+          // keys on validatorConfigured (never on generated's truthiness), so a
+          // configured-but-broken generator resolving null can never settle
+          // mislabeled as "validator_not_configured" (Sol v2 round).
+          if (validatorConfigured && !generated?.manifest) {
+            throw Object.assign(new Error('control_generation_no_output'), { code: 'no_output' });
+          }
           const baseManifest = createEmptyMotionManifest({
             baseBundleId: descriptor.bundleId,
             runtimeFingerprint: descriptor.runtimeFingerprint,
           });
-          const motionManifest = parseMotionManifest({
+          const motionManifest = validatorConfigured ? parseMotionManifest({
             ...baseManifest,
             controlManifest: generated.manifest,
           }, {
             expectedBundleId: descriptor.bundleId,
             runtimeFingerprint: descriptor.runtimeFingerprint,
-          });
+          }) : baseManifest;
           const nextMeta = {
             animatedDetected: false,
             animatedRuntime: true,
@@ -259,7 +372,22 @@ export async function reconstructSiteNode({
             reconstructionEngine: 'native-bundle',
             deferredReconstructionReason: reason,
             deferredReconstructedAt: new Date().toISOString(),
-            motionControls: generationMeta(generated),
+            // Typography measured by the producer from the LIVE page (rides
+            // the output as a sibling of bundle — the bundle itself, its
+            // hash and every existing clone stay untouched).
+            ...(materialized.output?.typeSample ? { typeSample: materialized.output.typeSample } : {}),
+            // Capture report, SANITIZED: the producer's relatorio was
+            // assembled and then discarded here — missing assets vanished
+            // without a trace. Persist counts and discarded HOSTS only; a
+            // full URL can carry query strings/tokens (Sol advise 2026-08-20).
+            ...(materialized.output?.relatorio ? {
+              captureReport: sanitizeCaptureReport(materialized.output.relatorio),
+            } : {}),
+            motionControls: validatorConfigured ? generationMeta(generated) : {
+              status: 'skipped',
+              reason: 'validator_not_configured',
+              acceptedControls: 0,
+            },
           };
           if (deadline.signal.aborted) throw deadline.signal.reason;
           const snapshotId = await persistNativeSnapshot({
@@ -278,7 +406,7 @@ export async function reconstructSiteNode({
             edit_session_id: null,
             runtime_fingerprint: descriptor.runtimeFingerprint,
             content_hash: descriptor.contentHash,
-          }, motionControlGenerationDiagnosticEvents(generated)).catch(() => null);
+          }, validatorConfigured ? motionControlGenerationDiagnosticEvents(generated) : []).catch(() => null);
           return {
             ok: true,
             kind: 'native',
@@ -286,8 +414,8 @@ export async function reconstructSiteNode({
             snapshotId,
             bundleDescriptor: descriptor,
             motionManifest,
-            controlManifest: generated.manifest,
-            controlGeneration: generationMeta(generated),
+            controlManifest: validatorConfigured ? generated.manifest : null,
+            controlGeneration: nextMeta.motionControls,
             meta: nextMeta,
           };
       }
@@ -352,5 +480,24 @@ export async function reconstructSiteNode({
       }
     },
   );
-  return { ...result, credits, balanceAfter };
+
+  // ⏱️ DEPOIS do settle, de proposito: e' so' aqui que `credits` e `microcents`
+  // existem. E fail-open — a gravacao nunca derruba um clone que deu certo.
+  //
+  // Replay de dedup NAO grava: nao houve clone novo, e sobrescrever apagaria a
+  // medicao do clone que de fato aconteceu.
+  let cloneTelemetry = null;
+  if (deduped) {
+    // O replay nao clonou nada — o cronometro dele mediria milissegundos. Quem
+    // tem a historia verdadeira e' a medicao guardada pelo clone original, que
+    // costuma ser justamente o lento cuja resposta se perdeu (Sol).
+    cloneTelemetry = await readCloneTelemetry({ sql, nodeId: node.id, idemKey, elapsedMs: cronometro.elapsed() });
+  } else {
+    cloneTelemetry = cronometro.report({ engine: motorEscolhido, credits, microcents });
+    await persistCloneTelemetry({ sql, nodeId: node.id, report: cloneTelemetry, idemKey, elapsedMs: cronometro.elapsed() });
+  }
+  // Vai TAMBEM na resposta: o cliente ja tem o relogio de parede dele e so'
+  // consegue casar os dois numeros na hora — reler o node do banco so' para
+  // isso seria uma ida a mais por clone.
+  return { ...result, credits, balanceAfter, cloneTelemetry };
 }

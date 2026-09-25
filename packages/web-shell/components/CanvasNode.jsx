@@ -21,6 +21,10 @@ import {
 } from '../lib/node-viewport.js';
 import { NODE_EDITOR_KIND } from '../lib/node-editor-kind.js';
 import { isLiveUrlReference, shouldMountLiveReference } from '../lib/url-reference.js';
+import { decideEditAction } from '../lib/edit-action-decision.js';
+import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
+import { useDevEngine } from './use-dev-engine.js';
+import { CLONE_EDIT_CREDIT_ESTIMATE } from '../lib/billing/pricing.js';
 import { playfulLoadingMessage } from '../lib/loading-messages.js';
 
 const DRAG_THRESHOLD = 4;
@@ -716,6 +720,11 @@ export default function CanvasNode({
     // in CanvasClient, and mousemove outpaces the display refresh.
     const emit = createRafCoalescer((w, h) => onResize?.(w, h));
     function move(ev) {
+      // Self-healing release: a mousemove with NO buttons pressed means the
+      // real mouseup was swallowed somewhere (iframe, context menu, OS quirk
+      // — the glued-node bug's exact signature, whatever the mechanism).
+      // Treat it as the release instead of dragging a ghost forever.
+      if (ev.buttons === 0) { up(); return; }
       const scale = readCanvasScale();
       const dx = (ev.clientX - start.x) / scale;
       const dy = (ev.clientY - start.y) / scale;
@@ -772,8 +781,13 @@ export default function CanvasNode({
       // port keeps the cord origin stable — moving it mid-drag would
       // make the line whip around as the user moves the mouse.
       if (isDrafting) return;
-      // Hands off while cursor is over the port — let CSS hover take over.
-      if (e.target === port || port.contains(e.target)) return;
+      // Keep tracking even while the cursor is OVER the port. The old
+      // hands-off here caused visible stepping: near the ball, mousemove
+      // events alternate between landing on the port (frozen) and on the
+      // node (updates), so the ball advanced in little jumps — and since it
+      // chases the cursor, "near" is its normal state. Continuous updates
+      // keep it glued under the cursor (a stabler click target, not a
+      // moving one); CSS :hover still handles the scale-up.
       const rect = cnode.getBoundingClientRect();
       const scale = readCanvasScale();
       // Screen → node-local CSS coords (.cnode children live in the
@@ -823,11 +837,14 @@ export default function CanvasNode({
     offscreen: offscreenParked,
     placing,
   });
-  const interactiveCapturedReference = Boolean(
-    node.meta?.referenceMode === 'captured-auto'
-    && livePreviewActive
-    && !offscreenParked
-  );
+  // RETIRED (product 2026-08-19): a SELECTED captured-auto node used to mount
+  // its capture as an interactive iframe (browse/scroll the page at rest).
+  // That collided head-on with the canvas contract — selectable site text
+  // under the pointer, GSAP running in a parked node, and body drags dead
+  // (the exact glued/janky reports). Rest state is ALWAYS the static thumb;
+  // interacting with the page belongs to Edit. Constant kept so every gate
+  // below reads as the deliberate decision, not a lost branch.
+  const interactiveCapturedReference = false;
 
   // Static-by-default site display (perf phase 3b v2, user-directed): the
   // node is a VISUALIZATION of the site's current state — a snapshot image
@@ -925,6 +942,11 @@ export default function CanvasNode({
     // position (adopt/tear-out commit reads drag.lastX/lastY).
     const emit = createRafCoalescer((x, y) => onMove(x, y));
     function move(ev) {
+      // Self-healing release: a mousemove with NO buttons pressed means the
+      // real mouseup was swallowed somewhere (iframe, context menu, OS quirk
+      // — the glued-node bug's exact signature, whatever the mechanism).
+      // Treat it as the release instead of dragging a ghost forever.
+      if (ev.buttons === 0) { up(); return; }
       const scale = readCanvasScale();
       const dx = (ev.clientX - start.x) / scale;
       const dy = (ev.clientY - start.y) / scale;
@@ -1041,7 +1063,18 @@ export default function CanvasNode({
   const renderPromptBody = node.kind === 'prompt';
   const renderSkillBody = node.kind === 'skill';
   const renderAssetBody = node.kind === 'asset' || node.kind === 'image';
-  const canEditSite = renderIframeBody && Boolean(html || liveUrlReference || nativeEditor);
+  // Shared with the canvas handler and the inspector so the surfaces never
+  // disagree about what a press on Edit costs (Sol r3, 2026-08-20). The dev
+  // override arrives AFTER mount: reading storage during render would hydrate
+  // a different label than the server rendered (Sol r4).
+  const devEngine = useDevEngine();
+  const editDecision = decideEditAction({ node, engineOverride: resolveEditEngineOverride(node, devEngine) });
+  // An inconsistent clone has html=null AND no usable native editor, so the
+  // plain eligibility hid the button in EXACTLY the state that needs repair —
+  // leaving the user no way out (Sol final round). Integrity failure keeps the
+  // action reachable; the label says "Repair clone" and shows the cost.
+  const canEditSite = renderIframeBody
+    && Boolean(html || liveUrlReference || nativeEditor || editDecision.integrityError);
   const openEditorTitle = nativeEditor
     ? 'Open animated website editor'
     : liveUrlReference
@@ -1288,13 +1321,18 @@ export default function CanvasNode({
                 e.stopPropagation();
                 if (editorBusy) return;
                 if (editing) saveAndExit();
-                else onEditingChange?.(true);
+                else onEditingChange?.(true, editDecision.integrityError ? { repair: true } : undefined);
               }}
               title={editing ? 'Save and exit edit mode' : openEditorTitle}
               disabled={editorBusy}
             >
               {editing ? <CheckIcon /> : <EditIcon />}
-              <span>{editing ? (editorBusy ? 'Saving…' : 'Done') : liveUrlReference ? 'Clone & Edit' : 'Edit'}</span>
+              {/* Label from the SHARED decision (Sol r3, 2026-08-20) — the
+                  same one the handler and the inspector use: "Clone & Edit"
+                  iff this press actually bills (nominal engine, or the legacy
+                  auto-upgrade), "Repair" when the clone's lineage doesn't
+                  close, and a plain free "Edit" otherwise. */}
+              <span>{editing ? (editorBusy ? 'Saving…' : 'Done') : editDecision.integrityError ? 'Repair clone' : editDecision.billable ? 'Clone & Edit' : 'Edit'}</span>
             </button>
           )}
         </div>
@@ -1556,12 +1594,26 @@ export default function CanvasNode({
             ) : (
             <>
             <iframe
-              key={`${node._resetTick || 0}:${versionPreview?.snapshotId || 'current'}`}
+              // Interaction mode is part of the KEY on purpose: sandbox
+              // changes on a loaded iframe do not apply until navigation
+              // (HTML spec), so Edit→rest must DESTROY and recreate the
+              // frame — otherwise a script-enabled document keeps running
+              // at rest when no thumbnail covers it (Sol 2026-08-19).
+              key={`${node._resetTick || 0}:${versionPreview?.snapshotId || 'current'}:${editing || interactiveCapturedReference || versionPreview ? 'live' : 'inert'}`}
               ref={iframeRef}
               className="cnode-iframe"
               title={title}
               srcDoc={versionPreview ? versionPreview.html : html}
-              sandbox="allow-same-origin allow-scripts"
+              // Scripts run ONLY when the iframe is genuinely interactive
+              // (editing / interactive captured reference / version preview).
+              // As the resting anti-flash cover — board just opened, thumb
+              // still fetching — the srcDoc rendered WITH scripts: a GSAP
+              // site visibly animated inside a parked node and made dragging
+              // jank through that window (user report 2026-08-19). A static
+              // render covers the flash just as well.
+              sandbox={editing || interactiveCapturedReference || versionPreview
+                ? 'allow-same-origin allow-scripts'
+                : 'allow-same-origin'}
               onLoad={(e) => { setIframeReady(true); onIframeLoad(e); }}
               style={{
                 pointerEvents: editing || interactiveCapturedReference ? 'auto' : 'none',
@@ -1931,7 +1983,9 @@ export default function CanvasNode({
           canRemoveFromSection={inSection}
           editing={editing}
           canCloneIter9={node.kind === 'site' && !!node.origin_url && !editing && !!onCloneIter9}
-          onEdit={() => { setMenuPos(null); onEditingChange?.(!editing); }}
+          editDecision={editDecision}
+          cloneCost={CLONE_EDIT_CREDIT_ESTIMATE}
+          onEdit={() => { setMenuPos(null); onEditingChange?.(!editing, editDecision.integrityError ? { repair: true } : undefined); }}
           onCloneIter9={() => { setMenuPos(null); onCloneIter9?.(node.id); }}
           onDuplicate={() => { setMenuPos(null); onDuplicate?.(); }}
           onDownload={() => { setMenuPos(null); onDownload?.(); }}
@@ -1947,7 +2001,7 @@ export default function CanvasNode({
   );
 }
 
-function TopbarContextMenu({ x, y, canEdit, canReset, canReplace, canRemoveFromSection, canCloneIter9, editing, onEdit, onCloneIter9, onDuplicate, onDownload, onReplace, onReset, onRemoveFromSection, onDelete, onClose }) {
+function TopbarContextMenu({ x, y, canEdit, canReset, canReplace, canRemoveFromSection, canCloneIter9, editing, editDecision, cloneCost, onEdit, onCloneIter9, onDuplicate, onDownload, onReplace, onReset, onRemoveFromSection, onDelete, onClose }) {
   // Clamp to viewport so the menu stays fully visible. Width matches
   // .empty-drop-menu (260px) so this reads as the same family of menu.
   const W = 260, H_EST = 240;
@@ -1965,9 +2019,19 @@ function TopbarContextMenu({ x, y, canEdit, canReset, canReplace, canRemoveFromS
       onContextMenu={(e) => e.preventDefault()}
     >
       {canEdit && (
+        // Fourth entry point, same shared decision (Sol final round): a plain
+        // "Edit" here used to fire a billed clone (or the paywall) on a legacy
+        // node while promising nothing about cost.
         <button onClick={onEdit}>
           {editing ? <CheckIcon /> : <EditIcon />}
-          <span>{editing ? 'Done' : 'Edit'}</span>
+          <span>
+            {editing ? 'Done'
+              : editDecision?.integrityError ? 'Repair clone'
+              : editDecision?.billable ? 'Clone & Edit' : 'Edit'}
+          </span>
+          {!editing && (editDecision?.billable || editDecision?.integrityError) && cloneCost != null && (
+            <span className="cnode-menu-cost">{cloneCost} credits</span>
+          )}
         </button>
       )}
       {/* Doutrina (2026-08-15): "clone" e' o ANIMADO — Edit ja o produz. O

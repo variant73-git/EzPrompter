@@ -25,7 +25,7 @@ function setAbsoluteScale(transformRef, targetScale) {
   t.setTransform(cx - wx * targetScale, cy - wy * targetScale, targetScale, 200);
 }
 
-export default function ZoomControls({ scale, transformRef, onFit }) {
+export default function ZoomControls({ scale, transformRef, onFit, active = true }) {
   function zoomIn() {
     const next = Math.min(CANVAS_MAX_SCALE, (scale || 1) + ZOOM_STEP);
     setAbsoluteScale(transformRef, next);
@@ -37,6 +37,12 @@ export default function ZoomControls({ scale, transformRef, onFit }) {
   }
 
   useEffect(() => {
+    // Edit mode hides the dock via CSS but the component stays mounted; the
+    // ⌘±/0 listener kept firing with a DIFFERENT anchor (raw wrapper center)
+    // than the edit-mode pivot, injecting a net translation on every press
+    // (defect 2, 2026-08-20). Inactive = no listener at all — edit mode owns
+    // its own shortcuts.
+    if (!active) return undefined;
     function onKey(e) {
       if (!(e.metaKey || e.ctrlKey)) return;
       const tag = e.target?.tagName;
@@ -55,7 +61,7 @@ export default function ZoomControls({ scale, transformRef, onFit }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scale, onFit]);
+  }, [scale, onFit, active]);
 
   const pct = Math.round((scale || 1) * 100);
 

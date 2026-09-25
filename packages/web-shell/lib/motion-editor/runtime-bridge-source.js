@@ -46,6 +46,7 @@ function nativeMotionRuntimeBridge() {
   let heartbeatTimer = null;
   const processedRequests = new Map();
   const committedTransactions = new Map();
+  const pendingUploads = new Map(); // ponte de upload do editor completo (Task 12)
   const activeGestures = new Map();
   const SELECTABLE = [
     '[data-w-id]', '[data-wf-target]',
@@ -135,6 +136,28 @@ function nativeMotionRuntimeBridge() {
       requestId: message?.requestId,
     });
   }
+
+  // Ponte de upload (Task 12): SÓ em modo lease (origem real, não opaca). O
+  // editor completo do clone chama isto em vez de `fetch('./_uploads')` — a
+  // lease recusa POST e o clone não tem cookie de login, então o parent (que
+  // tem) faz o upload app-authed e devolve o caminho. Em legado (origem opaca
+  // 'null') a função NÃO existe, e o editor cai no fetch de sempre.
+  try {
+    if (window.origin && window.origin !== 'null') {
+      window.__uncraftRuntimeUpload = function uncraftRuntimeUpload(bytes, name) {
+        return new Promise((resolve) => {
+          if (!(bytes instanceof Uint8Array) || !bytes.length) { resolve({ error: 'invalid' }); return; }
+          const uploadId = randomIdentity('upload');
+          pendingUploads.set(uploadId, resolve);
+          const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+          emit('upload-request', { uploadId, name: String(name || ''), bytes: buffer });
+          setTimeout(() => {
+            if (pendingUploads.has(uploadId)) { pendingUploads.delete(uploadId); resolve({ error: 'timeout' }); }
+          }, 30000);
+        });
+      };
+    }
+  } catch (_) { /* window.origin pode lançar em contextos exóticos — sem ponte */ }
 
   function hash(value) {
     let result = 2166136261;
@@ -235,11 +258,38 @@ function nativeMotionRuntimeBridge() {
     return (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
   }
 
+  // The visible text of a split ROOT — an element whose DIRECT children are
+  // split tokens (lines / words / chars). Words are re-joined with spaces
+  // (SplitText drops the inter-word whitespace into its own nodes); a
+  // char-only split of one word ("CropTab™") just collapses its textContent.
+  // Returns '' for anything that is not itself a split root, so a wrapper that
+  // merely contains a split heading is never mistaken for text.
+  function splitRootText(element) {
+    if (!(element instanceof Element)) return '';
+    const kids = Array.from(element.children);
+    if (!kids.length || !kids.some((child) => child.matches(SPLIT_TOKEN))) return '';
+    const words = element.querySelectorAll('.word');
+    const raw = words.length
+      ? Array.from(words).map((word) => word.textContent).join(' ')
+      : (element.textContent || '');
+    return raw.replace(/\s+/g, ' ').trim();
+  }
+
   function directText(element) {
     if (!element) return '';
     if (element.matches('input,textarea')) return element.value || '';
     const splitLabel = element.querySelector(SPLIT_TOKEN) && element.getAttribute('aria-label');
     if (splitLabel) return splitLabel.trim();
+    // A split root WITHOUT an aria-label (farmminerals' "CropTab™" h1: every
+    // glyph in its own span, no authored label) has no direct text nodes, so
+    // the old fallback returned '' — the inline-edit overlay was born EMPTY
+    // while the original was hidden, and the logo vanished on double-click
+    // (beforeText was '' too, so any keystroke became a bogus patch). Use the
+    // tokens' visible text instead. Scoped to the split ROOT only — its direct
+    // children are tokens — never to a wrapper that merely contains a split,
+    // or a whole hero section would start reading (and editing) as one text.
+    const splitValue = splitRootText(element);
+    if (splitValue) return splitValue;
     return Array.from(element.childNodes)
       .filter((node) => node.nodeType === Node.TEXT_NODE)
       .map((node) => node.textContent)
@@ -6535,8 +6585,193 @@ function nativeMotionRuntimeBridge() {
     }
   }
 
-  function chooseElement(target) {
+  // Text the site made pointer-events:none (Webflow/GSAP animated headings do
+  // this — measured on farmminerals /promo: "Most fertilizers…", "Up to 70% of
+  // nitrogen…") is invisible to the browser's hit-test, so a click on it lands
+  // on a parent wrapper and the wrapper gets selected instead of the text. When
+  // a click resolves against a point, drill into the SMALLEST pointer-events:none
+  // text element under the cursor. Nothing on the page is mutated (that would
+  // turn click-through overlays into blockers and could wake the site's own
+  // hover/handlers) — only OUR selection resolution is refined, and only for
+  // pointer-events:none elements that actually carry text, so overlays the site
+  // made click-through are left alone.
+  // The visible pointer-events:none text under a point, inside `root` (the
+  // element the browser's hit-test landed on). Geometric, not caret-based:
+  // caretRangeFromPoint snaps to the NEAREST text, which under an overlapping
+  // wordmark is the wordmark's own (pointer-events:auto) text — measured on
+  // farmminerals: it kept returning "CropTab™" instead of the "Most
+  // fertilizers…" line beneath, so the wrapper got selected. Walks ELEMENTS only
+  // and REJECTS whole SVG subtrees (an inline Lottie is thousands of nodes with
+  // no HTML text), so a hero wrapper stays cheap to search. Selection-only path.
+  // TEXT HAS PRIORITY (Adilson, 2026-09-24): if the click lands on text, the
+  // user wants that text — over any div, wrapper, overlay graphic or
+  // pointer-events trick that would otherwise win the browser's hit-test. One
+  // rule for every site. Tie-break for text over text (a huge decorative
+  // wordmark sitting on a small line): a VISIBLE text beats a ghost one, and
+  // among equals the SMALLEST (most specific) wins. Returns the best candidate
+  // in `root`'s subtree (root included) as { el, ghost, area }, or null.
+  // Text whose box contains the point but is clipped away by an overflow
+  // ancestor is not visible there — it must not win (Astra).
+  function isClippedAt(el, x, y) {
+    let p = el.parentElement;
+    while (p && p !== document.documentElement) {
+      const overflow = getComputedStyle(p).overflow;
+      if (overflow && overflow !== 'visible') {
+        const r = p.getBoundingClientRect();
+        if (x < r.left || x > r.right || y < r.top || y > r.bottom) return true;
+      }
+      p = p.parentElement;
+    }
+    return false;
+  }
+  // A layer that PAINTS at the point (solid colour, background-image, or a
+  // raster/media element) hides everything beneath it — text behind an
+  // opaque modal must never be selected over the modal (Astra). An <svg>
+  // root does not count: it is transparent wherever nothing is drawn, and the
+  // hero's inline Lottie sits between the click and its own section's text.
+  function occludesBeneath(el) {
+    // Only CERTAIN occluders stop the search. Raster media paints its box
+    // (residual: a PNG/canvas with transparent regions still stops). An <svg>
+    // root never does (residual: an opaque SVG rect does not stop). A
+    // background-image may be a transparent PNG or an alpha gradient —
+    // coverage at the point is UNKNOWN, so it must not stop; and a colour
+    // only counts when fully opaque (alpha 0.06 is not a wall) (Astra r2).
+    if (/^(img|video|canvas|picture)$/i.test(el.tagName)) return true;
+    if (el.namespaceURI === 'http://www.w3.org/2000/svg') return false;
+    const s = getComputedStyle(el);
+    if (s.backgroundImage && s.backgroundImage !== 'none') return false;
+    const c = parseCssColor(s.backgroundColor);
+    return Boolean(c && c.alpha >= 0.98);
+  }
+  function betterTextCandidate(a, b) {
+    if (!b) return a;
+    if (!a) return b;
+    if (a.ghost !== b.ghost) return a.ghost ? b : a;
+    return a.area <= b.area ? a : b;
+  }
+  function textAtPoint(root, x, y) {
+    if (!(root instanceof Element) || typeof x !== 'number' || typeof y !== 'number') return null;
+    let best = null;
+    const consider = (el) => {
+      if (!directText(el)) return;
+      const r = el.getBoundingClientRect();
+      if (x < r.left || x > r.right || y < r.top || y > r.bottom) return;
+      // Only text the user can actually SEE at the point: ghosts (hidden /
+      // transparent / low-contrast) are EXCLUDED, not merely demoted — a
+      // hidden text must never become the selection just because it is the
+      // only candidate — and text clipped away by an overflow ancestor does
+      // not count (Astra).
+      if (isSelectionGhost(el) || isClippedAt(el, x, y)) return;
+      best = betterTextCandidate(best, { el, ghost: false, area: r.width * r.height });
+    };
+    consider(root);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+      acceptNode(node) {
+        return node.namespaceURI === 'http://www.w3.org/2000/svg'
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    let visited = 0;
+    let node;
+    while ((node = walker.nextNode())) {
+      if (++visited > 5000) break;
+      consider(node);
+    }
+    return best;
+  }
+
+  // A "ghost": an element that occupies the point but isn't meaningfully
+  // visible there — fully transparent / hidden / zero-size, or a pinned
+  // (fixed/sticky) element that a scroll-driven animation has faded and left
+  // hovering over scrolled content (farmminerals' CropTab logo does exactly
+  // this). In edit mode a click should select what the user SEES, so ghosts are
+  // skipped in favour of the visible content beneath (the Layers panel still
+  // reaches the ghost itself).
+  // rgb()/rgba() parser used by occludesBeneath. (A contrast-based "invisible
+  // text" heuristic once lived here and was removed: ancestor colours cannot
+  // establish the backdrop — white text over a dark image SIBLING read as
+  // white-on-white — and color:transparent + background-clip:text is visible.
+  // "Text wins, smallest first" already makes content beat a huge decorative
+  // wordmark wherever they overlap; where only the wordmark is, it is real.)
+  function parseCssColor(value) {
+    const m = String(value || '').match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    const parts = m[1].split(',').map((s) => parseFloat(s));
+    if (parts.length < 3 || parts.slice(0, 3).some((n) => !Number.isFinite(n))) return null;
+    return { rgb: parts.slice(0, 3), alpha: parts.length > 3 && Number.isFinite(parts[3]) ? parts[3] : 1 };
+  }
+
+  function isSelectionGhost(el) {
+    if (!(el instanceof Element)) return true;
+    if (el === document.documentElement || el === document.body) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return true;
+    // Walk the ANCESTOR chain, not just the element: a hit-testable SVG <path>
+    // is position:static but inherits the fade of a fixed/sticky wrapper (the
+    // CropTab logo is exactly this — the visible glyph is a descendant of a
+    // faded pinned layer). Effective opacity multiplies down the chain; a pinned
+    // ancestor anywhere marks the whole layer as pinned (Astra).
+    let opacity = 1;
+    let pinned = false;
+    let p = el;
+    while (p && p !== document.documentElement) {
+      const s = getComputedStyle(p);
+      if (s.visibility === 'hidden' || s.visibility === 'collapse') return true;
+      opacity *= parseFloat(s.opacity || '1');
+      if (s.position === 'fixed' || s.position === 'sticky') pinned = true;
+      p = p.parentElement;
+    }
+    if (opacity < 0.02) return true;
+    if (pinned && opacity < 0.5) return true;
+    return false;
+  }
+  function resolveVisibleTarget(event) {
+    const target = event.target;
+    if (!(target instanceof Element) || !isSelectionGhost(target)) return target;
+    const x = event.clientX;
+    const y = event.clientY;
+    if (typeof x !== 'number' || typeof y !== 'number') return target;
+    const stack = document.elementsFromPoint(x, y);
+    for (const el of stack) {
+      if (el === document.documentElement) continue;
+      if (!isSelectionGhost(el)) return el;
+    }
+    return target;
+  }
+
+  function chooseElement(target, point) {
     if (!(target instanceof Element)) return null;
+    if (point) {
+      // If the visible text actually under the cursor is a pointer-events:none
+      // element (invisible to elementFromPoint), select it instead of whatever
+      // opaque layer the browser hit. The text is a descendant of SOME layer in
+      // the hit stack — not necessarily the topmost: on farmminerals the stack
+      // under a click is [CropTab h1 (ghost), the Lottie <svg>, div.promo-hero,
+      // …] and the "Most fertilizers…" line lives under promo-hero, so drilling
+      // only the first layer found nothing. Try each non-ghost layer in order,
+      // bounded to a few layers; html/body are excluded (whole-page walk).
+      const roots = [target];
+      const stack = document.elementsFromPoint(point.x, point.y);
+      for (const el of stack) {
+        if (el === document.documentElement || el === document.body) continue;
+        if (!roots.includes(el) && !isSelectionGhost(el)) roots.push(el);
+        // Foreground occlusion: once a layer that PAINTS at the point has been
+        // searched, nothing beneath it is visible — stop there, so text behind
+        // an opaque modal can never beat the modal (its own text still can).
+        if (occludesBeneath(el)) break;
+        if (roots.length >= 6) break;
+      }
+      // Text wins: pick the best text candidate ACROSS every layer, not the first
+      // layer that has one — the click target itself is often a text (the
+      // CropTab wordmark) and must still lose to the smaller visible line under
+      // it, which lives in a deeper layer's subtree.
+      let pick = null;
+      for (const root of roots) {
+        pick = betterTextCandidate(pick, textAtPoint(root, point.x, point.y));
+      }
+      if (pick) target = pick.el;
+    }
     const textContainer = textRoot(target);
     if (textContainer) return textContainer;
     const exact = target.closest(SELECTABLE);
@@ -6600,23 +6835,79 @@ function nativeMotionRuntimeBridge() {
   }
 
   function writeSplitText(element, value) {
-    const chars = Array.from(element.querySelectorAll('.char'))
+    // Nodes WE insert are marked so a shrink or an undo can REMOVE them; the
+    // site's own nodes are only ever emptied, never removed (its animation may
+    // still hold references to them).
+    const ADDED = 'uncraftSplitAdded';
+    const isWhitespaceText = (node) => Boolean(node) && node.nodeType === 3 && /^\s+$/.test(node.textContent);
+    const leafChars = (root) => Array.from(root.querySelectorAll('.char'))
       .filter((node) => !node.querySelector('.char'));
+    // Write `glyphs` into `chars` one per node; extra glyphs clone the last
+    // char node; surplus char nodes: ours are removed, the site's are emptied.
+    const fillChars = (chars, glyphs) => {
+      chars.forEach((node, index) => {
+        if (index < glyphs.length) { node.textContent = glyphs[index]; return; }
+        if (node.dataset[ADDED]) node.remove(); else node.textContent = '';
+      });
+      if (glyphs.length > chars.length && chars.length) {
+        const template = chars.at(-1);
+        for (let index = chars.length; index < glyphs.length; index += 1) {
+          const clone = template.cloneNode(false);
+          clone.removeAttribute('style');
+          clone.dataset[ADDED] = 'true';
+          clone.textContent = glyphs[index];
+          template.parentElement.appendChild(clone);
+        }
+      }
+    };
+    // Word-aware: a split has NO char node for the whitespace between words,
+    // so writing glyphs straight through would shift every letter after the
+    // first space (Astra). Map word → .word node, glyphs → that word's chars.
+    // Extra words clone the last .word AND replicate the split's own separator
+    // (a whitespace text node between words, when it uses one) — otherwise
+    // "fertilizers" + "ever" would render as "fertilizersever" while the
+    // reconstructed string still read fine (Astra r2).
+    const words = Array.from(element.querySelectorAll('.word'))
+      .filter((node) => !node.querySelector('.word'));
+    if (words.length) {
+      const nextWords = String(value).split(/\s+/).filter(Boolean);
+      const separator = isWhitespaceText(words.at(-1).previousSibling) ? words.at(-1).previousSibling : null;
+      nextWords.forEach((word, index) => {
+        let node = words[index];
+        if (!node) {
+          const template = words.at(-1);
+          const after = template.nextSibling;
+          node = template.cloneNode(true);
+          node.removeAttribute('style');
+          node.dataset[ADDED] = 'true';
+          node.querySelectorAll('.char').forEach((c) => c.removeAttribute('style'));
+          if (separator) template.parentElement.insertBefore(separator.cloneNode(true), after);
+          template.parentElement.insertBefore(node, after);
+          words.push(node);
+        }
+        const chars = leafChars(node);
+        if (chars.length) fillChars(chars, Array.from(word));
+        else node.textContent = word;
+      });
+      for (let index = nextWords.length; index < words.length; index += 1) {
+        const node = words[index];
+        if (node.dataset[ADDED]) {
+          if (separator && isWhitespaceText(node.previousSibling)) node.previousSibling.remove();
+          node.remove();
+          continue;
+        }
+        const chars = leafChars(node);
+        if (chars.length) chars.forEach((c) => { if (c.dataset[ADDED]) c.remove(); else c.textContent = ''; });
+        else node.textContent = '';
+      }
+      return;
+    }
+    const chars = leafChars(element);
     if (!chars.length) {
       element.textContent = value;
       return;
     }
-    const glyphs = Array.from(value);
-    chars.forEach((node, index) => { node.textContent = glyphs[index] || ''; });
-    if (glyphs.length > chars.length) {
-      const template = chars.at(-1);
-      for (let index = chars.length; index < glyphs.length; index += 1) {
-        const clone = template.cloneNode(false);
-        clone.removeAttribute('style');
-        clone.textContent = glyphs[index];
-        template.parentElement.appendChild(clone);
-      }
-    }
+    fillChars(chars, Array.from(value));
   }
 
   function finishInlineTextEdit(commit = true) {
@@ -8086,6 +8377,16 @@ function nativeMotionRuntimeBridge() {
     }
     const payload = message.payload || {};
 
+    if (message.type === 'upload-result') {
+      // Resposta da ponte de upload (Task 12): o parent devolveu o caminho (ou
+      // erro) do arquivo que o editor completo pediu para subir.
+      const resolver = pendingUploads.get(payload.uploadId);
+      if (resolver) {
+        pendingUploads.delete(payload.uploadId);
+        resolver(payload.path ? { path: payload.path } : { error: payload.error || 'upload_failed' });
+      }
+      return;
+    }
     if (message.type === 'apply-transaction') {
       commitTransaction(message, payload.transaction, 'apply');
     } else if (message.type === 'rollback-transaction') {
@@ -8294,7 +8595,7 @@ function nativeMotionRuntimeBridge() {
     on(document, 'pointerleave', () => hover(null), true);
     on(document, 'pointerdown', (event) => {
       if (mode !== 'edit' || tool !== 'move' || event.button !== 0) return;
-      const element = chooseElement(event.target);
+      const element = chooseElement(resolveVisibleTarget(event), { x: event.clientX, y: event.clientY });
       if (!element) return;
       event.preventDefault();
       event.stopPropagation();
@@ -8375,7 +8676,7 @@ function nativeMotionRuntimeBridge() {
         event.stopPropagation();
         return;
       }
-      const element = chooseElement(event.target);
+      const element = chooseElement(resolveVisibleTarget(event), { x: event.clientX, y: event.clientY });
       if (!element) return;
       event.preventDefault();
       event.stopPropagation();
@@ -8384,7 +8685,7 @@ function nativeMotionRuntimeBridge() {
     }, true);
     on(document, 'dblclick', (event) => {
       if (mode !== 'edit' || tool !== 'select') return;
-      const element = chooseElement(event.target);
+      const element = chooseElement(resolveVisibleTarget(event), { x: event.clientX, y: event.clientY });
       if (!element || !isEditableText(element)) return;
       event.preventDefault();
       event.stopPropagation();
@@ -8499,6 +8800,439 @@ function nativeMotionRuntimeBridge() {
         activeTimelineId = null;
       },
     };
+    // ⭐ A PORTA DO EDITOR COMPLETO PARA O HISTÓRICO DA SESSÃO.
+    //
+    // O editor completo (editor-core) roda DENTRO deste documento e escreve no
+    // DOM. Sozinho, isso não persiste: o que sobrevive a um recarregamento são
+    // as TRANSAÇÕES do manifesto, reaplicadas pela ponte. Aqui a edição dele
+    // vira transação e sai pelo MESMO canal que o resto do runtime já usa —
+    // sem inventar histórico paralelo (advise do Sol).
+    //
+    // Só passa o que o manifesto sabe reproduzir. O que ele não sabe é recusado
+    // com motivo, nunca aceito na tela para sumir no salvar.
+    // Aprovações emitidas pela consulta prévia, consumidas no registro. Teto
+    // pequeno e descarte do mais antigo: é caderno de bilhetes, não cache.
+    const aprovacoesDeEscrita = new Map();
+
+    // Comparação de valor CSS tolerante a espaço e aspas — `"Courier New"` e
+    // `Courier New` são o mesmo valor para quem lê.
+    function normalizarValor(v) {
+      return String(v == null ? '' : v).replace(/["']/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    }
+
+    // ⚠️ RISCO ACEITO, REGISTRADO (Sol r2, e a refutação que eu tentei CAIU).
+    //
+    // Isto expõe capacidade nova. O escopo léxico da ponte — nonce, sessão,
+    // `emit`, `committedTransactions` — NÃO é alcançável pela página; esta
+    // função é. Um script do site clonado pode chamá-la e gravar transação
+    // autenticada no histórico do usuário sem gesto do editor.
+    //
+    // Fica porque o dono decidiu em 2026-08-09 (item 178) que site adversarial
+    // está FORA do modelo de ameaça deste produto, e porque o editor completo
+    // precisa de um caminho de escrita. É aceitação explícita de risco, não
+    // equivalência técnica — eu tentei argumentar equivalência e estava errado.
+    // Fechar de verdade pede realm separado, que é obra própria.
+    //
+    // `dryRun` existe porque a recusa TEM que vir antes da escrita: recusar
+    // depois deixa a mudança recusada visível na tela, que é exatamente o
+    // "aceito na tela para sumir no salvar" que esta porta veio impedir (Sol).
+    // ⚠️ O TOKEN DA SESSÃO VIVE NO CAMINHO dos assets e rotaciona quando a
+    // sessão troca. Uma url() ABSOLUTA gravada num patch aponta para token
+    // morto na sessão seguinte — medido com controle: na sessão nova a
+    // absoluta QUEBRADA, a relativa CARREGA. Normaliza-se url() da PRÓPRIA
+    // sessão para './…' relativo ao documento; url de fora fica intacta.
+    function normalizarUrlsDeSessao(valor) {
+      if (valor == null) return valor;
+      const texto = String(valor);
+      // Sem url() não há nada a normalizar: devolve o VALOR ORIGINAL, com o
+      // tipo original — stringificar um número aqui mudaria o contrato dos
+      // patches fora do caso de assets (Sol).
+      if (texto.indexOf('url(') === -1) return valor;
+      let prefixo;
+      try { prefixo = new URL('.', location.href).href; } catch (_) { return valor; }
+      return texto.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (tudo, aspas, bruto) => {
+        try {
+          const abs = new URL(bruto, location.href);
+          if (abs.href.startsWith(prefixo)) {
+            return `url(${aspas}./${abs.href.slice(prefixo.length)}${aspas})`;
+          }
+        } catch (_) { /* url ilegível fica como está */ }
+        return tudo;
+      });
+    }
+
+    // A MESMA rotação de token, para atributo que carrega a URL NUA (src,
+    // href, poster): absoluta da própria sessão vira './…'; de fora, intacta.
+    function normalizarUrlNuaDeSessao(valor) {
+      if (valor == null || valor === '') return valor;
+      const texto = String(valor);
+      let prefixo;
+      try { prefixo = new URL('.', location.href).href; } catch (_) { return valor; }
+      try {
+        const abs = new URL(texto, location.href);
+        if (abs.href.startsWith(prefixo)) return `./${abs.href.slice(prefixo.length)}`;
+      } catch (_) { /* não-URL (alt de texto livre) fica como está */ }
+      return valor;
+    }
+
+    // SONDA DE PRIORIDADE (consulta): escreve sem prioridade, compara o
+    // COMPUTADO, e restaura tudo — transição neutralizada longhand a longhand,
+    // transição em curso recusa em vez de perturbar. Movida para função própria
+    // para o validador puro e o caminho unitário usarem a MESMA sonda.
+    function sondarPrioridade(element, propriedadeCss, valor) {
+      const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
+      try {
+        if (typeof element.getAnimations !== 'function') {
+          return recusa('priority_check_failed', propriedadeCss);
+        }
+        const emCurso = element.getAnimations().some((a) => {
+          if (String(a && a.constructor && a.constructor.name) !== 'CSSTransition') return false;
+          if (a.pending) return true;
+          return a.playState !== 'idle' && a.playState !== 'finished';
+        });
+        if (emCurso) return recusa('transition_in_flight', propriedadeCss);
+      } catch (_) { return recusa('priority_check_failed', propriedadeCss); }
+
+      const LONGHANDS_TRANSICAO = ['transition-property', 'transition-duration',
+        'transition-timing-function', 'transition-delay', 'transition-behavior'];
+      const transicaoAntes = LONGHANDS_TRANSICAO.map((nome) => ({
+        nome,
+        valor: element.style.getPropertyValue(nome),
+        prioridade: element.style.getPropertyPriority(nome),
+      }));
+      const inlineAntes = element.style.getPropertyValue(propriedadeCss);
+      const prioridadeAntes = element.style.getPropertyPriority(propriedadeCss);
+      let conflito = false;
+      let sondagemFalhou = false;
+      try {
+        element.style.setProperty('transition', 'none', 'important');
+        const computadoAntes = getComputedStyle(element).getPropertyValue(propriedadeCss);
+        element.style.setProperty(propriedadeCss, String(valor == null ? '' : valor));
+        const computadoDepois = getComputedStyle(element).getPropertyValue(propriedadeCss);
+        conflito = normalizarValor(computadoAntes) === normalizarValor(computadoDepois)
+          && normalizarValor(computadoAntes) !== normalizarValor(valor);
+      } catch (_) {
+        sondagemFalhou = true;
+      } finally {
+        try {
+          if (inlineAntes) element.style.setProperty(propriedadeCss, inlineAntes, prioridadeAntes);
+          else element.style.removeProperty(propriedadeCss);
+          element.style.removeProperty('transition');
+          for (const item of transicaoAntes) {
+            if (item.valor) element.style.setProperty(item.nome, item.valor, item.prioridade);
+            else element.style.removeProperty(item.nome);
+          }
+        } catch (_) { sondagemFalhou = true; }
+      }
+      if (sondagemFalhou) return recusa('priority_check_failed', propriedadeCss);
+      if (conflito) return recusa('priority_conflict', propriedadeCss);
+      return { ok: true };
+    }
+
+    // Atributo entra por LISTA: cada nome novo é semântica nova (url que
+    // rotaciona, srcset com parser próprio) e entra com prova própria.
+    // `srcset` com VALOR só é aceito quando NÃO contém url da própria sessão
+    // (o caso do UNDO restaurando o srcset ORIGINAL do site — que nunca é
+    // tokenizado); com url de sessão dentro, exige o parser de candidatos
+    // (lição 185) e recusa até existir um.
+    function validarAtributo(property, valor) {
+      const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
+      const ATRIBUTOS_PERMITIDOS = ['src', 'srcset', 'href', 'alt', 'poster'];
+      if (!property) return recusa('missing_property');
+      if (ATRIBUTOS_PERMITIDOS.indexOf(String(property).toLowerCase()) === -1) {
+        return recusa('attribute_not_allowed', String(property));
+      }
+      if (String(property).toLowerCase() === 'srcset' && valor != null && String(valor) !== '') {
+        let prefixo = null;
+        try { prefixo = new URL('.', location.href).href; } catch (_) { prefixo = null; }
+        if (prefixo && String(valor).indexOf(prefixo) !== -1) {
+          return recusa('attribute_not_allowed', 'srcset com url de sessao exige parser de candidatos');
+        }
+      }
+      return { ok: true };
+    }
+
+    // IDENTIDADE QUE SOBREVIVE AO RELOAD, extraída para os três kinds: só
+    // id/data-w-id AUTORAIS voltam (posição não sobrevive; item 180), e
+    // ambiguidade também não volta (o replay exige candidato único).
+    function validarIdentidade(element) {
+      const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
+      const elementId = ensureElementId(element);
+      if (!elementId) return recusa('no_identity');
+      const semente = elementIdSeed(element);
+      if (!/^(?:webflow:|id:)/.test(String(semente))) return recusa('unstable_identity');
+      try {
+        const iguais = document.querySelectorAll(
+          semente.slice(0, 8) === 'webflow:'
+            ? `[data-w-id="${CSS.escape(semente.slice(8))}"]`
+            : `[id="${CSS.escape(semente.slice(3))}"]`,
+        );
+        if (iguais.length !== 1) return recusa('ambiguous_identity', String(iguais.length));
+      } catch (_) {
+        return recusa('ambiguous_identity');
+      }
+      return { ok: true, elementId };
+    }
+
+    // VALIDADOR PURO das guardas de escrita de estilo — NENHUM efeito no
+    // caderno de aprovações. Extraído para o lote validar pelas MESMAS regras
+    // sem emitir bilhete unitário: a versão anterior re-consultava membro a
+    // membro no commit do lote e cada consulta emitia bilhete no caderno de
+    // teto 64 — um lote grande expulsava o PRÓPRIO bilhete de lote antes da
+    // conferência (Sol). A sonda de prioridade restaura tudo que toca.
+    function validarEscritaDeEstilo(element, edit) {
+      const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
+      if (!(element instanceof Element)) return recusa('no_element');
+      const property = edit && edit.property == null ? null : String(edit && edit.property);
+      if (!property) return recusa('missing_property');
+      const propriedadeCss = property.startsWith('--')
+        ? property
+        : property.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+      const idn = validarIdentidade(element);
+      if (!idn.ok) return idn;
+      const elementId = idn.elementId;
+      const CONTRIBUEM_PARA = {
+        transform: ['x', 'y', 'z', 'xpercent', 'ypercent',
+          'translatex', 'translatey', 'translatez', 'translate',
+          'rotate', 'rotation', 'rotationx', 'rotationy', 'rotationz', 'rotatex', 'rotatey', 'rotatez',
+          'scale', 'scalex', 'scaley', 'scalez',
+          'skew', 'skewx', 'skewy',
+          'perspective', 'transformorigin', 'transform'],
+      };
+      const canal = (nome) => {
+        const n = String(semanticProperty(nome) || '').toLowerCase().replace(/-/g, '');
+        for (const [alvoCanal, membros] of Object.entries(CONTRIBUEM_PARA)) {
+          if (membros.indexOf(n) !== -1) return alvoCanal;
+        }
+        return n;
+      };
+      const canalDaEscrita = canal(property);
+      const clips = inspectMotion(element) || [];
+      for (const clip of clips) {
+        const tracks = (clip && clip.tracks) || [];
+        if (!tracks.length) return recusa('motion_uninspectable', clip && clip.id);
+        for (const track of tracks) {
+          if (canal(track.property) === canalDaEscrita) return recusa('motion_owned', canalDaEscrita);
+        }
+      }
+      const sondagem = sondarPrioridade(element, propriedadeCss, edit.value);
+      if (!sondagem.ok) return sondagem;
+      return { ok: true, elementId, propriedadeCss };
+    }
+
+    window.__uncraftEditorCommit = function editorCommit(element, edit, options) {
+      const dryRun = !!(options && options.dryRun);
+      const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
+      if (!(element instanceof Element)) return recusa('no_element');
+      const kind = edit && edit.kind;
+      // Os três kinds que o REPLAY sempre soube aplicar (applyPatchOrThrow
+      // trata style/text/attribute, incluindo split-text com marcador de
+      // rebind) — a porta valida e registra pelos MESMOS ritos.
+      if (kind !== 'style' && kind !== 'text' && kind !== 'attribute') {
+        return recusa('unsupported_kind', String(kind || ''));
+      }
+      const property = edit.property == null ? null : String(edit.property);
+      if (kind === 'style' && !property) return recusa('missing_property');
+      if (kind === 'attribute') {
+        const va = validarAtributo(property, edit.value);
+        if (!va.ok) return va;
+      }
+      if (kind === 'text' && property) return recusa('unsupported_kind', 'text nao tem property');
+      if (kind === 'text') {
+        // Um patch text replay-a como textContent — markup AUTORAL (link,
+        // strong) seria achatado. Filho que não é artefato de split = recusa;
+        // artefatos de split PODEM (o replay já trata: textContent + marcador
+        // de rebind + aria-label). gsap_split_* cobre o split observado no
+        // clone real, fora do SPLIT_TOKEN padrão.
+        const artefatoDeSplit = (el2) => {
+          try { return el2.matches(SPLIT_TOKEN) || /(^|\s)gsap_split/.test(String(el2.className || '')); } catch (_) { return false; }
+        };
+        for (const filho of element.children) {
+          if (!artefatoDeSplit(filho)) return recusa('rich_text', filho.tagName.toLowerCase());
+        }
+      }
+      // ⚠️ O editor manda camelCase (`fontFamily`) e `style.setProperty` exige
+      // hífen (`font-family`) — com camelCase a sonda era NO-OP, o computado
+      // não mudava, e TODA propriedade de mais de uma palavra caía em
+      // priority_conflict FALSO. Era exatamente o "só troca cor". Normaliza-se
+      // UMA vez na fronteira e o nome css vale em sonda, chave de aprovação e
+      // patch gravado (o replay aplica com o mesmo setProperty). Propriedade
+      // custom (--x) fica como está.
+      const propriedadeCss = kind === 'style'
+        ? (property.startsWith('--') ? property : property.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`))
+        : null;   // text não tem property; attribute usa o nome da lista como veio
+      // valor e before normalizados ANTES de tudo: sonda, chave e patch veem
+      // o mesmo texto — url() da sessão vira relativa aqui. Atributos de URL
+      // carregam a URL NUA (sem `url()`): normalização própria.
+      const normalizarPorKind = (v) => {
+        if (kind === 'attribute' && ['src', 'href', 'poster'].indexOf(property.toLowerCase()) !== -1) {
+          return normalizarUrlNuaDeSessao(v);
+        }
+        return normalizarUrlsDeSessao(v);
+      };
+      edit = { ...edit, value: normalizarPorKind(edit.value), before: normalizarPorKind(edit.before) };
+
+      if (dryRun) {
+        // style: VALIDADOR PURO completo (identidade, canal de animação, sonda
+        // de prioridade). text/attribute: guarda de IDENTIDADE — não há canal
+        // de estilo para sondar, e o replay já sabe aplicar os dois (o caso
+        // split-text inclusive, com o marcador de rebind que o applyPatch
+        // planta). A aprovação amarra kind+elemento+propriedade+before+valor.
+        let elementIdAprovado;
+        if (kind === 'style') {
+          const v = validarEscritaDeEstilo(element, { property, value: edit.value });
+          if (!v.ok) return v;
+          elementIdAprovado = v.elementId;
+        } else {
+          const idn = validarIdentidade(element);
+          if (!idn.ok) return idn;
+          elementIdAprovado = idn.elementId;
+        }
+        // `before` entra na chave, e a serialização é INJETIVA: concatenar
+        // com `|` colide quando um valor contém `|` ("a|b"+"c" == "a"+"b|c"),
+        // reabrindo a troca de estado sob o mesmo bilhete (Sol, 2 rodadas).
+        const chave = JSON.stringify([kind, elementIdAprovado, kind === 'style' ? propriedadeCss : property, normalizarValor(edit.before), normalizarValor(edit.value)]);
+        const bilhete = randomIdentity('approval');
+        aprovacoesDeEscrita.set(chave, bilhete);
+        if (aprovacoesDeEscrita.size > 64) {
+          aprovacoesDeEscrita.delete(aprovacoesDeEscrita.keys().next().value);
+        }
+        return { ok: true, dryRun: true, approval: bilhete };
+      }
+
+      // ⚠️ O registro NÃO repete a validação: o DOM já mudou (o editor escreve
+      // entre a consulta e o registro) e re-sondar sobre o estado alterado
+      // devolvia `priority_conflict` falso (Sol). Ele apresenta a APROVAÇÃO.
+      const elementId = ensureElementId(element);
+      if (!elementId) return recusa('no_identity');
+      const chave = JSON.stringify([kind, elementId, kind === 'style' ? propriedadeCss : property, normalizarValor(edit.before), normalizarValor(edit.value)]);
+      const aprovacao = edit.approval == null ? null : String(edit.approval);
+      if (!aprovacao || aprovacoesDeEscrita.get(chave) !== aprovacao) {
+        return recusa('needs_preflight', property);
+      }
+      aprovacoesDeEscrita.delete(chave);
+
+      const transaction = {
+        id: randomIdentity('transaction'),
+        requestId: randomIdentity('runtime-gesture'),
+        source: 'properties',
+        createdAt: new Date().toISOString(),
+        runtimeGeneration,
+        patches: [{
+          id: randomIdentity('patch'),
+          elementId,
+          kind,
+          property: kind === 'style' ? propriedadeCss : (kind === 'attribute' ? property : null),
+          motionId: null,
+          before: edit.before == null ? null : String(edit.before),
+          value: edit.value == null ? null : String(edit.value),
+        }],
+      };
+      if (transaction.patches[0].before === transaction.patches[0].value) {
+        return recusa('no_change');
+      }
+      committedTransactions.set(transaction.id, transaction);
+      emit('transaction-committed', {
+        transaction,
+        operation: 'runtime-gesture',
+        originatedByRuntime: true,
+        element: describe(element),
+      }, { protocol: PROTOCOL_V2, requestId: transaction.requestId });
+      return { ok: true, transactionId: transaction.id };
+    };
+
+    // ⚠️ LOTE ATÔMICO. O caminho wrapper→descendentes com id do editor
+    // precisava de N consultas + N registros — e o caderno de aprovações tem
+    // teto de 64: acima disso os primeiros bilhetes eram expulsos e o commit
+    // devolvia needs_preflight DEPOIS do DOM já escrito — mudança parcial na
+    // tela que não persiste, exatamente o estado que a porta existe para
+    // impedir (Sol). Aqui: TODAS as entradas validam pelas MESMAS guardas, um
+    // bilhete só para o lote, UMA transação com N patches — ou nada.
+    window.__uncraftEditorCommitBatch = function editorCommitBatch(entries, options) {
+      const dryRun = !!(options && options.dryRun);
+      const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
+      if (!Array.isArray(entries) || !entries.length) return recusa('empty_batch');
+      if (entries.length > 200) return recusa('batch_too_large', String(entries.length));
+      const validadas = [];
+      for (let i = 0; i < entries.length; i += 1) {
+        let e = entries[i] || {};
+        // As MESMAS guardas do caminho unitário, pelo VALIDADOR PURO por KIND
+        // — sem emitir bilhete unitário nenhum (a versão por-membro enchia o
+        // caderno de teto 64 e expulsava o próprio bilhete do lote; Sol).
+        // O lote aceita style, attribute e text: é o que o UNDO precisa para
+        // reverter src+srcset (ou N estilos de cascata) numa transação SÓ.
+        const kindE = e.kind || 'style';
+        const normE = (v2) => (kindE === 'attribute'
+          && ['src', 'href', 'poster'].indexOf(String(e.property || '').toLowerCase()) !== -1)
+          ? normalizarUrlNuaDeSessao(v2)
+          : normalizarUrlsDeSessao(v2);
+        e = { ...e, value: normE(e.value), before: normE(e.before) };
+        let membro;
+        if (kindE === 'style') {
+          const v = validarEscritaDeEstilo(e.element, { property: e.property, value: e.value });
+          if (!v.ok) return recusa('batch_member_refused', `${i}:${v.reason || 'unknown'}`);
+          membro = { elementId: v.elementId, propriedadeCss: v.propriedadeCss };
+        } else if (kindE === 'attribute' || kindE === 'text') {
+          if (kindE === 'attribute') {
+            const va = validarAtributo(e.property, e.value);
+            if (!va.ok) return recusa('batch_member_refused', `${i}:${va.reason || 'unknown'}`);
+          }
+          if (kindE === 'text' && e.property) return recusa('batch_member_refused', `${i}:unsupported_kind`);
+          const idn = validarIdentidade(e.element);
+          if (!idn.ok) return recusa('batch_member_refused', `${i}:${idn.reason || 'unknown'}`);
+          membro = { elementId: idn.elementId, propriedadeCss: kindE === 'attribute' ? String(e.property) : null };
+        } else {
+          return recusa('batch_member_refused', `${i}:unsupported_kind`);
+        }
+        validadas.push({
+          element: e.element,
+          kind: kindE,
+          elementId: membro.elementId,
+          propriedadeCss: membro.propriedadeCss,
+          before: e.before == null ? null : String(e.before),
+          value: e.value == null ? null : String(e.value),
+        });
+      }
+      const chaveLote = JSON.stringify(validadas.map((v) => [v.kind, v.elementId, v.propriedadeCss, normalizarValor(v.before), normalizarValor(v.value)]));
+      if (dryRun) {
+        const bilhete = randomIdentity('batch-approval');
+        aprovacoesDeEscrita.set(`batch:${chaveLote}`, bilhete);
+        if (aprovacoesDeEscrita.size > 256) {
+          aprovacoesDeEscrita.delete(aprovacoesDeEscrita.keys().next().value);
+        }
+        return { ok: true, dryRun: true, approval: bilhete, entries: validadas.length };
+      }
+      const aprovacao = options && options.approval == null ? null : String(options.approval);
+      if (!aprovacao || aprovacoesDeEscrita.get(`batch:${chaveLote}`) !== aprovacao) {
+        return recusa('needs_preflight', 'batch');
+      }
+      aprovacoesDeEscrita.delete(`batch:${chaveLote}`);
+      const transaction = {
+        id: randomIdentity('transaction'),
+        requestId: randomIdentity('runtime-gesture'),
+        source: 'properties',
+        createdAt: new Date().toISOString(),
+        runtimeGeneration,
+        patches: validadas.map((v) => ({
+          id: randomIdentity('patch'),
+          elementId: v.elementId,
+          kind: v.kind,
+          property: v.propriedadeCss,
+          motionId: null,
+          before: v.before,
+          value: v.value,
+        })),
+      };
+      committedTransactions.set(transaction.id, transaction);
+      emit('transaction-committed', {
+        transaction,
+        operation: 'runtime-gesture',
+        originatedByRuntime: true,
+        element: describe(validadas[0].element),
+      }, { protocol: PROTOCOL_V2, requestId: transaction.requestId });
+      return { ok: true, transactionId: transaction.id, patches: transaction.patches.length };
+    };
+
     announce();
   }
 

@@ -2,9 +2,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const verifyRuntimeSessionToken = vi.fn();
 const runtimeRequestUsesConfiguredOrigin = vi.fn();
-vi.mock('../../../../../lib/motion-editor/runtime-session-token.js', () => ({
+vi.mock('../../../../../lib/motion-editor/runtime-session-token.js', async (original) => ({
   verifyRuntimeSessionToken,
   runtimeRequestUsesConfiguredOrigin,
+  // O vocabulario de erros do token e' REAL, nao dublado: o gateway deriva os
+  // motivos dele, e dublar aqui faria a guarda comparar copia com copia.
+  TOKEN_VERIFICATION_ERRORS: (await original()).TOKEN_VERIFICATION_ERRORS,
 }));
 
 const sqlMock = vi.fn();
@@ -19,7 +22,7 @@ vi.mock('../../../../../lib/native-clone/bundle-store.js', () => ({
   indexedAssetKey: (root, path) => `${root}/assets/${path}`,
 }));
 
-const { GET } = await import('./route.js');
+const { GET, POST, OPTIONS, __limparCacheDeSessaoParaTestes, __tamanhoDoCacheParaTestes } = await import('./route.js');
 
 const NODE_ID = '11111111-1111-4111-8111-111111111111';
 const BUNDLE_ID = '22222222-2222-4222-8222-222222222222';
@@ -56,6 +59,7 @@ function runtimeRow(overrides = {}) {
       { path: 'vendor/chunk.js', contentType: 'text/javascript; charset=utf-8', byteLength: 1, contentHash: JS_HASH },
       { path: 'media/a.webp', contentType: 'image/webp', byteLength: 1, contentHash: JS_HASH },
       { path: 'media/b.webp', contentType: 'image/webp', byteLength: 1, contentHash: JS_HASH },
+      { path: 'media/v.mp4', contentType: 'video/mp4', byteLength: 20, contentHash: JS_HASH },
     ],
     runtime_fingerprint: FINGERPRINT,
     reconstruction_capabilities: { detectedEngines: ['waapi'], candidateControls: [] },
@@ -72,6 +76,7 @@ function context(path = ['index.html'], token = 'signed-token') {
 }
 
 beforeEach(() => {
+  __limparCacheDeSessaoParaTestes();
   verifyRuntimeSessionToken.mockReset();
   verifyRuntimeSessionToken.mockReturnValue({
     payload: {
@@ -120,6 +125,35 @@ describe('GET /api/runtime/[token]/[...path]', () => {
     expect(response.headers.get('strict-transport-security')).toContain('includeSubDomains');
   });
 
+  it('refuses any request carrying Service-Worker: script (registration fetch) with 403 no-store', async () => {
+    // Enforcement, não intenção (spec §4): com allow-same-origin o script
+    // capturado pode tentar registrar SW; o fetch de registro carrega este
+    // header e é o ponto de recusa determinístico. worker-src não serve —
+    // não distingue Worker legítimo de ServiceWorker.
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(new TextEncoder().encode('// sw'));
+    const response = await GET(request('assets/app.js', { 'service-worker': 'script' }), context(['assets', 'app.js']));
+    expect(response.status).toBe(403);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('the same path WITHOUT the Service-Worker header serves normally (control arm)', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(new TextEncoder().encode('plain-text-body'));
+    const response = await GET(request('media/a.webp', {}), context(['media', 'a.webp']));
+    expect(response.status).toBe(200);
+  });
+
+  it('only serves sessions that have not expired server-side (defect 1, 2026-08-20)', async () => {
+    // The runtime token now lives 4h; the session row is the revocation
+    // authority, so the gateway query must also enforce expires_at.
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(new TextEncoder().encode('<html></html>'));
+    await GET(request(), context());
+    const sqlText = sqlMock.mock.calls[0][0].join('?');
+    expect(sqlText).toMatch(/expires_at\s*>\s*NOW\(\)/i);
+  });
+
   it('returns declared binary bytes unchanged with immutable hash caching', async () => {
     const bytes = new TextEncoder().encode('binary-like-/assets/must-not-be-rewritten');
     sqlMock._results = [[runtimeRow()]];
@@ -131,6 +165,55 @@ describe('GET /api/runtime/[token]/[...path]', () => {
     expect(response.headers.get('cache-control')).toContain('immutable');
     expect(response.headers.get('etag')).toContain(JS_HASH);
     expect(response.headers.get('content-type')).toContain('image/webp');
+  });
+
+  // ⚠️ Sem faixa de bytes o <video> ATE' toca (baixa tudo e reproduz do
+  // comeco) mas nao PROCURA: `currentTime = 2` fica em zero — medido no clone
+  // real. E o site clonado tem um <video class="scroll-video"> cuja animacao
+  // inteira e' o quadro seguindo a rolagem, entao a coreografia some.
+  it('serve faixa de bytes, que e o que faz video buscar quadro', async () => {
+    const bytes = new TextEncoder().encode('0123456789abcdefghij');   // 20 bytes
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(bytes);
+    const r = await GET(request('media/v.mp4', { range: 'bytes=5-9' }), context(['media', 'v.mp4']));
+    expect(r.status).toBe(206);
+    expect(r.headers.get('content-range')).toBe('bytes 5-9/20');
+    expect(r.headers.get('accept-ranges')).toBe('bytes');
+    expect(new TextDecoder().decode(await r.arrayBuffer())).toBe('56789');
+  });
+
+  it('anuncia faixas mesmo sem pedido, e recusa a insatisfazivel com 416', async () => {
+    const bytes = new TextEncoder().encode('0123456789');
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(bytes);
+    const inteiro = await GET(request('media/v.mp4'), context(['media', 'v.mp4']));
+    // Sem `Accept-Ranges` o navegador nem TENTA procurar: anunciar e' parte
+    // da correcao, nao enfeite.
+    expect(inteiro.status).toBe(200);
+    expect(inteiro.headers.get('accept-ranges')).toBe('bytes');
+
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(bytes);
+    const fora = await GET(request('media/v.mp4', { range: 'bytes=50-60' }), context(['media', 'v.mp4']));
+    expect(fora.status).toBe(416);
+    expect(fora.headers.get('content-range')).toBe('bytes */10');
+  });
+
+  // `If-Range` que nao casa com a etiqueta significa que a representacao mudou:
+  // servir a faixa faria o cliente remontar bytes de versoes diferentes.
+  it('ignora a faixa quando If-Range nao casa com a etiqueta', async () => {
+    const bytes = new TextEncoder().encode('0123456789');
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(bytes);
+    const velho = await GET(request('media/v.mp4', { range: 'bytes=2-4', 'if-range': '"sha256:outro"' }), context(['media', 'v.mp4']));
+    expect(velho.status).toBe(200);
+    expect(new TextDecoder().decode(await velho.arrayBuffer())).toBe('0123456789');
+
+    sqlMock._results = [[runtimeRow()]];
+    store.read.mockResolvedValue(bytes);
+    const certo = await GET(request('media/v.mp4', { range: 'bytes=2-4', 'if-range': `"${JS_HASH}"` }), context(['media', 'v.mp4']));
+    expect(certo.status).toBe(206);
+    expect(new TextDecoder().decode(await certo.arrayBuffer())).toBe('234');
   });
 
   it('rebases stylesheet and module dependencies without injecting the bridge into them', async () => {
@@ -223,3 +306,195 @@ describe('GET /api/runtime/[token]/[...path]', () => {
     expect(store.read.mock.calls[1][0]).toContain(otherBundleId);
   });
 });
+
+describe('a falha deixa de ser muda', () => {
+  // O caminho de SUCESSO permite que o editor emoldure a pagina; o de falha
+  // dizia `frame-ancestors 'none'`, entao a unica tela onde alguem leria a
+  // mensagem era justamente a que o navegador se recusava a desenhar. Quadro
+  // branco, sem motivo, ate o batimento desistir. A pagina segue INERTE
+  // (`default-src 'none'`) — so' deixa de ser invisivel.
+  it('a pagina de erro pode ser desenhada dentro do app', async () => {
+    verifyRuntimeSessionToken.mockReturnValueOnce({ error: 'expired' });
+    const response = await GET(request(), context());
+    const csp = response.headers.get('content-security-policy');
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).not.toContain("frame-ancestors 'none'");
+    expect(csp).toMatch(/frame-ancestors (?:'self'|https?:\/\/)/);
+  });
+
+  // O motivo e' vocabulario interno: em producao fica so' no log. Fora dela,
+  // exige opt-in EXPLICITO — nao basta "nao e' producao", que pegaria staging
+  // publico (Sol).
+  it('o motivo so viaja com opt-in explicito, e nunca em producao', async () => {
+    const anterior = process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES;
+    try {
+      delete process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES;
+      verifyRuntimeSessionToken.mockReturnValueOnce({ error: 'expired' });
+      let r = await GET(request(), context());
+      expect(r.headers.get('x-uncraft-runtime-failure')).toBe(null);
+
+      process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES = '1';
+      verifyRuntimeSessionToken.mockReturnValueOnce({ error: 'expired' });
+      r = await GET(request(), context());
+      expect(r.headers.get('x-uncraft-runtime-failure')).toBe('token_expired');
+    } finally {
+      if (anterior == null) delete process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES;
+      else process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES = anterior;
+    }
+  });
+
+  // Corpo e status identicos entre motivos: quem le a pagina nao aprende nada
+  // sobre o gateway (Sol).
+  it('o corpo nao carrega o motivo', async () => {
+    process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES = '1';
+    verifyRuntimeSessionToken.mockReturnValueOnce({ error: 'expired' });
+    const corpo = await (await GET(request(), context())).text();
+    expect(corpo).not.toContain('token_expired');
+    expect(corpo).toContain("This website couldn't be opened.");
+    delete process.env.UNCRAFT_RUNTIME_DEBUG_FAILURES;
+  });
+});
+
+// Guarda: um motivo novo no codigo nao pode ficar fora do vocabulario sem que
+// alguem perceba — a omissao seria silenciosa, que e' o defeito que o motivo
+// veio curar.
+it('todo motivo escrito na rota esta no vocabulario fechado', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { MOTIVOS_DE_FALHA } = await import('../../../../../lib/motion-editor/runtime-failure-reasons.js');
+  const fonte = readFileSync('app/api/runtime/[token]/[...path]/route.js', 'utf8');
+  const literais = [...fonte.matchAll(/inertFailure\(request,\s*'([a-z_]+)'/g)].map((m) => m[1]);
+  expect(literais.length).toBeGreaterThan(4);
+  for (const motivo of literais) expect(MOTIVOS_DE_FALHA.has(motivo)).toBe(true);
+  // E o ramo derivado: `token_${erro}` cobre TODO erro que o verificador emite.
+  const { TOKEN_VERIFICATION_ERRORS } = await import('../../../../../lib/motion-editor/runtime-session-token.js');
+  for (const e of TOKEN_VERIFICATION_ERRORS) expect(MOTIVOS_DE_FALHA.has(`token_${e}`)).toBe(true);
+});
+// ── UPLOAD de imagem NOVA, por no' ───────────────────────────────────────────
+// O editor vive numa origem opaca sem cookies: a UNICA credencial dele e' o
+// token da sessao no caminho. O upload entra por POST no portao, guardado POR
+// NO' (sobrevive a rotacao de sessao e ao re-clone), nome por HASH do conteudo,
+// e so' raster FAREJADO pelos bytes magicos — o tipo declarado pelo cliente e'
+// desejo, nao fato; e SVG fica fora (carrega script).
+describe('POST _uploads — imagem nova para o clone', () => {
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 73, 72, 68, 82]);
+  function postReq(body, headers = {}) {
+    return new Request('http://runtime.test/api/runtime/signed-token/_uploads', {
+      method: 'POST', headers: { 'content-type': 'application/octet-stream', ...headers }, body,
+    });
+  }
+  it('token invalido e recusado inerte, como no GET', async () => {
+    verifyRuntimeSessionToken.mockReturnValueOnce({ error: 'expired' });
+    const r = await POST(postReq(PNG), context(['_uploads']));
+    expect(r.status).toBe(404);
+  });
+  it('farejamento decide: png entra com nome por hash; texto vestido de png nao', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    store.putImmutable = vi.fn(async () => ({}));
+    const ok = await POST(postReq(PNG, { 'content-type': 'image/png' }), context(['_uploads']));
+    expect(ok.status).toBe(200);
+    const json = await ok.json();
+    expect(json.path).toMatch(/^\.\/_uploads\/[0-9a-f]{16,}\.png$/);
+
+    sqlMock._results = [[runtimeRow()]];
+    const lixo = await POST(postReq(new TextEncoder().encode('<svg onload=alert(1)>'), { 'content-type': 'image/png' }), context(['_uploads']));
+    expect(lixo.status).toBe(415);
+  });
+  it('teto de tamanho recusa com 413', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    const grande = new Uint8Array(9 * 1024 * 1024);
+    grande.set(PNG.subarray(0, 8), 0);
+    const r = await POST(postReq(grande, { 'content-type': 'image/png' }), context(['_uploads']));
+    expect(r.status).toBe(413);
+  });
+});
+
+// A origem do editor e' OPACA: todo fetch dele chega com Origin: null e um
+// POST de Blob image/* dispara preflight. Sem OPTIONS + ACAO a resposta nem
+// e' legivel e o upload sempre cairia no fallback (Sol). Sem credenciais no
+// cabecalho (a capacidade E' o token no caminho), ACAO '*' e' seguro.
+describe('CORS do _uploads — origem opaca fala com o portao', () => {
+  it('OPTIONS responde o preflight', async () => {
+    const r = await OPTIONS(new Request('http://runtime.test/api/runtime/signed-token/_uploads', { method: 'OPTIONS' }), context(['_uploads']));
+    expect(r.status).toBe(204);
+    expect(r.headers.get('access-control-allow-origin')).toBe('*');
+    expect(r.headers.get('access-control-allow-methods')).toContain('POST');
+    expect(r.headers.get('access-control-allow-headers')).toContain('content-type');
+  });
+  it('POST e respostas de erro carregam ACAO (senao o frame nao LE o status)', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    store.putImmutable = vi.fn(async () => ({}));
+    const PNG2 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+    const ok = await POST(new Request('http://runtime.test/api/runtime/signed-token/_uploads', { method: 'POST', body: PNG2 }), context(['_uploads']));
+    expect(ok.headers.get('access-control-allow-origin')).toBe('*');
+    sqlMock._results = [[runtimeRow()]];
+    const lixo = await POST(new Request('http://runtime.test/api/runtime/signed-token/_uploads', { method: 'POST', body: 'texto' }), context(['_uploads']));
+    expect(lixo.status).toBe(415);
+    expect(lixo.headers.get('access-control-allow-origin')).toBe('*');
+  });
+});
+
+describe('GET _uploads — o portao serve o upload do no', () => {
+  it('serve pelo caminho _uploads com cache imutavel', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    const corpo = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    store.read.mockResolvedValueOnce(corpo);
+    const r = await GET(request('_uploads/abcdef0123456789.png'), context(['_uploads', 'abcdef0123456789.png']));
+    expect(r.status).toBe(200);
+    expect(r.headers.get('content-type')).toBe('image/png');
+    expect(r.headers.get('cache-control')).toContain('immutable');
+    expect(Array.from(new Uint8Array(await r.arrayBuffer()))).toEqual(Array.from(corpo));
+  });
+});
+// ── O CUSTO DO PORTAO: uma pergunta ao banco POR ARQUIVO ─────────────────────
+// Cada pedido de asset consultava a linha da sessao INTEIRA — com asset_index
+// (365 itens, ~70-100KB) e draft_manifest — toda vez. Um clone aberto ≈ 370
+// consultas ≈ dezenas de MB de trafego de banco POR ABERTURA; foi isso que
+// estourou a cota do Neon em dois dias de provas. Cache por TOKEN com TTL
+// CURTO: a primeira consulta paga, as ~369 seguintes leem da memoria.
+// ⚠️ TRADEOFF DECLARADO: a revogacao (status/expires na linha, decisao de
+// 2026-08-20) passa a valer em ate TTL segundos — 20s contra um token de 4h.
+describe('cache curto da sessao no portao', () => {
+  it('N pedidos do mesmo token = UMA consulta ao banco dentro do TTL', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    const antes = sqlMock.mock.calls.length;
+    const bytes = new TextEncoder().encode('x');
+    store.read.mockResolvedValue(bytes);
+    await GET(request('media/a.webp'), context(['media', 'a.webp']));
+    await GET(request('media/b.webp'), context(['media', 'b.webp']));
+    await GET(request('media/a.webp'), context(['media', 'a.webp']));
+    const consultas = sqlMock.mock.calls.length - antes;
+    expect(consultas).toBe(1);
+  });
+  it('hit no cache serve MESMO com o banco fora (e para isso o cache existe)', async () => {
+    sqlMock._results = [[runtimeRow()]];
+    const bytes = new TextEncoder().encode('x');
+    store.read.mockResolvedValue(bytes);
+    await GET(request('media/a.webp'), context(['media', 'a.webp']));   // popula
+    sqlMock.mockImplementationOnce(() => Promise.reject(new Error('quota')));
+    const r = await GET(request('media/b.webp'), context(['media', 'b.webp']));
+    expect(r.status).toBe(200);   // hit: nem tocou o banco
+  });
+
+  it('o teto de 64 expulsa o mais antigo — o cache nao cresce sem fim', async () => {
+    const bytes = new TextEncoder().encode('x');
+    store.read.mockResolvedValue(bytes);
+    for (let i = 0; i < 70; i += 1) {
+      sqlMock._results = [[runtimeRow()]];
+      await GET(new Request(`http://runtime.test/api/runtime/token-${i}/media/a.webp`),
+        { params: Promise.resolve({ token: `token-${i}`, path: ['media', 'a.webp'] }) });
+    }
+    expect(__tamanhoDoCacheParaTestes()).toBeLessThanOrEqual(64);
+  });
+
+  it('token DIFERENTE nao le o cache alheio', async () => {
+    sqlMock._results = [[runtimeRow()], [runtimeRow()]];
+    const antes = sqlMock.mock.calls.length;
+    const bytes = new TextEncoder().encode('x');
+    store.read.mockResolvedValue(bytes);
+    await GET(request('media/a.webp'), context(['media', 'a.webp']));
+    await GET(new Request('http://runtime.test/api/runtime/outro-token/media/a.webp'), { params: Promise.resolve({ token: 'outro-token', path: ['media', 'a.webp'] }) });
+    expect(sqlMock.mock.calls.length - antes).toBe(2);
+  });
+});
+
+

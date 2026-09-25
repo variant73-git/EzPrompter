@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { injectRuntimeBridge, rewriteRuntimePaths } from './native-clone-gateway.js';
+import { injectRuntimeBridge, rewriteRuntimePaths,
+  fullEditorEnabled,
+} from './native-clone-gateway.js';
 
 describe('native clone gateway', () => {
   it('rewrites quoted, CSS, and srcset root assets', () => {
@@ -131,5 +133,99 @@ describe('native clone gateway', () => {
     const decoyClose = result.indexOf('-->', decoyOpen);
     expect(policyAt).toBeGreaterThan(-1);
     expect(policyAt > decoyOpen && policyAt < decoyClose).toBe(false);
+  });
+});
+
+// ── O editor completo dentro do clone ───────────────────────────────────────
+describe('editor completo no clone', () => {
+  // DESLIGADO por padrao (Adilson, 2026-09-22): o clone e' o SITE, nao a
+  // ferramenta de edicao. Toda edicao vive nos paineis DE FORA; o editor-core
+  // dentro do iframe era "editor dentro de editor" e foi retirado do padrao.
+  // Opt-in explicito ('1'/'on'/'true') so' para depurar.
+  it('fica DESLIGADO por padrao, com opt-in explicito', () => {
+    expect(fullEditorEnabled({})).toBe(false);
+    expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: '1' })).toBe(true);
+    expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: 'on' })).toBe(true);
+    expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: '0' })).toBe(false);
+    expect(fullEditorEnabled({ UNCRAFT_CLONE_FULL_EDITOR: 'off' })).toBe(false);
+  });
+
+  it('o padrao NAO injeta o editor-core no clone (so a ponte)', () => {
+    const html = injectRuntimeBridge('<html><body></body></html>');
+    expect(html).not.toContain('data-uncraft-full-editor');
+    expect(html).not.toContain('/editor-core/');
+    // a ponte continua, sempre — e' o que os paineis de fora usam para editar
+    expect((html.match(/data-uncraft-runtime-bridge/g) || []).length).toBe(1);
+  });
+
+  it('entra por caminho ABSOLUTO na origem do runtime', () => {
+    // Caminho absoluto: `'self'` da CSP ja' autoriza e nenhuma fronteira de rede
+    // privada e' cruzada — foi isso que matou a sonda por interceptacao.
+    const html = injectRuntimeBridge('<html><body></body></html>', null, { fullEditor: true });
+    expect(html).toContain('href="/editor-core/editor.css"');
+    expect(html).toContain('src="/editor-core/editor.js"');
+    expect(html).not.toMatch(/src="https?:\/\/[^"]*editor-core/);
+  });
+
+  it('aponta host E target para o proprio documento', () => {
+    const html = injectRuntimeBridge('<html><body></body></html>', null, { fullEditor: true });
+    expect(html).toMatch(/__rbHost = \{ doc: document, win: window, preserveMotion: true \}/);
+    expect(html).toMatch(/__rbTarget = \{ doc: document, win: window \}/);
+  });
+
+  it('substitui localStorage quando a origem e opaca', () => {
+    // Origem opaca faz `localStorage` LANCAR, e tres chamadas do editor nao tem
+    // protecao — um SecurityError ali mataria a edicao inteira.
+    const html = injectRuntimeBridge('<html><body></body></html>', null, { fullEditor: true });
+    expect(html).toMatch(/window\.localStorage\.getItem\('x'\)/);
+    expect(html).toMatch(/defineProperty\(window, 'localStorage'/);
+  });
+
+  it('reinjetar nao acumula copias do editor', () => {
+    const uma = injectRuntimeBridge('<html><body></body></html>', null, { fullEditor: true });
+    const duas = injectRuntimeBridge(uma, null, { fullEditor: true });
+    const conta = (h) => (h.match(/data-uncraft-full-editor\b/g) || []).length;
+    expect(conta(duas)).toBe(conta(uma));
+    expect((duas.match(/data-uncraft-runtime-bridge/g) || []).length).toBe(1);
+  });
+
+  // ⚠️ O clone existe para SE MOVER. `freeze.js` pausa a timeline global, mata
+  // os tweens e destroi os ScrollTriggers — medido: relogio parado, zero tweens
+  // ativos. `rebuild.js` reescreve o documento e derrubaria a ponte.
+  it('nao carrega o congelador nem o reconstrutor', () => {
+    const html = injectRuntimeBridge('<html><body></body></html>', null, { fullEditor: true });
+    expect(html).not.toContain('/editor-core/freeze.js');
+    expect(html).not.toContain('/editor-core/rebuild.js');
+    expect(html).toContain('/editor-core/editor.js');
+    expect(html).toContain('/editor-core/detect.js');
+  });
+});
+
+describe('o clone continua se mexendo enquanto se edita', () => {
+  // O editor tem congeladores PROPRIOS, independentes do freeze.js: um pausa
+  // animacoes CSS inline e outro reescreve as regras de :hover do site. Na
+  // extensao, em site qualquer, congelar e' o certo; num clone que existe para
+  // se mexer, e' o oposto do produto (Sol r2).
+  it('pede ao editor que preserve o movimento', () => {
+    const html = injectRuntimeBridge('<html><body></body></html>', null, { fullEditor: true });
+    expect(html).toMatch(/__rbHost = \{ doc: document, win: window, preserveMotion: true \}/);
+  });
+
+  // A extensao e o editor legado do canvas FORCAM false — eles sao os ultimos a
+  // escrever antes do editor subir. Sem isso, um site qualquer da internet
+  // poderia declarar a chave e escapar do congelamento (Sol r3).
+  it('preserveMotion so existe com o editor-core opt-in, nao no padrao', () => {
+    // padrao = SEM editor-core = SEM preservador (nao ha' congelador do editor
+    // para desligar; o clone corre e os paineis de fora o controlam)
+    expect(injectRuntimeBridge('<html><body></body></html>')).not.toContain('preserveMotion');
+    // opt-in do editor traz o preservador junto
+    const antes = process.env.UNCRAFT_CLONE_FULL_EDITOR;
+    process.env.UNCRAFT_CLONE_FULL_EDITOR = '1';
+    try {
+      expect(injectRuntimeBridge('<html><body></body></html>')).toContain('preserveMotion');
+    } finally {
+      if (antes === undefined) delete process.env.UNCRAFT_CLONE_FULL_EDITOR;
+      else process.env.UNCRAFT_CLONE_FULL_EDITOR = antes;
+    }
   });
 });

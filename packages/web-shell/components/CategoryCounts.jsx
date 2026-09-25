@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { nodeOrigin, originColor, ORIGIN_COLORS } from '../lib/node-origin.js';
+import { nodeOrigin, originColor, ORIGIN_COLORS, pillInk } from '../lib/node-origin.js';
 
 const CATEGORY_ORDER = ['url', 'html', 'md', 'screenshot'];
 
@@ -141,7 +141,7 @@ function ChainPill({ origin, label }) {
   const Icon = CategoryIcon[origin] || (() => null);
   const colour = ORIGIN_COLORS[origin] || ORIGIN_COLORS.unknown;
   return (
-    <span className="cat-chain-pill" style={{ '--pill-colour': colour }}>
+    <span className="cat-chain-pill" style={{ '--pill-colour': colour, '--pill-ink': pillInk(colour) }}>
       <Icon />
       <span className="cat-chain-pill-lbl">{label}</span>
     </span>

@@ -6,6 +6,17 @@ import styles from './native-motion-canvas.module.css';
 
 const TIMELINE_HEIGHT = 166;
 const LABELS_WIDTH = 152;
+// Header row height (css .timelineHeader). The dock's total height is
+// header + body when open, header alone when collapsed — so the collapse
+// control folds the WHOLE dock, not just the tracks inside a fixed box.
+const TIMELINE_HEADER = 34;
+// Resize bounds (product spec 2026-08-17): max 45% of the viewport height,
+// min just enough for the ruler + one track.
+const MIN_BODY_HEIGHT = 62;
+function maxBodyHeight() {
+  if (typeof window === 'undefined') return 320;
+  return Math.max(MIN_BODY_HEIGHT, Math.round(window.innerHeight * 0.45) - TIMELINE_HEADER);
+}
 
 export function hasNativeMotionContext(controller) {
   return Boolean(
@@ -19,7 +30,25 @@ export default function NativeMotionTimelineDock({ controller, open = true, onOp
   const [zoom, setZoom] = useState(1);
   const [expandedLayers, setExpandedLayers] = useState(() => new Set());
   const [labelsWidth, setLabelsWidth] = useState(LABELS_WIDTH);
+  const [bodyHeight, setBodyHeight] = useState(TIMELINE_HEIGHT);
   const selectedRowId = controller?.selectedRowId || null;
+  const clampedBody = Math.max(MIN_BODY_HEIGHT, Math.min(maxBodyHeight(), bodyHeight));
+  const dockHeight = open ? clampedBody + TIMELINE_HEADER : TIMELINE_HEADER;
+
+  // The dock owns --native-motion-timeline-h while mounted: the edit viewport
+  // reserves this space, so collapse/resize must move BOTH together. Removing
+  // on unmount falls back to the CSS default.
+  useEffect(() => {
+    document.body.style.setProperty('--native-motion-timeline-h', `${dockHeight}px`);
+    return () => document.body.style.removeProperty('--native-motion-timeline-h');
+  }, [dockHeight]);
+
+  // Re-clamp when the window shrinks (the 45% ceiling follows the viewport).
+  useEffect(() => {
+    const onResize = () => setBodyHeight((h) => Math.max(MIN_BODY_HEIGHT, Math.min(maxBodyHeight(), h)));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   useEffect(() => {
     if (!selectedRowId) return;
@@ -40,6 +69,8 @@ export default function NativeMotionTimelineDock({ controller, open = true, onOp
       aria-label="Motion timeline"
       data-dock="bottom"
       data-reserves-side-panels="true"
+      data-native-motion-chrome="true"
+      style={{ height: dockHeight }}
     >
       <TimelinePanel
         open={open}
@@ -64,8 +95,10 @@ export default function NativeMotionTimelineDock({ controller, open = true, onOp
         onSelectElement={controller.commands.focusElement}
         labelsWidth={labelsWidth}
         onLabelsWidth={setLabelsWidth}
-        bodyHeight={TIMELINE_HEIGHT}
-        onBodyHeight={() => {}}
+        bodyHeight={clampedBody}
+        onBodyHeight={(h) => setBodyHeight(Math.max(MIN_BODY_HEIGHT, Math.min(maxBodyHeight(), h)))}
+        minBodyHeight={MIN_BODY_HEIGHT}
+        maxBodyHeight={maxBodyHeight()}
         page={controller.viewportPage}
         onScrollTo={controller.commands.scrollTo}
         onScrubIntro={controller.commands.scrubIntro}

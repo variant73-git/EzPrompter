@@ -1,18 +1,11 @@
 import { createHash } from 'node:crypto';
 import { db } from '../../../../../lib/db.js';
+import { createConfiguredBundleStore } from '../../../../../lib/native-clone/bundle-store.js';
 import {
-  normalizeBundlePath,
-  parseNativeBundleDescriptor,
-} from '../../../../../lib/native-clone/bundle-contract.js';
-import {
-  createConfiguredBundleStore,
-  indexedAssetKey,
-} from '../../../../../lib/native-clone/bundle-store.js';
-import { parseMotionManifest } from '../../../../../lib/motion-editor/manifest.js';
-import {
-  injectRuntimeBridge,
-  rewriteRuntimePaths,
-} from '../../../../../lib/motion-editor/native-clone-gateway.js';
+  inertFailure,
+  serveRuntimeAsset,
+  uploadStorageKey,
+} from '../../../../../lib/motion-editor/runtime-gateway-core.js';
 import {
   runtimeRequestUsesConfiguredOrigin,
   verifyRuntimeSessionToken,
@@ -21,115 +14,140 @@ import {
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-function tokenDigest(token) {
-  return createHash('sha256').update(String(token || '')).digest('hex').slice(0, 12);
+// Rota LEGADA (token-no-path, origem opaca): autoriza pelo JWT do caminho e
+// delega o serviço do asset ao core compartilhado (runtime-gateway-core.js).
+// O caminho lease-em-cookie vive em /api/rt e usa o MESMO core.
+
+// ── UPLOAD de imagem NOVA, por nó ────────────────────────────────────────────
+// O editor vive numa origem opaca sem cookies: a única credencial dele é o
+// token da sessão no caminho — o mesmo que autoriza cada GET. O upload é
+// guardado POR NÓ (sobrevive à rotação de sessão e ao re-clone), com nome por
+// HASH do conteúdo, e só raster FAREJADO pelos bytes mágicos: o content-type
+// do cliente é desejo, não fato; SVG fica fora (carrega script).
+const UPLOAD_MAX_BYTES = 8 * 1024 * 1024;
+const UPLOAD_TIPOS = [
+  { ext: 'png', mime: 'image/png', magica: (b2) => b2.length > 7 && b2[0] === 0x89 && b2[1] === 0x50 && b2[2] === 0x4e && b2[3] === 0x47 },
+  { ext: 'jpg', mime: 'image/jpeg', magica: (b2) => b2.length > 2 && b2[0] === 0xff && b2[1] === 0xd8 && b2[2] === 0xff },
+  { ext: 'gif', mime: 'image/gif', magica: (b2) => b2.length > 5 && b2[0] === 0x47 && b2[1] === 0x49 && b2[2] === 0x46 && b2[3] === 0x38 },
+  { ext: 'webp', mime: 'image/webp', magica: (b2) => b2.length > 11 && b2[0] === 0x52 && b2[1] === 0x49 && b2[2] === 0x46 && b2[3] === 0x46 && b2[8] === 0x57 && b2[9] === 0x45 && b2[10] === 0x42 && b2[11] === 0x50 },
+  { ext: 'avif', mime: 'image/avif', magica: (b2) => b2.length > 11 && b2[4] === 0x66 && b2[5] === 0x74 && b2[6] === 0x79 && b2[7] === 0x70 && b2[8] === 0x61 && b2[9] === 0x76 && b2[10] === 0x69 && b2[11] === 0x66 },
+];
+
+async function autorizarPorToken(request, resolved) {
+  const token = resolved?.token;
+  if (!runtimeRequestUsesConfiguredOrigin(request.url)) {
+    return { falha: inertFailure(request, 'wrong_runtime_origin', token) };
+  }
+  const verification = verifyRuntimeSessionToken(token);
+  if (verification.error) return { falha: inertFailure(request, `token_${verification.error}`, token) };
+  return { token, payload: verification.payload };
 }
 
-function recordFailure(reason, token) {
-  if (process.env.NODE_ENV === 'test') return;
-  console.warn('Native runtime gateway load failed', { reason, tokenDigest: tokenDigest(token) });
+// A origem do editor é OPACA: todo fetch dele chega com Origin: null, e um
+// POST de Blob image/* dispara preflight. Sem OPTIONS + ACAO a resposta nem é
+// LEGÍVEL do lado de lá (o upload cairia sempre no fallback). Sem credencial
+// em cabeçalho — a capacidade É o token no caminho — ACAO '*' é seguro.
+const CORS_UPLOADS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'content-type',
+};
+function comCors(resposta) {
+  for (const [k, v] of Object.entries(CORS_UPLOADS)) resposta.headers.set(k, v);
+  return resposta;
 }
 
-function appFrameAncestor(request) {
-  const configured = process.env.NEXT_PUBLIC_APP_URL;
-  if (!configured) return new URL(request.url).origin;
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: CORS_UPLOADS });
+}
+
+export async function POST(request, { params }) {
+  const resolved = await params;
+  const auth = await autorizarPorToken(request, resolved);
+  if (auth.falha) return auth.falha;
+  const { token, payload } = auth;
+  const caminho = Array.isArray(resolved?.path) ? resolved.path.join('/') : String(resolved?.path || '');
+  if (caminho !== '_uploads') return inertFailure(request, 'asset_unavailable', token);
+
+  let sql;
+  try { sql = await db(); } catch { return inertFailure(request, 'database_unavailable', token, 503); }
+  let rows;
   try {
-    return new URL(configured).origin;
-  } catch {
-    return new URL(request.url).origin;
+    rows = await sql`
+      SELECT e.id AS session_id, e.node_id
+        FROM native_motion_edit_sessions e
+       WHERE e.id = ${payload.sessionId}
+         AND e.node_id = ${payload.nodeId}
+         AND e.status = 'active'
+         AND e.expires_at > NOW()
+    `;
+  } catch { return inertFailure(request, 'database_unavailable', token, 503); }
+  if (!rows[0]) return inertFailure(request, 'session_scope_mismatch', token);
+
+  // Teto ANTES de materializar quando o cabeçalho existe; e sempre depois.
+  const declarado = Number(request.headers.get('content-length') || 0);
+  if (declarado > UPLOAD_MAX_BYTES) return comCors(new Response(null, { status: 413 }));
+  let corpo;
+  try { corpo = new Uint8Array(await request.arrayBuffer()); } catch { return comCors(new Response(null, { status: 400 })); }
+  if (!corpo.length) return comCors(new Response(null, { status: 400 }));
+  if (corpo.length > UPLOAD_MAX_BYTES) return comCors(new Response(null, { status: 413 }));
+  const tipo = UPLOAD_TIPOS.find((t) => t.magica(corpo));
+  if (!tipo) return comCors(new Response(JSON.stringify({ error: 'unsupported_image' }), { status: 415, headers: { 'content-type': 'application/json' } }));
+
+  const hash = createHash('sha256').update(corpo).digest('hex').slice(0, 32);
+  const nome = `${hash}.${tipo.ext}`;
+  const store = createConfiguredBundleStore();
+  try {
+    // putImmutable: mesmo conteúdo sob o mesmo nome é no-op idempotente (e o
+    // nome É o hash do conteúdo, então colisão de nome com bytes diferentes
+    // não existe por construção).
+    await store.putImmutable({
+      storageKey: uploadStorageKey(payload.nodeId, nome),
+      body: corpo,
+      contentType: tipo.mime,
+      contentHash: `sha256:${createHash('sha256').update(corpo).digest('hex')}`,
+    });
+  } catch (e) {
+    return comCors(new Response(null, { status: 500 }));
   }
+  return comCors(new Response(JSON.stringify({ path: `./_uploads/${nome}` }), {
+    status: 200, headers: { 'content-type': 'application/json' },
+  }));
 }
 
-function contentSecurityPolicy(request) {
-  const runtimeOrigin = new URL(request.url).origin;
-  const appOrigin = appFrameAncestor(request);
-  const frameAncestor = runtimeOrigin === appOrigin ? "'self'" : appOrigin;
-  return [
-    "default-src 'self' data: blob:",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    "media-src 'self' data: blob:",
-    "connect-src 'self'",
-    "worker-src 'self' blob:",
-    "form-action 'none'",
-    "object-src 'none'",
-    "base-uri 'none'",
-    `frame-ancestors ${frameAncestor}`,
-  ].join('; ');
+// ⚠️ O CUSTO DO PORTÃO: uma consulta ao banco POR ARQUIVO — e a resposta
+// carregava a linha INTEIRA (asset_index de centenas de itens + manifesto)
+// toda vez. Um clone aberto ≈ 370 consultas ≈ dezenas de MB de tráfego POR
+// ABERTURA; foi isso que estourou a cota do Neon em dois dias de provas.
+// Cache por TOKEN com TTL curto: a 1ª consulta paga, as demais leem daqui.
+//
+// TRADEOFF DECLARADO: a revogação (status/expires na LINHA, decisão de
+// 2026-08-20) passa a valer em até TTL segundos — 20s contra um token de 4h,
+// na mesma classe do cache do navegador que já não a via. Falha NÃO entra no
+// cache (miss recusado volta ao banco no pedido seguinte).
+const CACHE_SESSAO_TTL_MS = 20_000;
+const CACHE_SESSAO_MAX = 64;
+const cacheDeSessao = new Map();   // token -> { row, at }
+function lerSessaoDoCache(token) {
+  const hit = cacheDeSessao.get(token);
+  if (!hit) return null;
+  if (Date.now() - hit.at > CACHE_SESSAO_TTL_MS) { cacheDeSessao.delete(token); return null; }
+  return hit.row;
+}
+/** Só para testes: o cache é de módulo e vazaria entre casos. */
+export function __limparCacheDeSessaoParaTestes() {
+  cacheDeSessao.clear();
+}
+/** Só para testes: prova do teto sem expor o Map. */
+export function __tamanhoDoCacheParaTestes() {
+  return cacheDeSessao.size;
 }
 
-function commonHeaders(request) {
-  return new Headers({
-    'Access-Control-Allow-Origin': '*',
-    'Content-Security-Policy': contentSecurityPolicy(request),
-    'Cross-Origin-Resource-Policy': 'cross-origin',
-    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
-    'Referrer-Policy': 'no-referrer',
-    'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
-    'X-Content-Type-Options': 'nosniff',
-  });
-}
-
-function inertFailure(request, reason, token, status = 404) {
-  recordFailure(reason, token);
-  const headers = commonHeaders(request);
-  headers.set('Cache-Control', 'no-store');
-  headers.set('Content-Type', 'text/html; charset=utf-8');
-  headers.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
-  return new Response('<!doctype html><meta charset="utf-8"><title>Unavailable</title><p>This website couldn\'t be opened.</p>', {
-    status,
-    headers,
-  });
-}
-
-function descriptorFromRow(row) {
-  return parseNativeBundleDescriptor({
-    schemaVersion: Number(row.schema_version),
-    bundleId: row.bundle_id,
-    storageKey: row.storage_key,
-    contentHash: row.content_hash,
-    entryPath: row.entry_path,
-    assetIndex: typeof row.asset_index === 'string' ? JSON.parse(row.asset_index) : row.asset_index,
-    runtimeFingerprint: row.runtime_fingerprint,
-    reconstructionCapabilities: typeof row.reconstruction_capabilities === 'string'
-      ? JSON.parse(row.reconstruction_capabilities)
-      : row.reconstruction_capabilities,
-  });
-}
-
-function canonicalRequestedPath(segments, descriptor) {
-  if (!Array.isArray(segments) || segments.length === 0) return descriptor.entryPath;
-  if (segments.some((segment) => typeof segment !== 'string' || !segment || segment.includes('\0'))) {
-    throw new TypeError('Invalid runtime asset path');
+function guardarSessaoNoCache(token, row) {
+  cacheDeSessao.set(token, { row, at: Date.now() });
+  if (cacheDeSessao.size > CACHE_SESSAO_MAX) {
+    cacheDeSessao.delete(cacheDeSessao.keys().next().value);
   }
-  const raw = segments.join('/');
-  const normalized = normalizeBundlePath(raw, { label: 'runtime asset path' });
-  if (normalized !== raw) throw new TypeError('Runtime asset path must be canonical');
-  return normalized;
-}
-
-function topLevelPrefixes(descriptor) {
-  return [...new Set(descriptor.assetIndex
-    .map((asset) => asset.path.split('/'))
-    .filter((segments) => segments.length > 1)
-    .map(([prefix]) => prefix))];
-}
-
-function isRewriteableText(contentType) {
-  return /^(?:text\/|application\/(?:javascript|json)(?:;|$)|image\/svg\+xml(?:;|$))/i.test(contentType);
-}
-
-function responseEtag(body) {
-  return `"sha256:${createHash('sha256').update(body).digest('hex')}"`;
-}
-
-function immutableCacheControl(expiresAtMs) {
-  const remainingSeconds = Number.isFinite(expiresAtMs)
-    ? Math.max(0, Math.floor((expiresAtMs - Date.now()) / 1000))
-    : 0;
-  return `private, max-age=${remainingSeconds}, immutable`;
 }
 
 export async function GET(request, { params }) {
@@ -142,15 +160,15 @@ export async function GET(request, { params }) {
   if (verification.error) return inertFailure(request, `token_${verification.error}`, token);
   const payload = verification.payload;
 
-  let sql;
-  try {
-    sql = await db();
-  } catch {
-    return inertFailure(request, 'database_unavailable', token, 503);
-  }
+  const emCache = lerSessaoDoCache(token);
+  // Hit no cache NÃO toca o banco — nem o handle: pegar `db()` no hit fazia
+  // um hit falhar 503 com banco fora, e o cache existe exatamente para o
+  // pedido não depender do banco (Sol).
   let rows;
   try {
-    rows = await sql`
+    let sql;
+    if (!emCache) sql = await db();
+    rows = emCache ? [emCache] : await sql`
       SELECT e.id AS session_id, e.node_id, e.status AS session_status, e.draft_manifest,
              nb.bundle_id, nb.schema_version, nb.storage_key, nb.content_hash,
              nb.entry_path, nb.asset_index, nb.runtime_fingerprint,
@@ -162,6 +180,7 @@ export async function GET(request, { params }) {
        WHERE e.id = ${payload.sessionId}
          AND e.node_id = ${payload.nodeId}
          AND e.status = 'active'
+         AND e.expires_at > NOW()
          AND nb.bundle_id = ${payload.bundleId}
     `;
   } catch {
@@ -169,66 +188,15 @@ export async function GET(request, { params }) {
   }
   const row = rows[0];
   if (!row) return inertFailure(request, 'session_scope_mismatch', token);
+  if (!emCache) guardarSessaoNoCache(token, row);
 
-  let descriptor;
-  let manifest;
-  let assetPath;
-  try {
-    descriptor = descriptorFromRow(row);
-    manifest = parseMotionManifest(
-      typeof row.draft_manifest === 'string' ? JSON.parse(row.draft_manifest) : row.draft_manifest,
-      { expectedBundleId: descriptor.bundleId, runtimeFingerprint: descriptor.runtimeFingerprint },
-    );
-    assetPath = canonicalRequestedPath(resolved?.path, descriptor);
-  } catch {
-    return inertFailure(request, 'invalid_runtime_contract', token);
-  }
-
-  const expectedPrefix = descriptor.entryPath.includes('/')
-    ? descriptor.entryPath.slice(0, descriptor.entryPath.lastIndexOf('/'))
-    : '';
-  if (payload.entryPrefix !== expectedPrefix) {
-    return inertFailure(request, 'entry_prefix_mismatch', token);
-  }
-  const asset = descriptor.assetIndex.find((candidate) => candidate.path === assetPath);
-  if (!asset) return inertFailure(request, 'undeclared_asset', token);
-
-  let bytes;
-  try {
-    const store = createConfiguredBundleStore();
-    bytes = await store.read(indexedAssetKey(descriptor.storageKey, asset.path));
-  } catch {
-    return inertFailure(request, 'asset_unavailable', token);
-  }
-
-  const headers = commonHeaders(request);
-  headers.set('Content-Type', asset.contentType);
-  const isHtml = /^text\/html(?:;|$)/i.test(asset.contentType);
-  if (!isHtml && !isRewriteableText(asset.contentType)) {
-    headers.set('Cache-Control', immutableCacheControl(payload.expiresAtMs));
-    headers.set('ETag', `"${asset.contentHash}"`);
-    return new Response(bytes, { headers });
-  }
-
-  const runtimeBase = `/api/runtime/${encodeURIComponent(token)}`;
-  const rewritten = rewriteRuntimePaths(
-    new TextDecoder().decode(bytes),
-    topLevelPrefixes(descriptor),
-    runtimeBase,
-  );
-  if (!isHtml) {
-    headers.set('Cache-Control', immutableCacheControl(payload.expiresAtMs));
-    headers.set('ETag', responseEtag(rewritten));
-    return new Response(rewritten, { headers });
-  }
-
-  headers.set('Cache-Control', 'no-store');
-  const body = injectRuntimeBridge(rewritten, {
-    initialManifest: manifest,
-    bundleId: descriptor.bundleId,
-    runtimeSessionId: row.session_id,
-    runtimeFingerprint: descriptor.runtimeFingerprint,
-    sessionNonce: payload.nonce,
+  return serveRuntimeAsset({
+    request,
+    pathSegments: resolved?.path,
+    row,
+    payload,
+    runtimeBase: `/api/runtime/${encodeURIComponent(token)}`,
+    credential: token,
+    corsWildcard: true,
   });
-  return new Response(body, { headers });
 }

@@ -699,8 +699,12 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
   gap: 5px;
   padding: 3px 9px;
   border-radius: 999px;
-  border: 1px solid var(--pill-colour);
-  color: var(--pill-colour);
+  /* Inverted treatment (product 2026-08-17): the category COLOUR is the
+     fill, the glyph/label go dark-gray — and no outline anywhere. The old
+     colored-outline-on-transparent read as a wireframe. */
+  border: 0;
+  background: var(--pill-colour);
+  color: var(--pill-ink, #20201E);
   font: 500 0.72rem/1 var(--font-inter), system-ui, sans-serif;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -757,8 +761,10 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-toolbars-right { right: 18
      radius nests concentrically inside this 10px-radius container. */
   padding: 2px;
   border-bottom: 1px solid var(--border-frosted);
-  border-top-left-radius: 10px;
-  border-top-right-radius: 10px;
+  /* Nested-radius rule (2026-08-17, project-wide): inner = outer − gap.
+     Card is 9px with 4px padding → 5px here, so the curves stay parallel. */
+  border-top-left-radius: 5px;
+  border-top-right-radius: 5px;
   line-height: 1;
 }
 .canvas-minimap-counts .canvas-counts {
@@ -1238,7 +1244,7 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-minimap { right: 18px; }
   display: flex;
   flex-direction: column;
   background: rgba(20, 20, 20, 0.55);
-  border: 1px solid var(--border-frosted);
+  border: 0;
   border-radius: var(--radius-lg);
   overflow: hidden;
   text-decoration: none;
@@ -1330,7 +1336,7 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-minimap { right: 18px; }
   height: 44px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  border: 0;
   color: var(--text-primary);
   margin-bottom: 14px;
 }
@@ -1358,7 +1364,7 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-minimap { right: 18px; }
 .boards-header-actions .credits-pill {
   height: 34px;
   padding: 0 12px;
-  border: 1px solid #41403B;
+  border: 0;
   border-radius: 8px;
   background: #252522;
   color: var(--text-primary);
@@ -1477,7 +1483,7 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-minimap { right: 18px; }
   width: 100%;
   padding: 6px 10px 6px 6px;
   background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--border-frosted);
+  border: 0;
   border-radius: var(--radius-pill);
   color: var(--text-primary);
   font-family: inherit;
@@ -1675,7 +1681,7 @@ body.rb-ed-active.rb-ed-canvas.rb-ed-floating .canvas-minimap { right: 18px; }
   /* Default — same look as plan-free, overridden below for paid tiers. */
   background: var(--hover-bg);
   color: var(--text-secondary);
-  border: 1px solid var(--border-frosted);
+  border: 0;
 }
 .user-menu-plan-tag.plan-free { background: var(--hover-bg); color: var(--text-secondary); }
 .user-menu-plan-tag.plan-pro,
@@ -2550,6 +2556,37 @@ html, body { overscroll-behavior: none; }
   overflow: visible;
 }
 
+/* Selected: the coloured ring floats OUTSIDE the frame (gap 3px + band to
+   5px → band centre +4px; editing: gap 5px + band to 8px → centre +6.5px).
+   The connector dots must sit ON that coloured band, not on the node border
+   they normally centre on. VISUAL shift only — cord endpoints and snap
+   geometry (EdgeLayer/findSnapTarget) stay at the node edge; the dot's body
+   covers the joint. Counter-scaled like the ring (same --chrome-scale). */
+.cnode.selected .cnode-port-right { right: calc(-11px / var(--chrome-scale, 1)); }
+.cnode.selected .cnode-port-stack-left { left: calc(-11px / var(--chrome-scale, 1)); }
+.cnode.selected.editing .cnode-port-right { right: calc(-13.5px / var(--chrome-scale, 1)); }
+.cnode.selected.editing .cnode-port-stack-left { left: calc(-13.5px / var(--chrome-scale, 1)); }
+
+/* While a node is being placed (ghost tracking the cursor), every node iframe
+   goes inert so the placement click reaches the window `click` listener that
+   commits the drop. Without this, a click landing over an already-mounted
+   cross-origin reference iframe (e.g. a selected live URL showing its page or
+   an X-Frame-Options block) dies inside that frame and the drop never fires —
+   the ghost stays glued to the cursor. Toggled by `canvas-placing` on <html>
+   from the placement effect in CanvasClient. */
+html.canvas-placing .cnode iframe {
+  pointer-events: none;
+}
+
+/* Same guard, generalized: while ANY press that started in the parent
+   document is held (html.canvas-pointer-held, toggled globally in
+   CanvasClient), node iframes are inert so the eventual window `mouseup`
+   always lands. A press starting INSIDE an iframe never reaches the parent,
+   so real iframe interaction is untouched by construction. */
+html.canvas-pointer-held .cnode iframe {
+  pointer-events: none;
+}
+
 /* Beyond 30% zoom-out: node radii −20% (kept concentric across the three
    frame layers). Toggled by .canvas-zoom-below-30 on <html>. */
 html.canvas-zoom-below-30 .cnode {
@@ -2599,9 +2636,14 @@ html.canvas-zoom-below-30 .cnode-body {
   /* Working Table double ring (unspirit 2026-07-12): a canvas-coloured gap
      ring under the category ring — the selection reads as a floating halo
      detached from the frame, Figma-style. */
+  /* Counter-scale on --chrome-scale (the SAME basis the connector ports use),
+     not max(0.62,canvas-scale). The ports floor at 0.4 and the ring floored at
+     0.62, so they shrank on different schedules and the port dot drifted off
+     the coloured outline as you zoomed. Sharing the basis locks the dot on the
+     ring at every zoom. */
   box-shadow:
-    0 0 0 calc(3px / max(0.62, var(--canvas-scale, 1))) var(--bg-base),
-    0 0 0 calc(5px / max(0.62, var(--canvas-scale, 1))) var(--cnode-port-fill, var(--accent)),
+    0 0 0 calc(3px / var(--chrome-scale, 1)) var(--bg-base),
+    0 0 0 calc(5px / var(--chrome-scale, 1)) var(--cnode-port-fill, var(--accent)),
     0 14px 38px rgba(0, 0, 0, 0.3);
 }
 
@@ -2609,8 +2651,8 @@ html.canvas-zoom-below-30 .cnode-body {
    in the chrome, matching the mock's editing emphasis. */
 .cnode.selected.editing {
   box-shadow:
-    0 0 0 calc(5px / max(0.62, var(--canvas-scale, 1))) var(--bg-base),
-    0 0 0 calc(8px / max(0.62, var(--canvas-scale, 1))) var(--cnode-port-fill, var(--accent)),
+    0 0 0 calc(5px / var(--chrome-scale, 1)) var(--bg-base),
+    0 0 0 calc(8px / var(--chrome-scale, 1)) var(--cnode-port-fill, var(--accent)),
     0 20px 50px rgba(0, 0, 0, 0.42);
 }
 
@@ -3860,7 +3902,7 @@ html.canvas-zoom-low .cnode-topbar .btn-cancel .btn-edit-lbl,
   align-items: center;
   justify-content: center;
   background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--border-frosted-strong);
+  border: 0;
   color: rgba(241, 245, 249, 0.85);
   cursor: pointer;
   padding: 0;
@@ -4892,7 +4934,7 @@ input.canvas-section-name-input::placeholder {
   height: calc(34px / var(--chrome-scale, 1));
   padding: 0;
   background: rgba(15, 15, 15, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  border: 0;
   border-radius: calc(10px / var(--chrome-scale, 1));
   color: rgba(241, 245, 249, 0.78);
   cursor: pointer;
@@ -5688,18 +5730,20 @@ body.chat-dock-preview {
    progress ring (z-index 3) + its % sit above this. */
 .cnode-gen-overlay {
   position: absolute;
-  /* MUST match the topbar's real height (--tbh, floor 0.50). The topbar floors
-     its inverse-scale at 0.50; using 0.30 here made the overlay start lower than
-     the topbar bottom below 50% zoom, exposing a sliver of the site above it. */
-  top: calc(36px / max(0.50, var(--canvas-scale, 1)));
+  /* Cobre o node INTEIRO. O offset antigo (calc(36px / --tbh)) existia para
+     ficar ABAIXO da topbar do node — mas a topbar e' `display: none` agora
+     (a chrome virou float-tag/float-actions), entao o corpo do site preenche
+     desde o topo e o offset deixava a faixa de cima (o header do site)
+     DESCOBERTA (bug 2026-09-22). top: 0 = cobre tudo; os quatro cantos
+     arredondam para acompanhar o corpo. */
+  top: 0;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 2;
   pointer-events: none;
   overflow: hidden;
-  border-radius: 0 0
-    calc(10px / var(--chrome-scale, 1)) calc(10px / var(--chrome-scale, 1));
+  border-radius: calc(10px / var(--chrome-scale, 1));
 }
 /* Empty node: nothing behind to blur — match the topbar offblack so the
    whole generating node reads as one continuous surface (no blue card). */
@@ -6711,7 +6755,7 @@ body.rb-ed-active .prompt-dock { display: none !important; }
 
 .editor-btn {
   background: rgba(41, 102, 234, 0.2);
-  border: 1px solid rgba(41, 102, 234, 0.4);
+  border: 0;
   color: #38bdf8;
   padding: 5px 14px;
   border-radius: 999px;
@@ -7995,8 +8039,10 @@ body.rb-ed-active.rb-ed-canvas .canvas-minimap {
 /* Edit mode keeps a single contextual topbar between the mature editor
    panels. Resting canvas controls are replaced in React by edit actions. */
 body.rb-ed-active.rb-ed-canvas .canvas-topbar.editing {
-  left: var(--rb-layers-width, 224px);
-  right: var(--rb-insp-width, 248px);
+  /* Panels float at the shell gutter with their own radius (2026-08-20);
+     the between-panels topbar clears them plus the panel gap. */
+  left: calc(var(--shell-gutter, 10px) + var(--rb-layers-width, 224px) + var(--shell-panel-gap, 8px));
+  right: calc(var(--shell-gutter, 10px) + var(--rb-insp-width, 248px) + var(--shell-panel-gap, 8px));
   z-index: 2147483642;
   display: flex;
 }
@@ -8044,7 +8090,7 @@ body.native-motion-previewing .canvas-topbar {
   height: 42px;
   display: grid;
   place-items: center;
-  border: 1px solid #45443F;
+  border: 0;
   border-radius: var(--radius-sm);
   background: #252522;
   color: var(--text-primary);
@@ -8244,6 +8290,7 @@ body.native-motion-previewing .canvas-topbar {
    chrome (the editor mounts its own inspector). */
 body.rb-ed-active.rb-ed-canvas .canvas-inspector { display: none; }
 
+
 /* ═══════════════════════════════════════════════════════════════════════
    UNSPIRIT 1:1 VISUAL PARITY PASS
    Uses the reference implementation's exact neutral palette, Lucide icon
@@ -8337,7 +8384,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-inspector { display: none; }
 .canvas-topbar-actions .credits-pill {
   height: 30px;
   padding: 0 11px;
-  border: 1px solid #46453F;
+  border: 0;
   border-radius: 7px;
   background: #2A2A27;
   color: var(--text-primary);
@@ -8668,7 +8715,7 @@ body.rb-ed-active.rb-ed-canvas .canvas-inspector { display: none; }
   justify-content: center;
   gap: 7px;
   padding: 0 10px;
-  border: 1px solid #46453F;
+  border: 0;
   border-radius: 7px;
   background: #2A2A27;
   color: var(--text-primary);
@@ -8865,10 +8912,10 @@ body.rb-ed-left-collapsed .canvas-editor-user .user-pill-avatar {
 .cinsp-primary-action {
   padding: 13px 12px;
   border-bottom: 1px solid #3A3935;
-  background: linear-gradient(180deg, rgba(41, 102, 234, 0.08), transparent);
+  /* Sem gradiente azul e sem título "Website": a tag de tipo logo acima já
+     nomeia a categoria — repetir era ruído (pedido de 2026-08-25). */
 }
-.cinsp-primary-action > div > span { color: #8EAEF8; font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
-.cinsp-primary-action p { margin: 5px 0 12px; color: var(--text-muted); font-size: 10px; line-height: 1.45; }
+.cinsp-primary-action p { margin: 0 0 12px; color: var(--text-muted); font-size: 10px; line-height: 1.45; }
 .cinsp-primary-action button,
 .cinsp-primary-action a,
 .cinsp-primary-action .cinsp-open-browser-disabled,
@@ -8893,8 +8940,10 @@ body.rb-ed-left-collapsed .canvas-editor-user .user-pill-avatar {
   position: relative;
   isolation: isolate;
   justify-content: flex-start;
+  /* flex-start sem padding encostava ícone e custo nas arestas (2026-08-25). */
+  padding: 0 10px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.56);
+  border: 0;
   background:
     linear-gradient(105deg,
       oklch(91% 0.11 305) 0%,
@@ -8922,7 +8971,7 @@ body.rb-ed-left-collapsed .canvas-editor-user .user-pill-avatar {
   content: 'Paid';
   margin-left: auto;
   padding: 3px 5px;
-  border: 1px solid rgba(23, 23, 22, 0.22);
+  border: 0;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.36);
   font-size: 8px;
@@ -8941,7 +8990,7 @@ body.rb-ed-left-collapsed .canvas-editor-user .user-pill-avatar {
   .cinsp-primary-action button.cinsp-clone-edit { transition: none; }
 }
 .cinsp-primary-action a,
-.cinsp-primary-action .cinsp-open-browser-disabled { margin-top: 6px; border: 1px solid #45443F; background: #292926; color: var(--text-primary); }
+.cinsp-primary-action .cinsp-open-browser-disabled { margin-top: 6px; border: 0; background: #292926; color: var(--text-primary); }
 .cinsp-primary-action a:hover { background: #30302D; text-decoration: none; }
 /* Disabled while the node is still capturing/cloning — no preview to open yet. */
 .cinsp-primary-action .cinsp-open-browser-disabled {
@@ -9034,22 +9083,39 @@ nextjs-portal { display: none !important; }
    graph itself, not a repeated dashboard card, is the primary information.
    ═══════════════════════════════════════════════════════════════════════ */
 .hub-shell {
-  min-height: 100vh;
+  position: relative;
+  isolation: isolate;
+  min-height: 100dvh;
   display: grid;
   grid-template-columns: 216px minmax(0, 1fr);
-  background: #191917;
+  gap: var(--shell-panel-gap, 8px);
+  padding: var(--shell-gutter, 10px);
+  background: #10100F;
   color: var(--text-primary);
+}
+.hub-shell::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  border-radius: var(--shell-radius, 28px);
+  box-shadow:
+    inset 0 0 0 var(--shell-gutter, 10px) #10100F,
+    inset 0 0 18px rgba(0, 0, 0, 0.34);
 }
 .hub-sidebar {
   position: sticky;
-  top: 0;
-  height: 100vh;
+  top: var(--shell-gutter, 10px);
+  height: calc(100dvh - (var(--shell-gutter, 10px) * 2));
   z-index: 20;
   display: flex;
   flex-direction: column;
   padding: 18px 12px 14px;
-  border-right: 1px solid #34332F;
+  border-right: 0;
+  border-radius: var(--chrome-radius, 18px);
   background: #171715;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.3);
 }
 .hub-brand {
   height: 34px;
@@ -9096,16 +9162,20 @@ nextjs-portal { display: none !important; }
 .hub-main {
   position: relative;
   min-width: 0;
+  min-height: calc(100dvh - (var(--shell-gutter, 10px) * 2));
   width: 100%;
-  max-width: 1680px;
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
   padding: 48px clamp(24px, 4vw, 72px) 80px;
+  border-radius: var(--chrome-radius, 18px);
+  background: #191917;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.24);
 }
 .hub-global-actions { position: absolute; top: 22px; right: clamp(24px, 4vw, 72px); z-index: 3; }
 .hub-global-actions .credits-pill {
   height: 30px;
   padding: 0 10px;
-  border: 1px solid #403F3A;
+  border: 0;
   border-radius: 7px;
   background: #252522;
 }
@@ -9167,7 +9237,7 @@ nextjs-portal { display: none !important; }
   min-width: 0;
   height: 238px;
   overflow: hidden;
-  border: 1px solid #3A3935;
+  border: 0;
   border-radius: 12px;
   background: #20201E;
   color: var(--text-primary);
@@ -9231,16 +9301,18 @@ nextjs-portal { display: none !important; }
   gap: 5px;
   padding: 0 7px;
   overflow: hidden;
-  border: 1px solid color-mix(in oklab, var(--node-color) 48%, #474640);
+  /* Inverted (product 2026-08-17): colour is the FILL, glyphs go dark-gray,
+     no outline. The colored-outline-on-dark read as a wireframe. */
+  border: 0;
   border-radius: 5px;
-  background: #292926;
-  color: #B5B3AC;
+  background: var(--node-color);
+  color: var(--node-ink, #20201E);
   font-size: 7px;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.hub-workflow-column > span i { width: 5px; height: 5px; flex: none; border-radius: 50%; background: var(--node-color); }
+.hub-workflow-column > span i { width: 5px; height: 5px; flex: none; border-radius: 50%; background: var(--node-ink, #20201E); opacity: 0.75; }
 .hub-workflow-arrow {
   position: absolute;
   left: calc(100% + 4px);
@@ -9318,7 +9390,9 @@ nextjs-portal { display: none !important; }
   position: relative;
   aspect-ratio: 1.55;
   overflow: hidden;
-  border: 1px solid #3A3935;
+  /* Outline sweep (product 2026-08-17): previews separate by fill alone
+     (the rule's existing background below carries it). */
+  border: 0;
   border-radius: 10px;
   background: #20201E;
   transition: border-color 150ms ease, transform 150ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -9481,7 +9555,7 @@ nextjs-portal { display: none !important; }
   align-items: center;
   gap: 7px;
   padding: 0 9px;
-  border: 1px solid #3A3935;
+  border: 0;
   border-radius: 7px;
   background: transparent;
   color: #96948D;
@@ -9529,7 +9603,7 @@ nextjs-portal { display: none !important; }
   aspect-ratio: 16 / 10;
   display: block;
   overflow: hidden;
-  border: 1px solid #3A3935;
+  border: 0;
   border-radius: 10px;
   background: #252522;
   color: #F1F0EB;
@@ -9593,7 +9667,7 @@ nextjs-portal { display: none !important; }
 .ref-load-more button {
   min-height: 32px;
   padding: 0 12px;
-  border: 1px solid #494842;
+  border: 0;
   border-radius: 7px;
   background: #292926;
   color: #F1F0EB;
@@ -9617,7 +9691,7 @@ nextjs-portal { display: none !important; }
   width: fit-content;
   margin: 0 0 6px;
   padding: 3px;
-  border: 1px solid #3A3935;
+  border: 0;
   border-radius: 10px;
   background: #292926;
 }
@@ -9655,7 +9729,7 @@ nextjs-portal { display: none !important; }
   align-items: center;
   gap: 4px;
   padding: 0 7px;
-  border: 1px solid #3A3935;
+  border: 0;
   border-radius: 6px;
   background: transparent;
   color: #B5B3AC;
@@ -9786,7 +9860,9 @@ nextjs-portal { display: none !important; }
 .ref-rating button[aria-pressed='true'],
 .ref-review-tags button[aria-pressed='true'] { background: #EFEEE8; color: #20201E; }
 .ref-rating { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
-.ref-rating button { border: 1px solid #3A3935; }
+.ref-rating button { border: 0;
+  background: var(--surface);
+}
 .ref-rating-meaning { min-height: 14px; margin: 6px 0 0; color: #77756F; font-size: 8px; line-height: 1.4; }
 .ref-strength-profile { padding-top: 14px; border-top: 1px solid #3A3935; }
 .ref-strength-profile > p { margin: -1px 0 10px; color: #77756F; font-size: 8px; line-height: 1.45; }
@@ -9794,11 +9870,15 @@ nextjs-portal { display: none !important; }
 .ref-dimension-row { display: grid; grid-template-columns: minmax(0, 1fr) 132px; align-items: center; gap: 8px; }
 .ref-dimension-row > span { overflow: hidden; color: #B5B3AC; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .ref-dimension-scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; }
-.ref-dimension-scale button { min-height: 22px; padding: 0; border: 1px solid #3A3935; border-radius: 5px; background: transparent; color: #77756F; font: 600 8px/1 var(--font-inter), system-ui, sans-serif; cursor: pointer; }
-.ref-dimension-scale button:hover { border-color: #55544D; color: #D1D0CA; }
+/* Border-only affordance replaced by fill (outline sweep; Sol: the border
+   was the ONLY visible boundary of five discrete targets). */
+.ref-dimension-scale button { min-height: 22px; padding: 0; border: 0; border-radius: 5px; background: var(--surface); color: #77756F; font: 600 8px/1 var(--font-inter), system-ui, sans-serif; cursor: pointer; }
+.ref-dimension-scale button:hover { background: var(--surface-strong); color: #D1D0CA; }
 .ref-dimension-scale button[aria-pressed='true'] { border-color: #EFEEE8; background: #EFEEE8; color: #20201E; }
 .ref-review-tags { display: flex; flex-wrap: wrap; gap: 4px; }
-.ref-review-tags button { min-height: 25px; padding: 0 7px; border: 1px solid #3A3935; }
+.ref-review-tags button { min-height: 25px; padding: 0 7px; border: 0;
+  background: var(--surface);
+}
 .ref-review-tags button:disabled { cursor: not-allowed; opacity: .34; }
 .ref-review-notes { display: block; margin-top: 14px; }
 .ref-review-notes textarea,
@@ -9826,7 +9906,7 @@ nextjs-portal { display: none !important; }
 .ref-plan-actions button,
 .ref-analysis-action button {
   min-height: 31px;
-  border: 1px solid #EFEEE8;
+  border: 0;
   border-radius: 7px;
   background: #EFEEE8;
   color: #20201E;
@@ -9887,7 +9967,7 @@ nextjs-portal { display: none !important; }
 .ref-preview-options-head strong { color: #D1D0CA; font-size: 10px; font-weight: 620; }
 .ref-preview-options-head span { color: #77756F; font-size: 8px; }
 .ref-preview-pager { display: flex; flex: none; gap: 4px; }
-.ref-preview-pager button { width: 27px; height: 27px; display: grid; place-items: center; padding: 0; border: 1px solid #494842; border-radius: 6px; background: #292926; color: #B5B3AC; cursor: pointer; }
+.ref-preview-pager button { width: 27px; height: 27px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: #292926; color: #B5B3AC; cursor: pointer; }
 .ref-preview-pager button:hover:not(:disabled) { border-color: #66645D; background: #30302D; color: #F1F0EB; }
 .ref-preview-pager button:disabled { cursor: default; opacity: .3; }
 .ref-preview-pager svg { width: 12px; height: 12px; }
@@ -9935,7 +10015,9 @@ nextjs-portal { display: none !important; }
 .ref-plan-actions svg { width: 11px; height: 11px; }
 .ref-preview-actions { align-items: center; padding-top: 14px; }
 .ref-preview-actions > small { margin-left: auto; color: #77756F; font-size: 8px; }
-.ref-analysis-action { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 16px 16px; border-top: 1px solid #34332F; }
+.ref-analysis-action { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 16px 16px; border-top: 1px solid #34332F;
+  background: var(--surface);
+}
 .ref-analysis-action > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .ref-analysis-action strong { color: #D1D0CA; font-size: 10px; font-weight: 620; }
 .ref-analysis-action span { color: #77756F; font-size: 8px; line-height: 1.4; }
@@ -10004,7 +10086,7 @@ nextjs-portal { display: none !important; }
 .ref-target-details > div { display: grid; grid-template-columns: minmax(160px, .7fr) minmax(0, 1.3fr); gap: 12px; padding-top: 11px; }
 .ref-target-form-action { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .ref-target-form-action button,
-.ref-target-approval > button { min-height: 34px; padding: 0 12px; border: 1px solid #EFEEE8; border-radius: 7px; background: #EFEEE8; color: #20201E; font: 620 11px/1 var(--font-inter), system-ui, sans-serif; cursor: pointer; }
+.ref-target-approval > button { min-height: 34px; padding: 0 12px; border: 0; border-radius: 7px; background: #EFEEE8; color: #20201E; font: 620 11px/1 var(--font-inter), system-ui, sans-serif; cursor: pointer; }
 .ref-target-form-action button { display: inline-flex; align-items: center; gap: 6px; }
 .ref-target-form-action button svg { width: 12px; height: 12px; }
 .ref-target-form-action button:disabled,
@@ -10145,10 +10227,10 @@ body.rb-ed-active.rb-ed-canvas .canvas-minimap { display: none !important; }
   .ref-review-layout > .ref-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 620px) {
-  .hub-shell { display: block; }
+  .hub-shell { display: block; padding: 6px; }
   .hub-sidebar {
     position: sticky;
-    top: 0;
+    top: 6px;
     width: 100%;
     height: auto;
     display: grid;
@@ -10156,13 +10238,14 @@ body.rb-ed-active.rb-ed-canvas .canvas-minimap { display: none !important; }
     gap: 10px;
     padding: 8px 10px;
     border-right: 0;
-    border-bottom: 1px solid #34332F;
+    border-bottom: 0;
+    border-radius: 14px;
   }
   .hub-brand { height: 34px; }
   .hub-nav { min-width: 0; flex-direction: row; gap: 3px; margin: 0; overflow-x: auto; }
   .hub-nav-item { flex: 0 0 36px; }
   .hub-sidebar-bottom { display: none; }
-  .hub-main { padding: 34px 16px 56px; }
+  .hub-main { min-height: calc(100dvh - 12px); margin-top: 6px; padding: 34px 16px 56px; border-radius: 14px; }
   .hub-global-actions { top: 14px; right: 16px; }
   .hub-home-header { padding-top: 42px; }
   .hub-prompt-title h1,
@@ -10366,6 +10449,10 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
   border-top-left-radius: 12px;
   border-top-right-radius: 12px;
 }
+/* Nested-radius rule: outer card is 16px with 4px padding → EVERY inner
+   rounded surface is 12px, the svg map included (it sat at the legacy 5px —
+   the mismatched pair the product feedback pointed at). */
+.canvas-minimap-svg { border-radius: 12px; }
 .minimap-node-menu {
   border: 0;
   border-radius: 16px;
@@ -10438,3 +10525,134 @@ body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
   gap: 10px;
 }
 .cnode-loading-failed .cnode-loading-icon { color: #d97757; opacity: .9; }
+
+/* ── Developer widget (pre-launch tooling) ────────────────────────────────
+   Rendered only when /api/dev/toggles answers 200 (server-side gate; the
+   client bundle carries no flag). Screen-fixed chrome, frosted family. */
+.dev-widget {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  font: 500 12px var(--font-sans);
+}
+.dev-widget-pill {
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  border: 0;
+  background: var(--bg-frosted);
+  backdrop-filter: blur(28px) saturate(140%);
+  color: var(--text-secondary);
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-frost);
+}
+.dev-widget.open .dev-widget-pill,
+.dev-widget-pill:hover { color: var(--text-primary); background: var(--hover-bg-strong); }
+.dev-widget-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  border: 0;
+  background: var(--bg-frosted);
+  backdrop-filter: blur(28px) saturate(140%);
+  box-shadow: var(--shadow-frost);
+  min-width: 240px;
+}
+.dev-widget-row { display: flex; align-items: center; gap: 10px; }
+.dev-widget-label { width: 52px; color: var(--text-muted); font-size: 11px; }
+.dev-widget-seg { display: flex; gap: 4px; }
+.dev-widget-seg button {
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  border: 0;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  text-transform: capitalize;
+}
+.dev-widget-seg button:hover:not(:disabled) { background: var(--hover-bg); color: var(--text-primary); }
+.dev-widget-seg button.on {
+  background: var(--ink-invert-bg);
+  color: var(--ink-invert-fg);
+  border-color: var(--ink-invert-bg);
+}
+.dev-widget-seg button:disabled { opacity: 0.5; cursor: default; }
+.dev-widget-balance { margin-left: auto; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* ── DESIGN.MD card (Aura-style, 2026-08-17) — shared by the inspector panel
+   and the .md node body. No reflexive card borders: sections separate with
+   spacing alone; metadata in the neutral UI type, tabular numerals. */
+.dmd-card { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.dmd-node { height: 100%; padding: 22px 24px; overflow: hidden; border-radius: inherit; }
+.dmd-header { display: flex; flex-direction: column; gap: 2px; margin-bottom: 2px; }
+.dmd-header span {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.14em;
+  text-transform: uppercase; opacity: 0.55;
+}
+.dmd-header strong { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.dmd-section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.dmd-section-title {
+  margin: 0; font-size: 10px; font-weight: 600; letter-spacing: 0.12em;
+  text-transform: uppercase; opacity: 0.5;
+}
+.dmd-color-bar {
+  /* Each colour in its OWN mini container (Aura-style chips), width still
+     proportional to the measured share — not one fused strip. */
+  display: flex; height: 40px; gap: 6px;
+}
+.dmd-color-bar .dmd-chip {
+  display: grid; place-items: center; min-width: 28px; border-radius: 10px;
+  border: 0; padding: 0; cursor: pointer;
+}
+.dmd-chip svg { opacity: 0; transition: opacity 0.12s; }
+.dmd-chip:hover svg, .dmd-chip:focus-visible svg { opacity: 0.85; }
+.dmd-chip:active { transform: scale(0.97); }
+/* Click-to-copy feedback near the cursor (spec 2026-08-17). */
+.dmd-copy-toast {
+  position: fixed; z-index: 4000; pointer-events: none;
+  padding: 5px 9px; border-radius: 7px;
+  background: rgba(20, 20, 19, 0.94); color: #F1F0EB;
+  font: 500 11px var(--font-sans); letter-spacing: 0.01em;
+  opacity: 0; transform: translateY(3px); transition: opacity 0.15s, transform 0.15s;
+  font-variant-numeric: tabular-nums;
+}
+.dmd-copy-toast.show { opacity: 1; transform: translateY(0); }
+.dmd-color-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.dmd-color-legend li { display: flex; align-items: center; gap: 8px; font-size: 11px; min-width: 0; }
+.dmd-color-legend i {
+  width: 10px; height: 10px; border-radius: 3px; flex: none;
+}
+.dmd-color-legend span { opacity: 0.72; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dmd-color-legend b {
+  font-weight: 500; opacity: 0.55; font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.dmd-type-row { display: flex; flex-direction: column; gap: 3px; padding: 6px 0; min-width: 0; }
+.dmd-type-row + .dmd-type-row { margin-top: 2px; }
+.dmd-type-specimen {
+  line-height: 1.12; letter-spacing: -0.01em; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dmd-type-meta { display: flex; align-items: baseline; gap: 8px; font-size: 11px; }
+.dmd-type-meta span { opacity: 0.72; }
+.dmd-type-meta b { font-weight: 500; opacity: 0.55; font-variant-numeric: tabular-nums; }
+/* Panel variant inherits the inspector's ink; keep hexes quiet either way. */
+.dmd-panel .dmd-color-legend b, .dmd-panel .dmd-type-meta b { color: var(--text-muted); }
+
+/* Telemetria de clone no widget de dev: uma linha por clone, etapas em pílulas. */
+.dev-widget-clones { align-items: flex-start; }
+.dev-widget-clone-list { display: flex; flex-direction: column; gap: 6px; max-height: 168px; overflow-y: auto; }
+.dev-widget-clone { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; color: var(--text-secondary); }
+.dev-widget-clone b { color: var(--text-primary); text-transform: uppercase; letter-spacing: .04em; }
+.dev-widget-clone span { background: var(--bg-frosted); border: 1px solid var(--border-frosted); border-radius: 4px; padding: 1px 5px; }
+.dev-widget-faint { opacity: .6; }

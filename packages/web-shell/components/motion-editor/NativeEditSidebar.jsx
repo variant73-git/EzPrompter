@@ -43,7 +43,7 @@ export default function NativeEditSidebar({ controller, initialTab = 'layers' })
   const panelId = `native-edit-sidebar-${activeTab}`;
 
   return (
-    <aside className={styles.sidebar} aria-label="Website editing sidebar">
+    <aside className={styles.sidebar} aria-label="Website editing sidebar" data-native-motion-chrome="true">
       <div className={styles.panelTabs} role="tablist" aria-label="Website structure">
         {TABS.map(({ id, label, Icon }) => (
           <button

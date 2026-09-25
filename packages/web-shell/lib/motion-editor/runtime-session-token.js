@@ -9,8 +9,25 @@ const TOKEN_SCOPE = 'bundle:read';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const NONCE_PATTERN = /^[a-zA-Z0-9_-]{12,128}$/;
 
-export const RUNTIME_SESSION_MAX_TTL_SECONDS = 5 * 60;
+// DEBT (Sol advise 2026-08-20): the long-lived edit token is a bearer in the
+// URL path with CORS *. Revocation is REAL — the gateway checks the edit
+// session row (status='active', node/bundle/current-snapshot scope, and
+// expires_at) on every request, and commit/discard/expiry close it — but the
+// target design is a short entry token + a separate revocable asset lease.
+// Do not extend this TTL further without building the lease. Known residuals
+// of this interim design (Claude review 2026-08-20 #4/#5): (a) revocation
+// only reaches NEW requests — assets already in the browser's private cache
+// (max-age up to 4h) never re-consult the server; (b) the session lifetime is
+// ABSOLUTE — drafts/commits don't extend expires_at (the JWT in every asset
+// URL can't rotate mid-session anyway), so an editor left open >4h loses
+// lazy asset serving until reopened; saves keep working (cookie-authed).
+export const RUNTIME_SESSION_MAX_TTL_SECONDS = 4 * 60 * 60;
 export const RUNTIME_SESSION_DEFAULT_TTL_SECONDS = 2 * 60;
+// Edit sessions need assets alive for the WHOLE session: lazy-loaded images
+// are fetched on scroll, long after a 2-minute token dies (defect: every
+// farmminerals image 404'd mid-edit). The token cannot rotate mid-session —
+// it lives in the PATH of every asset URL, so a swap would reload the iframe.
+export const RUNTIME_SESSION_EDIT_TTL_SECONDS = 4 * 60 * 60;
 
 function configuredSecret(secret, loginSecret) {
   const value = secret ?? process.env.UNCRAFT_RUNTIME_SESSION_SECRET;
@@ -89,13 +106,69 @@ export function issueRuntimeSessionToken(input, options = {}) {
   };
 }
 
+/**
+ * Todo motivo de recusa que `verifyRuntimeSessionToken` sabe devolver.
+ *
+ * Existe para que o gateway derive o vocabulário dele daqui em vez de repetir a
+ * lista à mão — foi assim que `server_misconfigured` ficou de fora e viraria
+ * omissão silenciosa no diagnóstico.
+ */
+export const TOKEN_VERIFICATION_ERRORS = Object.freeze(['missing', 'server_misconfigured', 'invalid', 'expired']);
+
+/**
+ * A fronteira: TODA recusa que sai daqui passa pelo vocabulário.
+ *
+ * O helper abaixo só checa quem o chama — um caminho novo escrevendo
+ * `return { error: 'revoked' }` direto escaparia dele, que é a classe inteira
+ * (Sol). Filtrar na SAÍDA não depende de como a recusa foi escrita lá dentro:
+ * qualquer forma passa por aqui no caminho de volta.
+ */
 export function verifyRuntimeSessionToken(token, options = {}) {
-  if (typeof token !== 'string' || !token) return { error: 'missing' };
+  return normalizeTokenVerification(verificarToken(token, options));
+}
+
+/**
+ * A fronteira, separada para poder ser testada de frente.
+ *
+ * Olha a PRESENÇA da chave, não a verdade do valor: `{ error: undefined }` é uma
+ * recusa disfarçada de sucesso — quem consome lê `if (result.error)`, vê falso,
+ * e segue como se houvesse payload (Sol).
+ */
+export function normalizeTokenVerification(resultado) {
+  if (resultado && Object.hasOwn(resultado, 'error')) return tokenVerificationFailure(resultado.error);
+  return resultado;
+}
+
+/**
+ * A porta usada por dentro.
+ *
+ * Guardar o vocabulário por leitura da fonte prova a sintaxe escolhida, não a
+ * classe: `return { error: \`x\` }`, `return { error: motivo }` ou um objeto
+ * montado antes do `return` passariam batido (Sol). Aqui a checagem é sobre o
+ * VALOR, no momento em que ele nasce, então nenhuma forma de escrita escapa.
+ *
+ * Fora de produção isso ESTOURA — quem acrescentou o motivo descobre na hora.
+ * Em produção não: derrubar a verificação de um token seria trocar uma recusa
+ * correta por um erro de servidor. Degrada para a recusa mais conservadora e
+ * grita no log, que é ruidoso sem ser destrutivo.
+ */
+export function tokenVerificationFailure(motivo) {
+  if (TOKEN_VERIFICATION_ERRORS.includes(motivo)) return { error: motivo };
+  if (process.env.NODE_ENV !== 'production') {
+    throw new Error(`motivo de recusa de token fora do vocabulario: ${String(motivo)}`);
+  }
+  // eslint-disable-next-line no-console
+  console.error('motivo de recusa de token fora do vocabulario', { motivo: String(motivo) });
+  return { error: 'invalid' };
+}
+
+function verificarToken(token, options = {}) {
+  if (typeof token !== 'string' || !token) return tokenVerificationFailure('missing');
   let secret;
   try {
     secret = configuredSecret(options.secret, options.loginSecret);
   } catch {
-    return { error: 'server_misconfigured' };
+    return tokenVerificationFailure('server_misconfigured');
   }
   try {
     const payload = jwt.verify(token, secret, {
@@ -112,7 +185,7 @@ export function verifyRuntimeSessionToken(token, options = {}) {
       || !Number.isSafeInteger(payload.exp)
       || payload.exp <= payload.iat
       || payload.exp - payload.iat > RUNTIME_SESSION_MAX_TTL_SECONDS) {
-      return { error: 'invalid' };
+      return tokenVerificationFailure('invalid');
     }
     const parsed = {
       nodeId: uuid(payload.nodeId, 'nodeId'),
@@ -127,8 +200,8 @@ export function verifyRuntimeSessionToken(token, options = {}) {
     };
     return { payload: Object.freeze(parsed) };
   } catch (error) {
-    if (error?.name === 'TokenExpiredError') return { error: 'expired' };
-    return { error: 'invalid' };
+    if (error?.name === 'TokenExpiredError') return tokenVerificationFailure('expired');
+    return tokenVerificationFailure('invalid');
   }
 }
 

@@ -10,3 +10,6 @@ public/editor-core/
 # derived eval prompt: generated from lib/agent/prompts.js by evals/gen-prompt.mjs.
 # never hand-edit, never commit — `bun run evals` regenerates it.
 evals/prompts/board-agent.txt
+
+# Certificados locais do mkcert (aceite do lease B) — nunca commitar
+_wildcard.rt.localtest.me*.pem

@@ -1,0 +1,72 @@
+import { describe, expect, it } from 'vitest';
+import {
+  CREDIT_PRESETS,
+  DEV_ENGINES,
+  devToolsAllowed,
+  getDevEngine,
+  resolveEditEngineOverride,
+} from './dev-toggles.js';
+
+describe('dev toggles (pre-launch developer widget)', () => {
+  it('is fail-closed in production without the server env', () => {
+    expect(devToolsAllowed({ NODE_ENV: 'production' })).toBe(false);
+    expect(devToolsAllowed({ NODE_ENV: 'production', UNCRAFT_DEV_TOOLS: '1' })).toBe(true);
+    expect(devToolsAllowed({ NODE_ENV: 'development' })).toBe(true);
+    expect(devToolsAllowed({ NODE_ENV: 'test' })).toBe(true);
+  });
+
+  it('exposes the three credit presets the widget promises', () => {
+    expect(CREDIT_PRESETS).toEqual({ infinite: 10_000_000, starter: 500, zero: 0 });
+    expect(DEV_ENGINES).toEqual(['native', 'remake', 'iter9']);
+  });
+
+  it('engine override never forces a re-clone of a node that already matches', () => {
+    // Nominal engine beats "already ready" server-side, so the widget must
+    // withhold the engine when the node is already of that lineage —
+    // otherwise every Edit re-runs (and re-charges) the clone.
+    const BUNDLE_ID = '33333333-3333-4333-8333-333333333333';
+    const nativeNode = {
+      current_snapshot_source: 'native-bundle',
+      current_native_bundle_id: BUNDLE_ID,
+      current_motion_manifest_version: 2,
+      meta: {},
+    };
+    const iter9Node = { current_snapshot_source: 'reconstruct', meta: { reconstructionEngine: 'iter9' } };
+    const legacyNode = { current_snapshot_source: 'capture', meta: {} };
+
+    expect(resolveEditEngineOverride(nativeNode, 'native')).toBe(null);
+    expect(resolveEditEngineOverride(iter9Node, 'iter9')).toBe(null);
+    expect(resolveEditEngineOverride(legacyNode, 'native')).toBe('native');
+    expect(resolveEditEngineOverride(legacyNode, 'iter9')).toBe('iter9');
+    expect(resolveEditEngineOverride(nativeNode, 'iter9')).toBe('iter9');
+    expect(resolveEditEngineOverride(iter9Node, 'native')).toBe('native');
+    expect(resolveEditEngineOverride(legacyNode, null)).toBe(null);
+
+    // Defeito 3 (2026-08-20): after a Save the source becomes 'native-edit'
+    // but the node is STILL native — a stored 'native' override must not turn
+    // every Edit into a nominal (billed) re-clone.
+    const savedNativeNode = { ...nativeNode, current_snapshot_source: 'native-edit' };
+    expect(resolveEditEngineOverride(savedNativeNode, 'native')).toBe(null);
+  });
+});
+
+// O terceiro motor precisa ATRAVESSAR o guarda: uma escolha que o validador
+// nao reconhece volta como null e o usuario acha que escolheu.
+describe('o motor remake atravessa o seletor', () => {
+  // O guarda que valida a escolha guardada tem que RECONHECER o motor novo:
+  // um nome que ele nao conhece volta como nada, e o usuario acha que escolheu.
+  function comEscolha(valor, fn) {
+    const anterior = globalThis.localStorage;
+    globalThis.localStorage = { getItem: () => valor, setItem: () => {}, removeItem: () => {} };
+    try { return fn(); } finally { globalThis.localStorage = anterior; }
+  }
+
+  it('e aceito como escolha guardada', () => {
+    expect(comEscolha('remake', getDevEngine)).toBe('remake');
+    expect(comEscolha('iter9', getDevEngine)).toBe('iter9');
+  });
+
+  it('nome fora da lista continua virando nada', () => {
+    expect(comEscolha('inventado', getDevEngine)).toBe(null);
+  });
+});

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { classifyNativeLineage, NATIVE_LINEAGE } from '../../../../lib/node-editor-kind.js';
 import { db } from '../../../../lib/db.js';
 import { requireUser } from '../../../../lib/auth.js';
 
@@ -31,18 +32,27 @@ export async function GET(request, { params }) {
   const url = new URL(request.url);
   if (url.searchParams.get('ready_check') === '1') {
     let ready = false;
+    let nativeReady = false;
     const snapshotId = node.current_snapshot_id || null;
     if (snapshotId) {
       // `html IS NOT NULL AND length > 0` so md-only seeds (html = '') don't
       // false-positive as "handoff ready". length() is a cheap header read —
-      // doesn't transfer the html column itself.
+      // doesn't transfer the html column itself. Também traz as colunas de
+      // linhagem para o poller do challenge saber se o node ficou NATIVO
+      // (referência = source 'handoff', não-nativo, de propósito).
       const [r] = await sql`
-        SELECT (COALESCE(LENGTH(html), 0) > 0) AS ready
+        SELECT (COALESCE(LENGTH(html), 0) > 0) AS ready,
+               source, native_bundle_id, motion_manifest_version
           FROM snapshots WHERE id = ${snapshotId}
       `;
       ready = !!r?.ready;
+      nativeReady = classifyNativeLineage({
+        current_snapshot_source: r?.source,
+        current_native_bundle_id: r?.native_bundle_id,
+        current_motion_manifest_version: r?.motion_manifest_version,
+      }) === NATIVE_LINEAGE.READY;
     }
-    return NextResponse.json({ ready, snapshotId });
+    return NextResponse.json({ ready, snapshotId, nativeReady });
   }
 
   let snapshot = null;
@@ -71,6 +81,20 @@ export async function PATCH(request, { params }) {
   const width = body.width ?? node.width;
   const height = body.height ?? node.height;
   const isMain = body.isMain ?? node.is_main;
+  // metaMerge: ATOMIC server-side jsonb merge of the given keys only. Async
+  // clients (palette sampling lands after image decode) must never send a
+  // whole meta captured earlier — a read-modify-write from a stale closure
+  // silently deletes every field written in between (Sol review 2026-08-17).
+  if (body.metaMerge && typeof body.metaMerge === 'object' && !Array.isArray(body.metaMerge)) {
+    await sql`
+      UPDATE nodes
+         SET pos_x = ${posX}, pos_y = ${posY}, width = ${width}, height = ${height},
+             is_main = ${isMain},
+             meta = COALESCE(meta, '{}'::jsonb) || ${JSON.stringify(body.metaMerge)}::jsonb
+       WHERE id = ${id}
+    `;
+    return NextResponse.json({ ok: true });
+  }
   const meta = body.meta ?? node.meta;
   await sql`
     UPDATE nodes

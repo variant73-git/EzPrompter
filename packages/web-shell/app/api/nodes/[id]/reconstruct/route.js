@@ -5,7 +5,7 @@ import { InsufficientCreditsError, OperationInProgressError } from '../../../../
 import { checkOpsRate } from '../../../../../lib/billing/rate-limit.js';
 import { CLONE_ENGINES } from '../../../../../lib/clone-router.js';
 import { reconstructSiteNode } from '../../../../../lib/deferred-reconstruction.js';
-import { shouldReconstructForAction } from '../../../../../lib/reconstruction-policy.js';
+import { reconstructionReason } from '../../../../../lib/reconstruction-policy.js';
 import { canUseCloneEdit } from '../../../../../lib/clone-edit-access.js';
 
 export const runtime = 'nodejs';
@@ -35,10 +35,16 @@ export async function POST(request, { params }) {
   const { id } = await params;
   const sql = await db();
 
+  // As colunas do bundle entram na SELEÇÃO porque a decisão de "já está
+  // pronto" é AUTORITATIVA aqui: sem elas o classificador de linhagem só
+  // enxerga a string do source e uma chamada direta/race ainda cobraria um
+  // clone que o node já tem (Sol advise 2026-08-20).
   const [node] = await sql`
     SELECT n.id, n.kind, n.meta, n.board_id, n.origin_url,
            n.current_snapshot_id, s.html AS current_html,
-           s.source AS current_snapshot_source
+           s.source AS current_snapshot_source,
+           s.native_bundle_id AS current_native_bundle_id,
+           s.motion_manifest_version AS current_motion_manifest_version
       FROM nodes n
       JOIN boards b ON b.id = n.board_id
       LEFT JOIN snapshots s ON s.id = n.current_snapshot_id
@@ -67,7 +73,9 @@ export async function POST(request, { params }) {
   // pedido POR NOME tem que executar mesmo que exista snapshot utilizavel —
   // e' justamente o caso "converter este clone para iter9" (achado da
   // auditoria: o early-return engolia o pedido nominal e o 400 prometido).
-  if (engine == null && !shouldReconstructForAction({ node, role: 'edit' })) {
+  // O pulo roda ANTES de rate limit e billing: no-op nao e' clone novo.
+  const reason = engine == null ? reconstructionReason({ node, role: 'edit' }) : 'nominal';
+  if (reason === null) {
     return NextResponse.json({
       ok: true,
       skipped: true,
@@ -78,6 +86,12 @@ export async function POST(request, { params }) {
       meta: node.meta,
       credits: 0,
     });
+  }
+  // Linhagem nativa que nao fecha (bundle/manifest ausentes ou malformados) e'
+  // falha de INTEGRIDADE: nunca autoriza uma captura cobrada automatica. O
+  // reparo e' deliberado — um motor nominal (dev widget / re-clone explicito).
+  if (reason === 'native-inconsistent') {
+    return NextResponse.json({ error: 'native_inconsistent' }, { status: 409 });
   }
 
   const rate = await checkOpsRate({ sql, userId: user.id });
@@ -101,6 +115,13 @@ export async function POST(request, { params }) {
     }
     if (e instanceof OperationInProgressError) {
       return NextResponse.json({ error: 'in_progress' }, { status: 409 });
+    }
+    // Interstitial de bot-protection na frente do site: o produtor recusa
+    // (nunca empacota a interstitial como o site) e a UI reaproveita o fluxo
+    // do handoff humano. Erro tipado, sem cobrança — a operação lançou antes
+    // de produzir. `kind`/`url` são os que o modal já consome.
+    if (e?.code === 'challenge_required') {
+      return NextResponse.json({ error: 'challenge_required', kind: e.kind || 'generic_challenge', url: e.url || node.origin_url }, { status: 409 });
     }
     if (e?.code === 'no_output') return NextResponse.json({ error: 'no_output' }, { status: 502 });
     if (['control_conversion_timeout', 'provider_timeout'].includes(e?.code)) {

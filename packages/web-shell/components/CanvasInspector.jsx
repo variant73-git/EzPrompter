@@ -19,6 +19,11 @@ import { originColor } from '../lib/node-origin.js';
 import { canUseCloneEdit } from '../lib/clone-edit-access.js';
 import { CLONE_EDIT_CREDIT_ESTIMATE } from '../lib/billing/pricing.js';
 import { isLiveUrlReference } from '../lib/url-reference.js';
+import { designPanelModel } from '../lib/design-md-preview.js';
+import { decideEditAction } from '../lib/edit-action-decision.js';
+import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
+import { useDevEngine } from './use-dev-engine.js';
+import DesignMdCard from './DesignMdCard.jsx';
 
 // The canvas inspector is intentionally contextual. With no selection it
 // disappears and returns the space to the canvas. With a selection it offers
@@ -160,17 +165,33 @@ function Overview({ node }) {
         </Panel>
       )}
 
-      {isDesign && (
-        <Panel title="Design language" icon={Palette}>
-          {palette.length ? (
-            <div className="cinsp-palette" aria-label="Extracted color palette">
-              {palette.map((color) => <span key={color} title={color} style={{ background: color }} />)}
-            </div>
-          ) : <p className="cinsp-help">Run or connect this node to extract its color and type scales.</p>}
-          <Detail label="Type scale" value={node?.meta?.typeScale || 'Modular scale'} />
-          <Detail label="Format" value="design.md" mono />
-        </Panel>
-      )}
+      {(isDesign || isSite) && (() => {
+        // DESIGN.MD panel (Aura-style, product spec 2026-08-17): replaces the
+        // old "Design language" strip. Site nodes carry measured colour
+        // shares from the capture screenshot (meta.paletteSwatches — zero
+        // LLM, sampled client-side after the capture lands); design nodes
+        // derive everything from their tokens.
+        const md = node?.current_design_md || node?.design_md || node?.meta?.designMd || '';
+        const swatches = node?.meta?.paletteSwatches;
+        if (!md && !(Array.isArray(swatches) && swatches.length) && !palette.length) {
+          return isDesign ? (
+            <Panel title="Design.md" icon={Palette}>
+              <p className="cinsp-help">Run or connect this node to extract its color and type scales.</p>
+            </Panel>
+          ) : null;
+        }
+        const model = designPanelModel({ md, name: node?.meta?.name, swatches, typeSample: node?.meta?.typeSample });
+        // No md and no measured swatches → fall back to the scraped palette
+        // so older nodes still show their colours.
+        if (!md && !(Array.isArray(swatches) && swatches.length)) {
+          model.colorRows = palette.map((hex) => ({ hex: hex.toUpperCase(), share: null, role: null }));
+        }
+        return (
+          <Panel title="Design.md" icon={Palette}>
+            <DesignMdCard model={model} variant="panel" />
+          </Panel>
+        );
+      })()}
 
       {isCode && (
         <Panel title={node?.meta?.subtype === 'shader' ? 'Shader controls' : 'Code behavior'} icon={Code2}>
@@ -217,16 +238,31 @@ function WebsiteActions({ node, onEditSite, onUpgradeRequired, plan, busy = fals
   // (capturing/cloning) OR when neither exists — a blank "Connect to…" node
   // would otherwise open a guaranteed 404 (adversarial review Codex #3).
   const openDisabled = busy || (!node.current_snapshot_id && !node.origin_url);
-  const cloneRequired = isLiveUrlReference(node);
+  // ONE decision for label, credit disclosure and plan gate — shared with the
+  // canvas handler and the node button (Sol r3, 2026-08-20). It must be what
+  // the SERVER bills: a nominal engine charges even on a ready node (the old
+  // predicate said "Edit" for a click that costs credits), and an integrity
+  // failure never charges (the old predicate sent free users to an upsell for
+  // a charge the server refuses with 409).
+  const devEngine = useDevEngine();
+  const decision = decideEditAction({ node, engineOverride: resolveEditEngineOverride(node, devEngine) });
+  const needsRepair = decision.integrityError;
+  // A repair rebuilds the clone through the native engine — a nominal, billed
+  // operation. It must disclose the cost and honour the plan lock exactly
+  // like "Clone & Edit"; promising "Repair" for free would be the same
+  // dishonesty in reverse (Sol final round #3).
+  const cloneRequired = decision.billable || needsRepair;
   const cloneAllowed = canUseCloneEdit(plan);
   const cloneLocked = cloneRequired && !cloneAllowed;
+  const actionName = needsRepair ? 'Repair clone' : 'Clone & Edit';
   const cloneLabel = cloneLocked
-    ? `Clone & Edit, paid plans only, ${CLONE_EDIT_CREDIT_ESTIMATE} credits`
-    : `Clone & Edit, ${CLONE_EDIT_CREDIT_ESTIMATE} credits`;
+    ? `${actionName}, paid plans only, ${CLONE_EDIT_CREDIT_ESTIMATE} credits`
+    : `${actionName}, ${CLONE_EDIT_CREDIT_ESTIMATE} credits`;
   return (
     <div className="cinsp-primary-action">
+      {/* Sem título: a tag de tipo logo acima já diz "website" — repetir era
+          ruído (pedido de 2026-08-25). O corpo explicativo fica. */}
       <div>
-        <span>Website</span>
         <p>Open the visual editor or inspect the current result in a clean browser tab.</p>
       </div>
       <button
@@ -234,12 +270,12 @@ function WebsiteActions({ node, onEditSite, onUpgradeRequired, plan, busy = fals
         className={cloneRequired ? 'cinsp-clone-edit' : undefined}
         data-subscriber-feature={cloneRequired ? (cloneLocked ? 'locked' : 'available') : undefined}
         aria-label={cloneRequired ? cloneLabel : 'Edit'}
-        title={cloneLocked ? 'Available on paid plans' : undefined}
+        title={cloneLocked ? 'Available on paid plans' : needsRepair ? "This clone's files don't match — rebuild it" : undefined}
         disabled={busy}
-        onClick={cloneLocked ? onUpgradeRequired : onEditSite}
+        onClick={cloneLocked ? onUpgradeRequired : () => onEditSite?.(needsRepair ? { repair: true } : undefined)}
       >
         {cloneRequired ? <Zap aria-hidden="true" /> : <Pencil aria-hidden="true" />}
-        <span>{cloneRequired ? 'Clone & Edit' : 'Edit'}</span>
+        <span>{needsRepair ? 'Repair clone' : cloneRequired ? 'Clone & Edit' : 'Edit'}</span>
         {cloneRequired && <span className="cinsp-clone-cost">{CLONE_EDIT_CREDIT_ESTIMATE} credits</span>}
       </button>
       {openDisabled ? (
@@ -278,7 +314,16 @@ export default function CanvasInspector({
   useEffect(() => {
     const inspectorVisible = Boolean(node) && !collapsed;
     document.documentElement.style.setProperty('--inspector-w', inspectorVisible ? '248px' : '0px');
-    document.documentElement.style.setProperty('--minimap-top', collapsed && node ? '72px' : '62px');
+    // Collapsed → the 42px reopen control sits at shell-gutter+topbar+gap
+    // (the SHELL layout, not the legacy 15px top this 72px assumed — measured
+    // overlap of 34px). Clear its bottom edge + 12px, in the same shell terms
+    // so a gutter change can never re-collide them.
+    document.documentElement.style.setProperty(
+      '--minimap-top',
+      collapsed && node
+        ? 'calc(var(--shell-gutter, 8px) + var(--topbar-h, 46px) + var(--shell-panel-gap, 10px) + 54px)'
+        : '62px',
+    );
     document.documentElement.style.setProperty('--minimap-right', inspectorVisible ? '264px' : '15px');
     return () => {
       document.documentElement.style.removeProperty('--inspector-w');
@@ -320,7 +365,7 @@ export default function CanvasInspector({
       </div>
 
       <div className="cinsp-selection">
-        <span className="cinsp-type-chip" style={{ color, borderColor: `${color}66`, background: `${color}18` }}>{readableKind(node)}</span>
+        <span className="cinsp-type-chip" style={{ color: '#fff', borderColor: color, background: color }}>{readableKind(node)}</span>
         <span className="cinsp-selection-name" title={nodeLabel(node)}>{nodeLabel(node)}</span>
       </div>
 

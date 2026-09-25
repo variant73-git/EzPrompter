@@ -98,3 +98,30 @@ describe('CanvasNode native editor routing', () => {
     });
   });
 });
+
+describe('inconsistent clone stays repairable (Sol final round)', () => {
+  // The node whose lineage does not close has html=null AND no usable native
+  // editor, so the plain eligibility hid the Edit affordance in EXACTLY the
+  // state that needs repair — the user had no way out of it.
+  const brokenLineage = {
+    current_snapshot_source: 'native-edit',
+    current_native_bundle_id: 'not-a-uuid',
+    current_motion_manifest_version: 2,
+    origin_url: 'https://example.com',
+    current_html: null,
+  };
+
+  it('offers "Repair clone" with its cost and reports the deliberate repair intent', () => {
+    const onEditingChange = vi.fn();
+    renderNode(brokenLineage, {
+      editing: false,
+      editorKind: NODE_EDITOR_KIND.LEGACY,
+      onEditingChange,
+    });
+
+    const button = screen.getByText('Repair clone');
+    expect(button).toBeTruthy();
+    fireEvent.click(button);
+    expect(onEditingChange).toHaveBeenCalledWith(true, { repair: true });
+  });
+});

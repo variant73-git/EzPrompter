@@ -9,6 +9,7 @@ import {
   invertPatch,
   isRuntimeMessage,
   matchesRuntimeContext,
+  runtimeMessageTargetOrigin,
   removeRejectedPatch,
   storageKey,
 } from './protocol.js';
@@ -168,5 +169,16 @@ describe('motion editor protocol', () => {
     expect(matchesRuntimeContext({ ...message, sessionId: 'session-2' }, expected, expected.origin)).toBe(false);
     expect(matchesRuntimeContext({ ...message, runtimeGeneration: 4 }, expected, expected.origin)).toBe(false);
     expect(matchesRuntimeContext(message, expected, 'https://other.test')).toBe(false);
+  });
+});
+
+describe('runtimeMessageTargetOrigin', () => {
+  it('targets a real lease origin, never a wildcard', () => {
+    expect(runtimeMessageTargetOrigin('https://abc.rt.uncraft.app')).toBe('https://abc.rt.uncraft.app');
+  });
+  it('falls back to wildcard only for an opaque/absent origin (legacy)', () => {
+    expect(runtimeMessageTargetOrigin('null')).toBe('*');
+    expect(runtimeMessageTargetOrigin('')).toBe('*');
+    expect(runtimeMessageTargetOrigin(undefined)).toBe('*');
   });
 });

@@ -135,6 +135,10 @@ function bindEdgeMouseDown(edge, evt, onSelectEdge, onEdgeDragStart) {
   const startX = evt.clientX, startY = evt.clientY;
   let started = false;
   function move(ev) {
+    // Self-healing release (same family as CanvasNode drags): a mousemove
+    // with no buttons pressed means the real mouseup was swallowed — end the
+    // gesture instead of tracking forever.
+    if (ev.buttons === 0) { cleanup(); return; }
     if (started) return;
     if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > EDGE_DRAG_THRESHOLD) {
       started = true;

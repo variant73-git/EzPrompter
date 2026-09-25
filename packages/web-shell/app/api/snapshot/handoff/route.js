@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { db } from '../../../../lib/db.js';
+import { persistReferenceSnapshot } from '../../../../lib/snapshot-persist.js';
 import { verifyHandoffToken } from '../../../../lib/handoff-token.js';
 
 export const runtime = 'nodejs';
@@ -62,52 +63,19 @@ export async function POST(request) {
 
   const sql = await db();
 
-  // Verify the node still exists AND belongs to the same user the token
-  // was issued for (defense in depth — the token already binds userId,
-  // but we re-check at write time to catch a node that was deleted
-  // mid-handoff or transferred between users).
-  const [node] = await sql`
-    SELECT n.id, n.board_id, n.current_snapshot_id, n.meta
-      FROM nodes n
-      JOIN boards b ON b.id = n.board_id
-     WHERE n.id = ${payload.nodeId} AND b.user_id = ${payload.userId}
-  `;
-  if (!node) {
+  const result = await persistReferenceSnapshot({
+    sql, userId: payload.userId, nodeId: payload.nodeId, html, screenshotDataUrl, title,
+  });
+  if (result.error === 'not_found') {
     return NextResponse.json({ error: 'node not found' }, { status: 404, headers: cors });
   }
-
-  // Idempotency — if the node already has a snapshot from a previous
-  // handoff (same nodeId, same source), short-circuit successfully.
-  // Avoids double-writes from a re-fired banner click.
-  if (node.current_snapshot_id) {
-    const [existing] = await sql`
-      SELECT id, source FROM snapshots WHERE id = ${node.current_snapshot_id}
-    `;
-    if (existing?.source === 'handoff') {
-      return NextResponse.json({
-        ok: true, snapshotId: existing.id, nodeId: node.id, deduped: true
-      }, { headers: cors });
-    }
+  if (result.deduped) {
+    return NextResponse.json({ ok: true, snapshotId: result.snapshotId, nodeId: payload.nodeId, deduped: true }, { headers: cors });
   }
-
-  const [snap] = await sql`
-    INSERT INTO snapshots (node_id, html, screenshot_url, source)
-    VALUES (${node.id}, ${html}, ${screenshotDataUrl || null}, 'handoff')
-    RETURNING id, created_at
-  `;
-  // Clear the awaiting_handoff flag in meta so the canvas UI knows the
-  // placeholder is done; keep other meta keys intact via JSONB merge.
-  await sql`
-    UPDATE nodes
-       SET current_snapshot_id = ${snap.id},
-           meta = COALESCE(meta, '{}'::jsonb) - 'awaiting_handoff' - 'handoff_started_at'
-     WHERE id = ${node.id}
-  `;
-
   return NextResponse.json({
     ok: true,
-    snapshotId: snap.id,
-    nodeId: node.id,
+    snapshotId: result.snapshotId,
+    nodeId: payload.nodeId,
     title: title || null
   }, { headers: cors });
 }

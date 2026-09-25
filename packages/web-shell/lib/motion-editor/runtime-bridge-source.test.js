@@ -15728,3 +15728,299 @@ describe('native motion runtime bridge', () => {
   });
 
 });
+
+// ⭐ A PORTA DO EDITOR COMPLETO. Ele roda dentro do documento do clone e escreve
+// no DOM; sozinho isso nao persiste — o que sobrevive ao recarregamento sao as
+// TRANSACOES do manifesto. A porta transforma a edicao dele em transacao e a
+// manda pelo canal que ja' existe, sem historico paralelo (advise do Sol).
+describe('porta do editor completo', () => {
+  const fonte = getRuntimeBridgeSource();
+
+  it('recusa kind desconhecido; text e attribute agora sao LIGADOS', () => {
+    const porta = fonte.slice(fonte.indexOf('function editorCommit('), fonte.indexOf('function editorCommitBatch'));
+    expect(porta).toMatch(/unsupported_kind/);
+    expect(porta).not.toMatch(/not_wired_yet/);
+  });
+
+  it('recusa escrever em propriedade que uma animacao dirige', () => {
+    // Sem isso o tween vivo pisoteia a escrita e o usuario ve a edicao sumir.
+    expect(fonte).toMatch(/motion_owned/);
+    expect(fonte).toMatch(/inspectMotion\(element\)/);
+  });
+
+  it('usa o canal que ja existe, e nao um historico paralelo', () => {
+    expect(fonte).toMatch(/transaction-committed/);
+    expect(fonte).toMatch(/originatedByRuntime/);
+    expect(fonte).toMatch(/committedTransactions/);
+  });
+
+  it('recusa sem identidade e sem mudanca', () => {
+    expect(fonte).toMatch(/no_identity/);
+    expect(fonte).toMatch(/no_change/);
+  });
+});
+
+// ⭐ O replay so' reencontra elemento salvo por `id`/`data-w-id` AUTORAIS.
+// Identidade derivada do caminho no DOM nao sobrevive (item 180). Aceitar um
+// patch nesses elementos gravaria o que nunca volta: a pessoa veria a edicao,
+// salvaria, recarregaria, e ela teria sumido sem erro nenhum.
+describe('a porta so aceita identidade que sobrevive ao recarregamento', () => {
+  const fonte = getRuntimeBridgeSource();
+  it('recusa quando a semente e derivada do caminho no DOM', () => {
+    expect(fonte).toMatch(/unstable_identity/);
+    expect(fonte).toMatch(/webflow:\|id:/);
+  });
+});
+
+// Achados da auditoria do Sol sobre a porta.
+describe('a porta pergunta antes de escrever, e falha fechada', () => {
+  const fonte = getRuntimeBridgeSource();
+
+  // Recusar DEPOIS da escrita deixa a mudanca recusada na tela para sumir no
+  // salvar — o defeito que a porta veio impedir.
+  it('tem modo de consulta previa', () => {
+    expect(fonte).toMatch(/dryRun/);
+    expect(fonte).toMatch(/bilhete/);
+    expect(fonte).toMatch(/approval/);
+  });
+
+  // Um track `x`/`rotation` escreve `transform`: comparar nomes soltos deixava
+  // uma edicao em `transform` passar por cima da animacao.
+  it('conhece quem contribui para transform', () => {
+    // `xPercent`/`yPercent` sao vocabulario do GSAP e tambem escrevem transform;
+    // faltavam, e uma edicao em `transform` passava por cima da animacao.
+    for (const membro of ['rotation', 'scalex', 'translatey', 'skew', 'xpercent', 'ypercent', 'perspective']) {
+      expect(fonte).toMatch(new RegExp(`['"]${membro}['"]`));
+    }
+  });
+
+  // Clip animado sem tracks legiveis e' ownership NAO-inspecionavel: falha
+  // fechada, nunca aberta.
+  it('clip sem tracks legiveis falha FECHADO', () => {
+    expect(fonte).toMatch(/motion_uninspectable/);
+    expect(fonte).toMatch(/if \(!tracks\.length\) return recusa/);
+  });
+
+  // Dois elementos com o mesmo id fazem o replay recusar por ambiguidade — se a
+  // porta aceitasse, a edicao sumiria no reload sem erro.
+  it('recusa identidade ambigua', () => {
+    expect(fonte).toMatch(/ambiguous_identity/);
+  });
+
+  // Regra autoral com !important vence o replay, que escreve sem prioridade.
+  it('recusa quando o site marca a propriedade como important', () => {
+    expect(fonte).toMatch(/priority_conflict/);
+  });
+
+  // ⚠️ O editor manda camelCase (`fontFamily`) e `style.setProperty` exige
+  // hifen (`font-family`) — com camelCase a sonda era NO-OP, o computado nao
+  // mudava, e TODA propriedade de mais de uma palavra caia em
+  // priority_conflict FALSO. Era exatamente o "so troca cor": color/opacity
+  // (uma palavra) passavam, fontFamily/backgroundColor nao. Medido no clone
+  // real. A porta normaliza na FRONTEIRA e usa o nome css em sonda, chave de
+  // aprovacao e patch gravado (o replay usa o mesmo setProperty).
+  // ⚠️ O caminho wrapper→descendentes precisava de N consultas + N registros,
+  // e o caderno de aprovacoes tem teto — acima dele os primeiros bilhetes
+  // eram expulsos e o commit falhava DEPOIS do DOM escrito: mudanca parcial
+  // que nao persiste. O lote valida TODAS as entradas pelas MESMAS guardas
+  // (via a propria porta unitaria em consulta), um bilhete so, UMA transacao
+  // com N patches — ou nada.
+  // O UNDO precisa reverter src+srcset (e N estilos de cascata) numa
+  // transacao SO — o lote generaliza para style E attribute e text, cada
+  // entrada validada pelas regras do seu kind, sem bilhete unitario.
+  it('lote aceita style, attribute e text — validacao por kind', () => {
+    const lote = fonte.slice(fonte.indexOf('function editorCommitBatch'), fonte.indexOf('function editorSave'));
+    expect(lote).toMatch(/e\.kind/);
+    expect(lote).toMatch(/validarIdentidade\(e\.element/);
+    expect(lote).toMatch(/ATRIBUTOS_PERMITIDOS_LOTE|validarAtributo/);
+  });
+
+  it('lote atomico: validador PURO, um bilhete, uma transacao', () => {
+    const lote = fonte.slice(fonte.indexOf('function editorCommitBatch'), fonte.indexOf('function editorSave'));
+    expect(lote.length).toBeGreaterThan(100);
+    // valida CADA entrada pelo VALIDADOR PURO — nunca pela porta unitaria, que
+    // emitiria bilhete por membro e encheria o caderno de teto 64 (um lote
+    // grande expulsava o proprio bilhete do lote antes da conferencia)
+    expect(lote).toMatch(/validarEscritaDeEstilo\(e\.element/);
+    expect(lote).not.toMatch(/__uncraftEditorCommit\(e\.element/);
+    // recusa NOMEIA o membro que caiu
+    expect(lote).toMatch(/batch_member_refused/);
+    // um bilhete para o LOTE, e uma transacao com N patches
+    expect(lote).toMatch(/batch:\$\{chaveLote\}/);
+    expect(lote).toMatch(/chaveLote = JSON\.stringify\([^;]*normalizarValor\(v\.before\)[^;]*normalizarValor\(v\.value\)[^;]*\)/);
+    expect(lote).toMatch(/patches: validadas\.map/);
+    // e o validador em si NAO toca o caderno de aprovacoes
+    const validador = fonte.slice(fonte.indexOf('function validarEscritaDeEstilo'), fonte.indexOf('window.__uncraftEditorCommit ='));
+    expect(validador).not.toMatch(/aprovacoesDeEscrita/);
+  });
+
+  // ⚠️ O TOKEN DA SESSAO VIVE NO CAMINHO dos assets e rotaciona quando a
+  // sessao troca (supersede/fechamento). Uma url() ABSOLUTA gravada num patch
+  // aponta para token morto na sessao seguinte — medido com controle: na
+  // sessao nova a absoluta QUEBRADA, a relativa CARREGA. A porta normaliza
+  // url() da PROPRIA sessao para './…' no value E no before (o undo
+  // restauraria o token morto), nos dois caminhos (unitario e lote).
+  it('normaliza url() da propria sessao para relativo, em value e before', () => {
+    expect(fonte).toMatch(/function normalizarUrlsDeSessao/);
+    const fn = fonte.slice(fonte.indexOf('function normalizarUrlsDeSessao'), fonte.indexOf('function sondarPrioridade'));
+    expect(fn).toMatch(/new URL\(['"]\.['"], location\.href\)/);
+    expect(fn).toMatch(/startsWith\(prefixo\)/);
+    // sem url() devolve o VALOR original (tipo preservado), nunca String(valor)
+    expect(fn).toMatch(/=== -1\) return valor/);
+    // aplicada na fronteira das DUAS portas
+    const unit = fonte.slice(fonte.indexOf('function editorCommit('), fonte.indexOf('function editorCommitBatch'));
+    // via normalizarPorKind: url() para style, URL NUA para src/href/poster
+    expect(unit).toMatch(/normalizarPorKind\(edit\.value\)/);
+    expect(unit).toMatch(/normalizarPorKind\(edit\.before\)/);
+    expect(fonte).toMatch(/function normalizarUrlNuaDeSessao/);
+    const lote = fonte.slice(fonte.indexOf('function editorCommitBatch'), fonte.indexOf('function editorSave'));
+    // por kind: normE escolhe url() (style) ou URL NUA (attribute de url)
+    expect(lote).toMatch(/normE\(e\.value\)/);
+    expect(lote).toMatch(/normE\(e\.before\)/);
+    expect(lote).toMatch(/normalizarUrlNuaDeSessao/);
+  });
+
+  it('normaliza camelCase para o nome css na fronteira da porta', () => {
+    const porta = fonte.slice(fonte.indexOf('function editorCommit'), fonte.indexOf('function editorSave'));
+    expect(porta).toMatch(/replace\(\/\[A-Z\]\/g/);
+    // a sonda usa o nome css, nunca o camel cru (agora em funcao propria)
+    const sonda = fonte.slice(fonte.indexOf('function sondarPrioridade'), fonte.indexOf('function validarEscritaDeEstilo'));
+    expect(sonda).toMatch(/setProperty\(propriedadeCss/);
+    expect(sonda).not.toMatch(/setProperty\(property[,)]/);
+    // e o patch gravado carrega o nome css (o replay aplica com setProperty)
+    // aspas agnosticas: o esbuild do vitest normaliza 'style' para "style"
+    expect(porta).toMatch(/property: kind === ["']style["'] \? propriedadeCss/);
+  });
+
+  // Anunciar capacidade sem chamador faz o editor escrever, a porta dizer ok, e
+  // nada persistir.
+  // O replay SEMPRE soube aplicar text e attribute (applyPatchOrThrow trata
+  // os dois, incluindo split-text com marcador de rebind) — so' a porta
+  // recusava. Agora ela valida e registra pelos MESMOS ritos do style:
+  // identidade estavel+unica, bilhete de consulta, chave injetiva COM kind.
+  // Um patch kind:text replay-a como textContent — markup autoral (links,
+  // strong) seria ACHATADO. Filho de elemento que nao e' artefato de split =
+  // rich_text recusado; artefatos de split podem (o replay ja' trata: escreve
+  // textContent e planta o marcador de rebind).
+  it('texto rico recusa; split-text passa (o replay ja sabe)', () => {
+    const porta = fonte.slice(fonte.indexOf('function editorCommit('), fonte.indexOf('function editorCommitBatch'));
+    expect(porta).toMatch(/rich_text/);
+    expect(porta).toMatch(/SPLIT_TOKEN/);
+  });
+
+  it('text passa pela porta com identidade e bilhete', () => {
+    const porta = fonte.slice(fonte.indexOf('function editorCommit('), fonte.indexOf('function editorCommitBatch'));
+    expect(porta).not.toMatch(/kind === ['"]text['"].*not_wired_yet/);
+    // texto vira patch kind text com property null e no_change guard
+    expect(porta).toMatch(/kind === ['"]text['"]/);
+  });
+
+  it('attribute passa so na LISTA (src/srcset/href/alt/poster), com url normalizada', () => {
+    // as regras vivem em validarAtributo, compartilhada entre porta e lote
+    const regras = fonte.slice(fonte.indexOf('function validarAtributo'), fonte.indexOf('function validarIdentidade'));
+    expect(regras).toMatch(/ATRIBUTOS_PERMITIDOS/);
+    for (const attr of ['src', 'srcset', 'href', 'alt', 'poster']) {
+      expect(regras).toMatch(new RegExp(`['"]${attr}['"]`));
+    }
+    expect(regras).toMatch(/attribute_not_allowed/);
+    // srcset com VALOR: aceito SEM url de sessao (undo restaurando o original
+    // do site); com url de sessao dentro, recusa ate existir parser
+    expect(regras).toMatch(/srcset com url de sessao/);
+  });
+
+  it('a chave do bilhete inclui o KIND', () => {
+    expect(fonte).toMatch(/chave = JSON\.stringify\(\[[^\]]*kind[^\]]*elementId/);
+  });
+});
+
+// O risco esta' ACEITO e escrito, nao escondido: a porta expoe capacidade nova
+// (o escopo lexico da ponte nao e' alcancavel pela pagina; esta funcao e').
+// Fica pela decisao de 2026-08-09 de que site adversarial esta' fora do modelo
+// de ameaca — aceitacao explicita, nao equivalencia tecnica.
+describe('o risco da porta esta registrado no codigo', () => {
+  it('diz que expoe capacidade nova e por que fica', () => {
+    const fonte = getRuntimeBridgeSource();
+    expect(fonte).toMatch(/RISCO ACEITO/);
+    expect(fonte).toMatch(/fora do modelo de amea/i);
+  });
+});
+
+// ⚠️ A validacao de prioridade vale SO' na consulta previa: na chamada de
+// registro o DOM ja' mudou, e repetir o teste sobre o estado alterado devolvia
+// recusa FALSA — a edicao ficava na tela e sumia no reload, o defeito que a
+// porta veio impedir (Sol r4). O registro apresenta a APROVACAO da consulta.
+describe('a aprovacao da consulta amarra o registro', () => {
+  const fonte = getRuntimeBridgeSource();
+  it('o registro exige o bilhete da consulta', () => {
+    expect(fonte).toMatch(/needs_preflight/);
+    expect(fonte).toMatch(/aprovacoesDeEscrita/);
+  });
+  it('o bilhete amarra elemento, propriedade E valor', () => {
+    // a chave usa o NOME CSS normalizado — camel e hifen do mesmo campo nao
+    // podem gerar bilhetes diferentes
+    // a chave amarra tambem o BEFORE, e a serializacao e' INJETIVA (JSON de
+    // tupla; concatenar com | colide quando um valor contem |)
+    // regex por CONTEUDO (o transform do vitest reformata o fonte): a chave e'
+    // JSON de tupla contendo id, nome css, before e value normalizados
+    expect(fonte).toMatch(/chave = JSON\.stringify\(\[[^\]]*elementId[^\]]*propriedadeCss[^\]]*normalizarValor\(edit\.before\)[^\]]*normalizarValor\(edit\.value\)[^\]]*\]\)/);
+  });
+  it('o caderno de bilhetes tem teto', () => {
+    expect(fonte).toMatch(/aprovacoesDeEscrita\.size > 64/);
+  });
+});
+
+// Com `transition` na propriedade o computado nao muda logo apos a escrita, e a
+// sondagem leria isso como prioridade alheia — recusando edicao persistivel.
+// Num clone animado esse e' o caso comum (Sol r5).
+describe('a sondagem de prioridade neutraliza transicao', () => {
+  const fonte = getRuntimeBridgeSource();
+  it('desliga a transicao antes de medir', () => {
+    expect(fonte).toMatch(/setProperty\(["']transition["'], ["']none["'], ["']important["']\)/);
+  });
+  it('restaura SEMPRE, inclusive a transicao', () => {
+    expect(fonte).toMatch(/finally \{[\s\S]{0,400}removeProperty\(["']transition["']\)/);
+  });
+  it('sondagem que falha RECUSA, nao deixa passar', () => {
+    expect(fonte).toMatch(/sondagemFalhou/);
+    expect(fonte).toMatch(/if \(sondagemFalhou\) return recusa/);
+  });
+});
+
+// `getPropertyValue('transition')` volta vazio quando so' ha' longhands inline
+// (um `transition-duration` sozinho), e remover o shorthand na restauracao
+// apagaria esses — a sondagem mudaria a animacao do clone mesmo em consulta.
+describe('a sondagem restaura longhand por longhand', () => {
+  const fonte = getRuntimeBridgeSource();
+  it('conhece os cinco longhands', () => {
+    for (const nome of ['transition-property', 'transition-duration',
+      'transition-timing-function', 'transition-delay', 'transition-behavior']) {
+      expect(fonte).toContain(nome);
+    }
+  });
+  it('guarda valor E prioridade de cada um', () => {
+    expect(fonte).toMatch(/LONGHANDS_TRANSICAO/);
+    expect(fonte).toMatch(/prioridade: element\.style\.getPropertyPriority\(nome\)/);
+  });
+});
+
+// `transition: none` cancela a transicao em curso, e restaurar os longhands nao
+// devolve o progresso dela — a consulta mudaria visivelmente a animacao do
+// clone. Recusar e' mais honesto que perturbar (Sol r8).
+describe('transicao em curso nao e sondada', () => {
+  const fonte = getRuntimeBridgeSource();
+  it('recusa quando ha CSSTransition rodando', () => {
+    expect(fonte).toMatch(/transition_in_flight/);
+    expect(fonte).toMatch(/CSSTransition/);
+    // O criterio e' por EXCLUSAO: `playState` nao tem `pending` (e' campo
+    // proprio), e uma transicao PAUSADA segue ativa e tambem seria cancelada.
+    expect(fonte).toMatch(/playState !== ['"]idle['"]/);
+    expect(fonte).toMatch(/playState !== ['"]finished['"]/);
+    expect(fonte).toMatch(/a\.pending/);
+  });
+
+  // Nao dar para perguntar nao e' o mesmo que nao haver transicao: assumir
+  // ausencia reabre o risco de cancelar uma em curso.
+  it('API ausente falha FECHADO', () => {
+    expect(fonte).toMatch(/typeof element\.getAnimations !== ['"]function['"]/);
+  });
+});

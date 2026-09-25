@@ -68,31 +68,12 @@
     });
   }
 
-  // ─── Role 1: web-shell bridge ──────────────────────────────────────────
-  if (isWebShellOrigin()) {
-    window.addEventListener('message', (e) => {
-      if (e.origin !== location.origin) return;
-      const msg = e.data;
-      if (!msg || msg.source !== 'uncraft-web-shell') return;
-      if (msg.type !== 'uncraft.handoff.register') return;
-      const p = msg.payload || {};
-      if (!p.token || !p.url) return;
-      setHandoff(p.url, {
-        token: p.token,
-        url: p.url,
-        nodeId: p.nodeId || null,
-        webShellOrigin: p.webShellOrigin || location.origin,
-        expiresAt: p.expiresAt || (Date.now() + 5 * 60 * 1000),
-        registeredAt: Date.now()
-      }).then(() => {
-        // Echo back so the modal can confirm visually if it wants to.
-        window.postMessage({
-          source: 'uncraft-extension',
-          type: 'uncraft.handoff.registered',
-          url: p.url
-        }, location.origin);
-      });
-    }, false);
-    return; // Don't mount the banner on the web-shell itself.
-  }
+  // ─── Role 1: web-shell bridge — RETIRADO (spec 2026-09-08) ─────────────
+  // A verificação de bot agora acontece no NOSSO navegador remoto (Browserbase),
+  // dentro do canvas — o web-shell NÃO emite mais `uncraft.handoff.register`,
+  // então este receptor ficou inerte e foi removido. `setHandoff`/`getHandoffs`/
+  // `deleteHandoff` seguem exportados só para o callout legado do panel.js, que
+  // agora lê um registro sempre vazio (dead code a remover num follow-up com a
+  // extensão carregada no Chrome).
+  void setHandoff; void getHandoffs; void deleteHandoff;
 })();

@@ -1,15 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const changeDevice = vi.fn();
 const markRuntimeLoaded = vi.fn();
 const resetSession = vi.fn();
 const reportRuntimeRecoveryFailure = vi.fn();
+const reloadRuntime = vi.fn();
+const failRuntime = vi.fn();
 const iframeRef = { current: null };
 let controllerStatus = 'loading';
 let runtimeRecovery = null;
 let recoveryNotice = null;
 let patchError = null;
+let editState = { value: 'navigating' };
 
 vi.mock('./useNativeMotionController.js', () => ({
   useNativeMotionController: vi.fn(() => ({
@@ -19,8 +22,8 @@ vi.mock('./useNativeMotionController.js', () => ({
     recoveryNotice,
     patchError,
     mode: 'edit',
-    editState: { value: 'navigating' },
-    commands: { changeDevice, markRuntimeLoaded, resetSession, reportRuntimeRecoveryFailure },
+    editState,
+    commands: { changeDevice, markRuntimeLoaded, resetSession, reportRuntimeRecoveryFailure, reloadRuntime, failRuntime },
   })),
 }));
 
@@ -45,11 +48,14 @@ beforeEach(() => {
   markRuntimeLoaded.mockReset();
   resetSession.mockReset();
   reportRuntimeRecoveryFailure.mockReset();
+  reloadRuntime.mockReset();
+  failRuntime.mockReset();
   iframeRef.current = null;
   controllerStatus = 'loading';
   runtimeRecovery = null;
   recoveryNotice = null;
   patchError = null;
+  editState = { value: 'navigating' };
   vi.stubGlobal('fetch', vi.fn(async (url) => runtimeResponse(String(url).split('/')[3])));
 });
 
@@ -73,6 +79,50 @@ describe('NativeEditViewport', () => {
     expect(iframe.getAttribute('referrerpolicy')).toBe('no-referrer');
     fireEvent.load(iframe);
     expect(markRuntimeLoaded).toHaveBeenCalledOnce();
+  });
+
+  it('flips the sandbox to allow-same-origin only when the runtime session is in lease mode', async () => {
+    fetch.mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({
+        runtime: { url: 'https://abc.rt.localtest.test/api/rt/sess/index.html', mode: 'lease', origin: 'https://abc.rt.localtest.test' },
+        session: { id: 'session-lease', baseSnapshotId: 'snap', revision: 0 },
+      }),
+    }));
+    render(<NativeEditViewport nodeId="node-lease" deviceId="desktop" />);
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+    const iframe = screen.getByTitle('Native animated website runtime');
+    expect(iframe.getAttribute('sandbox')).toBe('allow-scripts allow-same-origin allow-pointer-lock');
+  });
+
+  it('in lease mode + connected, renews the lease on the interval and masks on a terminal refusal', async () => {
+    const { LEASE_RENEW_INTERVAL_MS } = await import('../../lib/motion-editor/lease-renewal.js');
+    vi.useFakeTimers();
+    try {
+      controllerStatus = 'ready';
+      const renewCalls = [];
+      fetch.mockImplementation(async (url) => {
+        if (String(url).endsWith('/runtime-session')) {
+          return { ok: true, json: async () => ({
+            runtime: { url: 'https://abc.rt.localtest.test/api/rt/sess/index.html', mode: 'lease', origin: 'https://abc.rt.localtest.test', expiresAt: new Date(Date.now() + 4 * 3.6e6).toISOString() },
+            session: { id: 'session-lease', baseSnapshotId: 'snap', revision: 0 },
+          }) };
+        }
+        renewCalls.push(String(url));
+        return { ok: false, status: 409, json: async () => ({ error: 'not_renewable' }) };
+      });
+
+      render(<NativeEditViewport nodeId="node-lease" deviceId="desktop" />);
+      // Descarrega o encadeamento fetch→json do open (várias voltas de
+      // microtask) para o modo virar 'lease' e o laço agendar.
+      await act(async () => { for (let i = 0; i < 6; i += 1) await Promise.resolve(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(LEASE_RENEW_INTERVAL_MS + 10); });
+
+      expect(renewCalls.some((u) => u.endsWith('/runtime-session/renew'))).toBe(true);
+      expect(failRuntime).toHaveBeenCalledWith('lease_renew_terminal');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('uses a fixed canonical viewport, clips runtime overlays, and follows device changes', async () => {
@@ -149,6 +199,48 @@ describe('NativeEditViewport', () => {
     rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
     expect(screen.getByRole('alert').textContent).toBe("This change couldn't be applied. The previous value was restored.");
     expect(screen.queryByText(/retry|repair|regenerate/i)).toBeNull();
+  });
+
+  it('masks in place on mid-edit failure: no teardown report, iframe unmounted, work message shown', async () => {
+    const onUnavailable = vi.fn();
+    const { rerender } = render(
+      <NativeEditViewport nodeId="node-a" deviceId="desktop" onUnavailable={onUnavailable} />,
+    );
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+
+    controllerStatus = 'unavailable';
+    runtimeRecovery = { requestId: 2, attempt: 2, exhausted: true };
+    editState = { value: 'masked', code: 'runtime_recovery_exhausted' };
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" onUnavailable={onUnavailable} />);
+
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    expect(screen.getByText(/your edits are safe/i)).toBeTruthy();
+    expect(screen.queryByTitle('Native animated website runtime')).toBeNull();
+    expect(onUnavailable).not.toHaveBeenCalled();
+  });
+
+  it('the mask reload button asks the controller to reload the runtime', async () => {
+    const { rerender } = render(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+
+    controllerStatus = 'unavailable';
+    runtimeRecovery = { requestId: 2, attempt: 2, exhausted: true };
+    editState = { value: 'masked', code: 'x' };
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    fireEvent.click(screen.getByRole('button', { name: /reload/i }));
+    expect(reloadRuntime).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the mask up while a reload attempt is in flight (RELOADING renders the mask, button disabled)', async () => {
+    const { rerender } = render(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    await waitFor(() => expect(screen.getByTitle('Native animated website runtime')).toBeTruthy());
+
+    controllerStatus = 'recovering';
+    runtimeRecovery = { requestId: 3, attempt: 0, exhausted: false };
+    editState = { value: 'reloading', code: 'x' };
+    rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /reloading/i }).disabled).toBe(true);
   });
 
   it('returns a failed automatic reopen to the controller instead of exposing recovery choices', async () => {

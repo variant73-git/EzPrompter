@@ -39,7 +39,7 @@ export default function NativeMotionInspector({
   }, [controller?.ownershipConflict?.requestId]);
 
   return (
-    <aside className={styles.inspector} aria-label="Native website inspector">
+    <aside className={styles.inspector} aria-label="Native website inspector" data-native-motion-chrome="true">
       <div className={styles.selectionHeader}>
         <span className={styles.selectionGlyph}><Code2 aria-hidden="true" /></span>
         <span className={styles.selectionCopy}>

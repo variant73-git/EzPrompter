@@ -143,7 +143,9 @@ function bootEditor({ targetDoc, targetWin, transport, boardId, nodeId, kind }) 
   bootAborted = false;
 
   // Globals editor.js IIFE looks up at boot.
-  window.__rbHost = { doc: document, win: window };
+  // Editor legado do canvas: congelar é o certo aqui, e a decisão viaja DENTRO
+  // do objeto de boot — nenhum conteúdo carregado no node alcança isto.
+  window.__rbHost = { doc: document, win: window, preserveMotion: false };
   window.__rbTarget = { doc: targetDoc, win: targetWin };
   window.__uncraftTransport = transport;
   window.__uncraftMountOptions = { boardId, nodeId, kind };

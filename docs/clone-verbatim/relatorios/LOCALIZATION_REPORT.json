@@ -1,0 +1,15 @@
+{
+  "generatedAt": "2026-07-17T02:19:44.208Z",
+  "source": "/Users/adilsonporto/Documents/Clone/.firecrawl/raw-promo.html",
+  "output": "/Users/adilsonporto/Documents/Clone/index.html",
+  "localizedAssets": 369,
+  "excludedMetadataAssets": 2,
+  "failures": [],
+  "localizedSourceHosts": [
+    "cdn.prod.website-files.com",
+    "farm-minerals.b-cdn.net",
+    "d3e54v103j8qbb.cloudfront.net",
+    "unpkg.com",
+    "cdn.jsdelivr.net"
+  ]
+}

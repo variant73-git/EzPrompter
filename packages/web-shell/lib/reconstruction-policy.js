@@ -1,3 +1,4 @@
+import { classifyNativeLineage, NATIVE_LINEAGE } from './node-editor-kind.js';
 import { isIter9Reconstruction } from './node-viewport.js';
 import { isLiveUrlReference } from './url-reference.js';
 
@@ -38,7 +39,39 @@ export function edgeNeedsEditableRuntime(edgePayload) {
   });
 }
 
+/**
+ * Edit auto-upgrade (product rule 2026-08-17, pre-launch): the tool's fixes
+ * reach every node automatically. A site node whose stored artifact predates
+ * the native engine (any current snapshot that is not a native bundle) is
+ * re-cloned through the CURRENT machinery when the user enters Edit — in
+ * place, with the previous state preserved in version history. Nominal iter9
+ * artifacts are exempt (doctrine: iter9 exists BY NAME and stays static).
+ * Scoped to the edit role only: target/source roles keep the deferred policy,
+ * so /run compose semantics are untouched.
+ *
+ * Recorded dissent (Sol review 2026-08-17 #1): this also replaces legacy
+ * 'edit' snapshots (user-authored work) silently and charges for the
+ * migration. Kept by explicit product-owner rule while pre-launch (history
+ * preserves every prior state in Saved versions); a consent surface and a
+ * no-debit migration path are REQUIRED before launch.
+ */
 export function reconstructionReason({ node, role, edgePayload } = {}) {
+  if (role === 'edit' && node?.kind === 'site' && node?.origin_url && !isIter9Reconstruction(node)) {
+    const lineage = classifyNativeLineage(node);
+    // Readiness short-circuits BEFORE needsDeferredReconstruction on purpose:
+    // a stale animatedDetected / live-reference flag must never re-clone a
+    // node that already carries a usable native bundle. 'native-edit' (a Save
+    // from the native editor) keeps the bundle and stays ready — comparing
+    // against the single string 'native-bundle' re-cloned (and re-charged)
+    // every node after its first Save (defect 3, 2026-08-20).
+    if (lineage === NATIVE_LINEAGE.READY) return null;
+    // A node that CLAIMS native lineage but whose structure doesn't close is
+    // an integrity failure: repair is deliberate (nominal engine), never an
+    // automatic billable capture (Sol advise 2026-08-20).
+    if (lineage === NATIVE_LINEAGE.INCONSISTENT) return 'native-inconsistent';
+    // Legacy lineage: product rule 2026-08-17 (edit auto-upgrade) unchanged.
+    return 'edit';
+  }
   if (!needsDeferredReconstruction(node)) return null;
   if (role === 'edit') return 'edit';
   if (role === 'target') return 'transform-target';

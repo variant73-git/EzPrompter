@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMemoryBundleStore } from './bundle-store.js';
-import { registerNativeBundle } from './register-bundle.js';
+import { NativeBundleDescriptorConflictError, registerNativeBundle } from './register-bundle.js';
 
 const HASH_A = `sha256:${'a'.repeat(64)}`;
 const tempDirs = [];
@@ -53,14 +53,45 @@ describe('registerNativeBundle', () => {
     })).rejects.toThrow(/content hash/i);
   });
 
-  it('rejects different bytes under an existing immutable bundle ID', async () => {
-    const store = createMemoryBundleStore();
-    const bundleId = '22222222-2222-4222-8222-222222222222';
-    await registerNativeBundle(producerBundle({ bundleId }), { store });
+  // ⚠️ bundleId do PRODUTOR so' entra se for exatamente o derivado do conteudo
+  // — `producerOutput.bundleId ||` aceitava QUALQUER id: o mesmo conteudo
+  // podia ganhar ids diferentes, e um id podia apontar para conteudos
+  // diferentes (Sol). O caso "bytes diferentes sob o mesmo id" morre AQUI,
+  // por construcao, antes de alcançar o store.
+  it('rejects a producer bundle id that does not derive from the content', async () => {
     await expect(registerNativeBundle(producerBundle({
-      bundleId,
-      assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>different</html>' }],
-    }), { store })).rejects.toThrow(/immutable bundle/i);
+      bundleId: '22222222-2222-4222-8222-222222222222',
+    }), { store: createMemoryBundleStore() })).rejects.toThrow(/bundle id/i);
+  });
+
+  // ⚠️ A identidade deriva dos ASSETS — entryPath/fingerprint/capabilities
+  // ficam fora do hash — e o reuso comparava so' o contentHash: assets
+  // identicos com entryPath ou fingerprint DIFERENTES recebiam o mesmo id e a
+  // segunda chamada devolvia os metadados da primeira, em silencio (Sol
+  // reproduziu: pediu other.html com outro fingerprint e recebeu index.html
+  // com o fingerprint antigo). Divergencia em qualquer campo executavel e'
+  // ERRO tipado, nunca troca silenciosa de descriptor.
+  it('rejects same assets with a different entryPath or fingerprint — never silent reuse', async () => {
+    const store = createMemoryBundleStore();
+    await registerNativeBundle(producerBundle({}), { store });
+    // MESMOS assets, fingerprint diferente → recusa TIPADA (classe + code)
+    await expect(registerNativeBundle(producerBundle({
+      runtimeFingerprint: `sha256:${'9'.repeat(64)}`,
+    }), { store })).rejects.toBeInstanceOf(NativeBundleDescriptorConflictError);
+    await expect(registerNativeBundle(producerBundle({
+      runtimeFingerprint: `sha256:${'9'.repeat(64)}`,
+    }), { store })).rejects.toMatchObject({ code: 'immutable_bundle_conflict' });
+    // MESMOS assets, entryPath diferente (apontando outro arquivo ja' presente) → recusa tipada
+    await expect(registerNativeBundle(producerBundle({
+      entryPath: 'assets/app.js',
+    }), { store })).rejects.toMatchObject({ code: 'immutable_bundle_conflict' });
+  });
+
+  it('accepts a producer bundle id when it IS the derived one (idempotent)', async () => {
+    const store = createMemoryBundleStore();
+    const first = await registerNativeBundle(producerBundle({}), { store });
+    const second = await registerNativeBundle(producerBundle({ bundleId: first.bundleId }), { store });
+    expect(second.bundleId).toBe(first.bundleId);
   });
 
   it('rejects assets that are missing from or added outside a producer-declared index', async () => {

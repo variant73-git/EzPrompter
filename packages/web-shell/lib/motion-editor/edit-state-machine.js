@@ -7,6 +7,11 @@ export const EDIT_STATES = Object.freeze({
   PREVIEWING: 'previewing',
   RECOVERING: 'recovering',
   UNAVAILABLE: 'unavailable',
+  // Falha de runtime em edição ATIVA: editor montado, iframe morto, trabalho
+  // preservado (o rascunho é server-side). UNAVAILABLE fica para a falha de
+  // ABERTURA, onde não há trabalho a poupar e o teardown atual é legítimo.
+  MASKED: 'masked',
+  RELOADING: 'reloading',
 });
 
 const VALID_STATES = new Set(Object.values(EDIT_STATES));
@@ -17,6 +22,10 @@ export function createEditState(input = {}) {
     selectionId: input.selectionId || null,
     operationId: input.operationId || null,
     loop: input.loop === true,
+    // "Edição ativa" = o runtime anunciou pronto neste mount. É este flag que
+    // decide máscara×teardown no runtime-unavailable — não um palpite do
+    // consumidor sobre "estava aberto".
+    ready: input.ready === true,
     code: input.code || null,
   };
 }
@@ -30,12 +39,14 @@ export function transitionEditState(current, event) {
   const state = createEditState(current);
   switch (event?.type) {
     case 'runtime-ready':
+      return createEditState({ ready: true });
     case 'released':
       return createEditState();
     case 'select':
       return createEditState({
         value: event.elementId ? EDIT_STATES.SELECTION_PENDING : EDIT_STATES.NAVIGATING,
         selectionId: event.elementId || null,
+        ready: state.ready,
       });
     case 'settlement-started':
       if (event.elementId && state.selectionId && event.elementId !== state.selectionId) return current;
@@ -81,7 +92,18 @@ export function transitionEditState(current, event) {
     case 'recovery-started':
       return createEditState({ ...state, value: EDIT_STATES.RECOVERING, code: event.code || 'recovery' });
     case 'runtime-unavailable':
-      return createEditState({ ...state, value: EDIT_STATES.UNAVAILABLE, code: event.code || 'runtime_unavailable' });
+      // Reload falho VOLTA à máscara — a garantia da máscara é nunca desmontar
+      // por falha; desmontar de verdade é só o 'released' deliberado.
+      return createEditState({
+        ...state,
+        value: state.ready || state.value === EDIT_STATES.RELOADING
+          ? EDIT_STATES.MASKED
+          : EDIT_STATES.UNAVAILABLE,
+        code: event.code || 'runtime_unavailable',
+      });
+    case 'runtime-reload-requested':
+      if (state.value !== EDIT_STATES.MASKED) return current;
+      return createEditState({ ...state, value: EDIT_STATES.RELOADING });
     default:
       return current;
   }

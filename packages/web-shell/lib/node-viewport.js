@@ -50,6 +50,30 @@ export function canonicalNativeEditNode(node, deviceId = nativeEditDeviceForNode
   };
 }
 
+/**
+ * Center of the free editing area — the SINGLE zoom pivot for edit mode.
+ * Derived from the same math as computeNodeEditFrame so the wheel/pill zoom
+ * pivots exactly where the entry framing centered the node. The old pivots
+ * hardcoded `46 + (H - 64) / 2`, which is only this center when bottom=18 —
+ * the native editor reserves bottom=200, so every zoom notch drifted the
+ * site ~91px off its framed center (defect 2, 2026-08-20).
+ */
+export function editFrameAnchor({
+  viewportWidth,
+  viewportHeight,
+  leftReserve = 0,
+  rightReserve = 0,
+  header = 46,
+  bottom = 18,
+} = {}) {
+  const usableWidth = Math.max(320, Number(viewportWidth) - leftReserve - rightReserve);
+  const usableHeight = Math.max(240, Number(viewportHeight) - header - bottom);
+  return {
+    cx: leftReserve + usableWidth / 2,
+    cy: header + usableHeight / 2,
+  };
+}
+
 export function computeNodeEditFrame(node, {
   viewportWidth,
   viewportHeight,

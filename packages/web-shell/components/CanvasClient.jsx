@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } fr
 import { createPortal } from 'react-dom';
 import { Check, CloudCheck, Monitor, Smartphone, Tablet, Workflow as WorkflowIcon, X } from 'lucide-react';
 import { nodeOrigin, originColor } from '../lib/node-origin.js';
+import { resolveNodeDropPosition } from '../lib/canvas-layout.js';
 import { imageUrlFromPastedHtml, looksLikeImageUrl } from '../lib/pasted-image.js';
 import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { api } from '../lib/canvas-api.js';
@@ -28,13 +29,18 @@ import {
   NativeMotionEditTopbarControls,
   nativeMotionEditShellLayout,
 } from './motion-editor/NativeMotionEditChrome.jsx';
-import ChallengeModal from './ChallengeModal.jsx';
+import ChallengeNotice from './ChallengeNotice.jsx';
+import ChallengeLiveView from './ChallengeLiveView.jsx';
+import { useChallengeJob } from './useChallengeJob.js';
 import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
 import { findSectionTerminals, planIncrementalRun, planRunFromNode, nodeInputSignature, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
 import { buildNodesClipboardPayload, parseNodesClipboardText, payloadToPasteItems } from '../lib/node-clipboard.js';
 import { estimateChain } from '../lib/billing/pricing.js';
-import { needsDeferredReconstruction } from '../lib/reconstruction-policy.js';
+import { shouldReconstructForAction } from '../lib/reconstruction-policy.js';
+import { EDIT_ROUTE, planEditEntry } from '../lib/edit-action-decision.js';
+import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
+import DevWidget from './DevWidget.jsx';
 import { canUseCloneEdit } from '../lib/clone-edit-access.js';
 import { clampToViewport } from '../lib/menu-position.js';
 import { readCanvasScale, chromeScale } from '../lib/canvas-scale.js';
@@ -48,8 +54,10 @@ import { classifyDropFile, formatDropRejectMessage } from '../lib/drop-files.js'
 import { captureMoveUndo, restoreMissingEdges, restoreMovedNodes } from '../lib/canvas-undo.js';
 import {
   CANVAS_DEFAULT_SCALE,
+  CANVAS_EDIT_MIN_SCALE,
   CANVAS_MAX_SCALE,
   CANVAS_MIN_SCALE,
+  CANVAS_WHEEL_MAX_SCALE,
   clampCanvasScale,
   parseCanvasView,
 } from '../lib/canvas-view.js';
@@ -61,6 +69,8 @@ import {
 } from '../lib/url-reference.js';
 import {
   applyReconstructionResultToNode,
+  classifyNativeLineage,
+  NATIVE_LINEAGE,
   NODE_EDITOR_KIND,
   resolveNodeEditorKind,
   snapshotEditorMetadata,
@@ -68,6 +78,7 @@ import {
 import {
   canonicalNativeEditNode,
   computeNodeEditFrame,
+  editFrameAnchor,
   nativeEditDeviceForNode,
 } from '../lib/node-viewport.js';
 import { applyNativeCommitSnapshot } from '../lib/motion-editor/native-edit-api.js';
@@ -223,6 +234,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   const [contextMenu, setContextMenu] = useState(null);  // {x, y, worldX, worldY} — right-click on empty canvas
   const [editingNodeId, setEditingNodeId] = useState(null);
   const nativeEditRestoreRef = useRef(null);
+  // Mirror of editingNodeId for callbacks that must not close over stale
+  // state (the camera-persistence path runs inside onTransformed).
+  const editingNodeIdRef = useRef(null);
+  // Pre-edit camera for EVERY editor kind (the native path additionally
+  // restores node geometry via nativeEditRestoreRef). Edit-mode cameras are
+  // never persisted, so exiting must put the world back where it was.
+  const preEditCameraRef = useRef(null);
   const editFrameTimerRef = useRef(null);
   const nativeViewportFrameRafRef = useRef(null);
   const [editorActionBusy, setEditorActionBusy] = useState(false);
@@ -261,12 +279,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   useEffect(() => () => {
     if (editFrameTimerRef.current) window.clearTimeout(editFrameTimerRef.current);
     if (nativeViewportFrameRafRef.current) window.cancelAnimationFrame(nativeViewportFrameRafRef.current);
-    const session = nativeEditRestoreRef.current;
-    if (!session?.camera) return;
+    // Route-change unmount mid-edit: the pre-edit camera (kept for every
+    // editor kind since 2026-08-20) is the last coherent view — edit-mode
+    // saves are suppressed, so without this write nothing else lands it.
+    const preEdit = preEditCameraRef.current;
+    if (!preEdit?.camera) return;
     try {
-      localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(session.camera));
+      localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(preEdit.camera));
     } catch { /* best-effort route-change restoration */ }
-    nativeEditRestoreRef.current = null;
+    preEditCameraRef.current = null;
   }, [CANVAS_VIEW_KEY]);
 
   useEffect(() => {
@@ -302,11 +323,57 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   // reads + clears so the end-of-run camera frame can fit the entire
   // workflow at once instead of jumping per-node mid-run.
   const agentRunNewNodesRef = useRef(new Map());
-  // Bot-protection interstitial state. When captureSnapshot returns 409
-  // challenge_required, we stash {kind, url, signals, placeholderId} here
-  // so <ChallengeModal /> mounts. placeholderId lets the modal's cancel /
-  // open-site handlers clean up the temp node from the canvas.
-  const [challenge, setChallenge] = useState(null);
+  // Aviso "verificação rápida" (spec 2026-09-08): quando a captura/Edit acha
+  // um interstitial de bot, guarda {nodeId, host, purpose} e o job roda no
+  // navegador remoto via useChallengeJob.
+  const [challengeNotice, setChallengeNotice] = useState(null);
+  const challengeJob = useChallengeJob({
+    api,
+    onSucceeded: async (nodeId, purpose, result) => {
+      setChallengeNotice(null);
+      if (purpose === 'edit') {
+        let prepared = null;
+        setNodes((prev) => prev.map((n) => {
+          if (n.id !== nodeId) return n;
+          prepared = applyReconstructionResultToNode(n, result);
+          return prepared;
+        }));
+        setNodeRunStatus(nodeId, null);
+        flashNodeDebit(nodeId, result?.credits);
+        if (prepared) enterEditMode(prepared, editorKindForNode(prepared));
+      } else {
+        try {
+          const { node, snapshot } = await api.getNode(nodeId);
+          setNodes((prev) => prev.map((n) => (n.id === nodeId ? {
+            ...n, ...node,
+            current_html: snapshot?.html,
+            current_screenshot: snapshot?.screenshot_url || null,
+            _loading: false, _loadingLabel: undefined, _challenge: false, _handoffPending: false,
+          } : n)));
+        } catch { /* poller de outra aba pega */ }
+      }
+    },
+    onFailed: (nodeId, code) => {
+      setChallengeNotice(null);
+      updateNodeLocal(nodeId, { _loading: false, _loadingStage: undefined, _loadingError: code !== 'cancelled', _challenge: false, _handoffPending: false, _loadingLabel: undefined });
+      if (code === 'cancelled') return;
+      const msg = ({
+        unsupported: 'This site blocks automated capture.',
+        expired: 'Verification timed out — try again.',
+        not_found: 'Verification cancelled.',
+      })[code] || 'Capture failed — nothing was charged.';
+      toast.error(msg);
+    },
+    onNodeState: (nodeId, { stage } = {}) => {
+      const label = ({
+        verifying: 'Verifying site…',
+        needs_human: 'Waiting for you to pass the check…',
+        capturing: 'Preparing editable site…',
+        committing: 'Preparing editable site…',
+      })[stage] || 'Verifying site…';
+      updateNodeLocal(nodeId, { _loading: true, _challenge: true, _loadingStage: undefined, _loadingLabel: label });
+    },
+  });
   // Active section selection — the workflow the user is currently operating
   // on. When set, the PromptDock surfaces a ContextPill, the section frame
   // gets an accent border, and the agent receives section context with every
@@ -731,7 +798,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   // vanilla JS and lives inside the host doc — it picks this up off
   // window.__uncraftZoom on demand.
   useEffect(() => {
-    const ZOOM_STEP = 1.2, MIN = editingNodeId ? 0.04 : 0.1, MAX = 2.5;
+    const ZOOM_STEP = 1.2, MIN = editingNodeId ? CANVAS_EDIT_MIN_SCALE : 0.1, MAX = CANVAS_WHEEL_MAX_SCALE;
     // Snapshot the previously-stored edit frame so we can restore it
     // after replacing the __uncraftZoom object (this effect re-runs on
     // every canvas-scale tick, otherwise the frame would be wiped).
@@ -745,10 +812,20 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       const rect = wrapper.getBoundingClientRect();
       let cx = rect.width / 2, cy = rect.height / 2;
       if (editingNodeId) {
+        // Same anchor as the entry framing (computeEditFrame): the pivot IS
+        // the framed center — including the bottom reserve the old hardcoded
+        // `46 + (H - 64) / 2` ignored (defect 2, 2026-08-20).
         const editingNode = nodes.find((node) => node.id === editingNodeId);
-        const { left, right } = editFrameReserves(editingNode);
-        cx = left + Math.max(320, rect.width - left - right) / 2;
-        cy = 46 + Math.max(240, rect.height - 64) / 2;
+        const reserves = editFrameReserves(editingNode);
+        const anchor = editFrameAnchor({
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+          leftReserve: reserves.left,
+          rightReserve: reserves.right,
+          bottom: reserves.bottom ?? 18,
+        });
+        cx = anchor.cx;
+        cy = anchor.cy;
       }
       const state = inst.transformState || t.state || { positionX: 0, positionY: 0, scale: 1 };
       const wx = (cx - state.positionX) / state.scale;
@@ -793,10 +870,18 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         const inst = t.instance || t;
         const state = inst?.transformState || t.state || { positionX: 0, positionY: 0, scale: 1 };
         if (editingNodeId) {
+          // Same anchor as the entry framing — see the setAbs note above.
           const editingNode = nodes.find((node) => node.id === editingNodeId);
-          const { left, right } = editFrameReserves(editingNode);
-          cx = left + Math.max(320, window.innerWidth - left - right) / 2;
-          cy = 46 + Math.max(240, window.innerHeight - 64) / 2;
+          const reserves = editFrameReserves(editingNode);
+          const anchor = editFrameAnchor({
+            viewportWidth: window.innerWidth,
+            viewportHeight: window.innerHeight,
+            leftReserve: reserves.left,
+            rightReserve: reserves.right,
+            bottom: reserves.bottom ?? 18,
+          });
+          cx = anchor.cx;
+          cy = anchor.cy;
         }
         // Wheel-zoom sensitivity — raised from 0.0015 → 0.0025 → 0.004
         // (2026-07-03, user request ×2): more zoom travel per wheel notch /
@@ -1396,6 +1481,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   }
 
   async function handleNodeMoveEnd(node, moved) {
+    const eraDragDeGrupo = Boolean(groupDragRef.current && groupDragRef.current.anchorId === node.id && groupDragRef.current.members?.length);
     groupDragRef.current = null;
     // Unfreeze membership — from here the next render re-derives sections from
     // live positions (the node has settled), so adoption/release lands once.
@@ -1426,8 +1512,29 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     }
 
     if (!moved || !drag || drag.nodeId !== node.id) return;
-    const finalX = drag.lastX;
-    const finalY = drag.lastY;
+    let finalX = drag.lastX;
+    let finalY = drag.lastY;
+    // ⭐ POUSO SEM TOQUE (pedido de 2026-08-25): um node solto nunca termina
+    // sobreposto nem encostado noutro — resolve para o ponto livre mais
+    // próximo com folga, mexendo SÓ no que o usuário arrastou. Vale para o
+    // drop LIVRE; drop em seção segue as regras da seção (adoção logo abaixo).
+    // (v1: drag de GRUPO fica fora — resolver membro a membro quebraria o
+    // arranjo interno do grupo; iteração própria se o uso pedir.)
+    if (!eraDragDeGrupo && !(preview && preview.nodeId === node.id)) {
+      const comoCaixa = (r) => ({ x: r.left, y: r.top, w: r.right - r.left, h: r.bottom - r.top });
+      const rectSolto = comoCaixa(nodeWorldRect(node, finalX, finalY));
+      const obst = nodes
+        .filter((o) => o.id !== node.id)
+        .map((o) => comoCaixa(nodeWorldRect(o, o.pos_x, o.pos_y)));
+      const pousado = resolveNodeDropPosition(rectSolto, obst);
+      const dx = pousado.x - rectSolto.x;
+      const dy = pousado.y - rectSolto.y;
+      if (dx || dy) {
+        finalX += dx;
+        finalY += dy;
+        updateNodeLocal(node.id, { pos_x: finalX, pos_y: finalY });
+      }
+    }
 
     // Combined position+meta PATCH for both commit paths below — the
     // debounced position PATCH must be cancelled first, otherwise its
@@ -1777,6 +1884,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   // starts (node creation awaits the server), so it never self-drops.
   useEffect(() => {
     if (!placingNodeId) return;
+    // While placing, all node iframes go inert (CSS: html.canvas-placing .cnode
+    // iframe { pointer-events:none }). Otherwise a placement click that lands
+    // over an already-mounted cross-origin reference iframe dies inside that
+    // iframe and never reaches the window `click` listener below, so the drop
+    // never commits — the ghost stays glued to the cursor. Twin of the editor's
+    // bindDragOnBothDocs cross-doc guard; here CSS is the tool since we can't
+    // add listeners inside a cross-origin frame.
+    document.documentElement.classList.add('canvas-placing');
     const onMove = (e) => {
       const node = placingNodeRef.current;
       if (!node) return;
@@ -1822,6 +1937,29 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       e.stopPropagation();
       drop();
     };
+    // Delete/Backspace DISCARDS the ghost being placed (the "+"-toolbar URL
+    // placeholder is local-only until drop, so removing it locally + clearing
+    // the pending ref is enough; the queue's prefetched node is reaped by
+    // cancelQueue). Fixes "Delete does nothing while placing": the ghost isn't
+    // in the selection set, so the main Delete handler had no target.
+    const cancelPlacing = () => {
+      const node = placingNodeRef.current;
+      // Only the "+"-toolbar URL placeholder is local-only (it persists on
+      // drop, tracked by pendingUrlReferenceRef). Every other placing ghost —
+      // a file-queue node — is ALREADY persisted on the server by the time it
+      // mounts, so discarding it must delete it server-side too or it orphans
+      // (reappears on reload). cancelQueue only reaps the PREFETCHED next node,
+      // not the current one.
+      const isLocalOnly = !!node && pendingUrlReferenceRef.current?.id === node.id;
+      if (placeQueueRef.current) cancelQueue();
+      pendingUrlReferenceRef.current = null;
+      placingNodeRef.current = null;
+      setPlacingNodeId(null);
+      if (node?.id) {
+        setNodes((prev) => prev.filter((n) => n.id !== node.id));
+        if (!isLocalOnly) api.deleteNode(node.id).catch(() => {});
+      }
+    };
     const onKey = (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -1830,12 +1968,24 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         // queue and stops advancing).
         if (placeQueueRef.current) cancelQueue();
         drop();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Don't hijack destructive keys while the user is typing in a field —
+        // let the input/editor consume them (mirrors the main Delete handler).
+        const tag = e.target?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable || e.isComposing) return;
+        // Discard the ghost. This listener is capture-phase and the main Delete
+        // handler is bubble-phase, so stopImmediatePropagation reliably stops
+        // that handler from also deleting the now-selected placeholder.
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        cancelPlacing();
       }
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('click', onClick, true);
     window.addEventListener('keydown', onKey, true);
     return () => {
+      document.documentElement.classList.remove('canvas-placing');
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('click', onClick, true);
       window.removeEventListener('keydown', onKey, true);
@@ -1951,84 +2101,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     }
   }
 
-  // Poll a handoff-pending node for the snapshot the extension will
-  // POST to /api/snapshot/handoff. Stops when the snapshot lands or
-  // after ~10 minutes (token TTL is 5 min; we give the user some
-  // extra slack to actually click the banner). Polling registry on
-  // the ref prevents duplicate intervals if the user retries.
-  const handoffPollersRef = useRef(new Map());
-  function startHandoffPolling(nodeId) {
-    if (!nodeId) return;
-    const existing = handoffPollersRef.current.get(nodeId);
-    if (existing) return; // already polling
-    const startedAt = Date.now();
-    const intervalMs = 3000;
-    const giveUpAfterMs = 10 * 60 * 1000;
-    const tick = async () => {
-      try {
-        // Cheap probe — ~30 bytes vs ~85KB when the route streams snapshot.html
-        // on every 3s tick. We only do the full GET once `ready:true` lands.
-        const probe = await api.getNode(nodeId, { readyCheck: true });
-        if (probe?.ready) {
-          const { node, snapshot } = await api.getNode(nodeId);
-          if (snapshot?.html) {
-            // Handoff landed — render it.
-            setNodes((prev) => prev.map((n) =>
-              n.id === nodeId ? {
-                ...n,
-                ...node,
-                current_html: snapshot.html,
-                current_screenshot: snapshot.screenshot_url || null,
-                _loading: false, _loadingLabel: undefined,
-                _challenge: false, _handoffPending: false
-              } : n
-            ));
-            stopHandoffPolling(nodeId);
-            return;
-          }
-        }
-      } catch (e) {
-        // 404 → node was deleted; abandon the poller. Other errors
-        // are transient (network blip, dev-server restart) — keep
-        // trying until the timeout.
-        if (/404|not_found/i.test(String(e?.message || ''))) {
-          stopHandoffPolling(nodeId);
-          return;
-        }
-      }
-      if (Date.now() - startedAt > giveUpAfterMs) {
-        stopHandoffPolling(nodeId);
-        // Surface a soft failure in the placeholder so the user knows
-        // the wait timed out — they can delete the node manually.
-        setNodes((prev) => prev.map((n) =>
-          n.id === nodeId ? {
-            ...n, _loadingLabel: 'Verification timed out',
-            _handoffPending: false
-          } : n
-        ));
-      }
-    };
-    const handle = setInterval(tick, intervalMs);
-    handoffPollersRef.current.set(nodeId, handle);
-    // First tick immediately so we don't wait 3s before checking.
-    tick();
-  }
-  function stopHandoffPolling(nodeId) {
-    const h = handoffPollersRef.current.get(nodeId);
-    if (h) {
-      clearInterval(h);
-      handoffPollersRef.current.delete(nodeId);
-    }
-  }
-  // Cleanup on unmount — without this, intervals keep firing during
-  // dev-server HMR and pollute the network tab forever.
-  useEffect(() => {
-    const map = handoffPollersRef.current;
-    return () => {
-      for (const h of map.values()) clearInterval(h);
-      map.clear();
-    };
-  }, []);
+  // (handoff polling da extensão removido — spec 2026-09-08: verificação no
+  // navegador remoto via useChallengeJob acima.)
+
 
   /**
    * Uma imagem colada por ENDEREÇO. Quem busca é o servidor: o navegador
@@ -2203,6 +2278,26 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         ...(cap.animatedDetected ? { animatedDetected: true } : {}),
       };
       await api.updateNode(nodeId, { meta: nextMeta });
+      // DESIGN.MD panel data: measure colour proportions from the capture
+      // screenshot on the CLIENT (few ms on a canvas) — zero LLM, zero added
+      // capture time. Fire-and-forget; the panel simply lacks the bar until
+      // the patch lands.
+      if (cap.screenshotDataUrl) {
+        import('../lib/design/palette-swatches-client.js')
+          .then(({ samplePaletteSwatches }) => samplePaletteSwatches(cap.screenshotDataUrl))
+          .then((paletteSwatches) => {
+            if (!paletteSwatches.length) return;
+            // Merge-only writes: local state merges from the CURRENT node (not
+            // this closure's meta) and the server merges atomically via
+            // metaMerge — a stale whole-meta PATCH would delete fields written
+            // while the image decoded (Sol review 2026-08-17).
+            setNodes((prev) => prev.map((n) => (
+              n.id === nodeId ? { ...n, meta: { ...(n.meta || {}), paletteSwatches } } : n
+            )));
+            return api.updateNode(nodeId, { metaMerge: { paletteSwatches } });
+          })
+          .catch(() => {});
+      }
       setNodes((prev) => prev.map((candidate) => candidate.id === nodeId ? {
         ...candidate,
         current_html: cap.html,
@@ -2216,15 +2311,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       } : candidate));
     } catch (e) {
       if (e?.challenge) {
-        updateNodeLocal(nodeId, {
-          _loading: true,
-          _loadingStage: undefined,
-          _loadingLabel: 'This website needs a quick word with you.',
-          _challenge: true,
-          _handoffPending: true,
-        });
-        startHandoffPolling(nodeId);
-        setChallenge({ ...e.challenge, placeholderId: nodeId });
+        let host = 'this site';
+        try { host = new URL(e.challenge.url || '').hostname.replace(/^www\./, ''); } catch { /* keep default */ }
+        updateNodeLocal(nodeId, { _loading: true, _challenge: true, _loadingStage: undefined, _loadingLabel: 'Quick check needed' });
+        setChallengeNotice({ nodeId, host, purpose: 'reference' });
         return;
       }
       updateNodeLocal(nodeId, {
@@ -3023,7 +3113,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     if (ev.button !== 0) return;            // left click only
     if (spaceDown) return; // temporary pan mode owns the gesture
     if (editingNodeId) return;
-    if (challenge) return;
+    if (challengeNotice) return;
     if (emptyDropMenu || contextMenu) return;
     if (draftEdge) return;
     const t = ev.target;
@@ -3451,12 +3541,28 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
    * novo entra na frente e o estado anterior fica no historico de versoes
    * (Saved versions), de onde se restaura.
    */
+  /**
+   * O relogio que a PESSOA sente: do clique ate' a resposta chegar. E' outro
+   * numero que o do servidor — inclui rede, fila e o proprio browser — e so' o
+   * cliente pode medi-lo. Fica em memoria para o widget de dev casar com a
+   * telemetria que veio no meta do node.
+   */
+  function marcarEsperaDoClone(nodeId, ms, engine, telemetry = null, captura = null) {
+    if (typeof window === 'undefined') return;
+    const registro = (window.__uncraftCloneWallClock ||= []);
+    registro.unshift({ nodeId, wallMs: ms, engine, telemetry, captura, at: new Date().toISOString() });
+    registro.length = Math.min(registro.length, 20);
+    window.dispatchEvent(new CustomEvent('uncraft:clone-wallclock'));
+  }
+
   async function handleCloneIter9(id) {
     const node = nodes.find((n) => n.id === id);
     if (!node?.origin_url) { toast.error('This node has no origin URL to clone.'); return; }
     setNodeRunStatus(id, { step: 1, label: 'Cloning with iter9 (static)…', request: '' });
     try {
+      const partiuIter9 = Date.now();
       const result = await api.reconstructNode(id, { engine: 'iter9' });
+      marcarEsperaDoClone(id, Date.now() - partiuIter9, 'iter9', result?.cloneTelemetry, result?.meta?.captureReport);
       flashNodeDebit(id, result?.credits);
       const preparedNode = applyReconstructionResultToNode(node, result);
       setNodes((prev) => prev.map((candidate) => (candidate.id === id ? preparedNode : candidate)));
@@ -4451,6 +4557,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
 
   function enterEditMode(node, editorKind = editorKindForNode(node)) {
     if (editFrameTimerRef.current) window.clearTimeout(editFrameTimerRef.current);
+    // Snapshot the pre-edit camera for EVERY editor kind. Edit-mode cameras
+    // are computed for a different scale range (floor 0.04) and are never
+    // persisted (defect 2, 2026-08-20) — exiting must restore this state.
+    preEditCameraRef.current = {
+      nodeId: node.id,
+      camera: window.__uncraftZoom?.getState?.() || null,
+    };
     let framedNode = node;
     if (editorKind === NODE_EDITOR_KIND.NATIVE) {
       const device = nativeEditDeviceForNode(node);
@@ -4463,13 +4576,14 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
           width: node.width,
           height: node.height,
         },
-        camera: window.__uncraftZoom?.getState?.() || null,
+        // Camera restore moved to preEditCameraRef — shared by every editor kind.
       };
       setNodes((current) => current.map((candidate) => (
         candidate.id === node.id ? framedNode : candidate
       )));
     }
     setEditingNodeId(node.id);
+    editingNodeIdRef.current = node.id;
     editFrameTimerRef.current = window.setTimeout(() => {
       editFrameTimerRef.current = null;
       const f = computeEditFrame(framedNode);
@@ -4491,20 +4605,28 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     }
     const session = nativeEditRestoreRef.current;
     if (session?.nodeId === nodeId) {
-      if (session.camera) {
-        try {
-          localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(session.camera));
-        } catch { /* best-effort immediate restoration */ }
-      }
       nativeEditRestoreRef.current = null;
       setNodes((current) => current.map((candidate) => (
         candidate.id === nodeId
           ? { ...candidate, ...session.geometry }
           : candidate
       )));
-      if (session.camera) window.__uncraftZoom?.setState?.(session.camera, 280);
+    }
+    // Pre-edit camera restore for EVERY editor kind (the legacy editor had
+    // none, so leaving it kept whatever edit-mode framing was active — and
+    // that camera was also leaking into localStorage; defect 2, 2026-08-20).
+    const preEdit = preEditCameraRef.current;
+    if (preEdit?.nodeId === nodeId) {
+      preEditCameraRef.current = null;
+      if (preEdit.camera) {
+        try {
+          localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(preEdit.camera));
+        } catch { /* best-effort immediate restoration */ }
+        window.__uncraftZoom?.setState?.(preEdit.camera, 280);
+      }
     }
     setEditingNodeId(null);
+    editingNodeIdRef.current = null;
     if (window.__uncraftZoom) window.__uncraftZoom._editFrame = null;
     if (reason === 'runtime-unavailable') {
       toast.error("This website couldn't be opened for editing.");
@@ -4515,24 +4637,62 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     if (willEdit) {
       const node = nodes.find((n) => n.id === nodeId);
       if (!node || editPreparationRef.current.has(nodeId)) return;
-      if (isLiveUrlReference(node) && !canUseCloneEdit(user?.plan)) {
+      // Dev widget engine selector (pre-launch): a stored choice that the node
+      // does not already satisfy becomes a nominal engine request — evaluated
+      // BEFORE the early returns, otherwise switching engines could never
+      // convert an already-editable node (Sol review 2026-08-17 #3). A match
+      // resolves to null (the selector means "which machinery", not "re-run
+      // every Edit"), letting the default fast paths below open Edit directly.
+      // A deliberate repair is a NOMINAL native request: the doctrine's clone
+      // is the animated one, and the server runs (and bills) any nominal
+      // engine. Surfaces that offer "Repair clone" show the cost and the plan
+      // lock exactly like "Clone & Edit" (Sol final round #3).
+      const requestedEngine = details.repair ? 'native' : resolveEditEngineOverride(node);
+      // ONE decision shared with the inspector, the node button and the node
+      // menu (Sol r3): integrity failure = repair, never an upsell; billable =
+      // exactly what the server runs and charges. The server-side gate stays
+      // authoritative.
+      // Consume the NORMALISED override from the decision: an origin-less node
+      // drops it, so a stored dev engine cannot fire a doomed 400 (Sol).
+      const editorKind = editorKindForNode(node);
+      // Pure routing (lib/edit-action-decision.planEditEntry) so the CONSUMPTION
+      // of the decision is testable without rendering the canvas — the flags
+      // alone were never the contract (Sol final round).
+      const { route, engine: engineOverride } = planEditEntry({
+        node,
+        requestedEngine,
+        plan: user?.plan,
+        canUseCloneEdit,
+        editorKind,
+        nativeEditorKind: NODE_EDITOR_KIND.NATIVE,
+        isNativeReady: classifyNativeLineage(node) === NATIVE_LINEAGE.READY,
+        needsReconstruction: shouldReconstructForAction({ node, role: 'edit' }),
+      });
+      if (route === EDIT_ROUTE.REPAIR_NEEDED) {
+        toast.error('This clone needs repair — use "Repair clone" to rebuild it.');
+        return;
+      }
+      if (route === EDIT_ROUTE.PLAN_REQUIRED) {
         setPlansOpen(true);
         return;
       }
-      const editorKind = editorKindForNode(node);
-      if (editorKind === NODE_EDITOR_KIND.NATIVE) {
-        enterEditMode(node, editorKind);
+      if (route === EDIT_ROUTE.NATIVE_UNAVAILABLE) {
+        // A ready node with the native editor off must not open the legacy
+        // editor over a null snapshot (defect 3, 2026-08-20).
+        toast.error('Native editing is unavailable in this build.');
         return;
       }
-      if (!needsDeferredReconstruction(node)) {
+      if (route === EDIT_ROUTE.OPEN) {
         enterEditMode(node, editorKind);
         return;
       }
 
       editPreparationRef.current.add(nodeId);
       setNodeRunStatus(nodeId, { step: 1, label: 'Preparing editable site…', request: '' });
+      const partiuClone = Date.now();
       try {
-        const result = await api.reconstructNode(nodeId);
+        const result = await api.reconstructNode(nodeId, { engine: engineOverride });
+        marcarEsperaDoClone(nodeId, Date.now() - partiuClone, engineOverride || 'native', result?.cloneTelemetry, result?.meta?.captureReport);
         flashNodeDebit(nodeId, result?.credits);
         const preparedNode = applyReconstructionResultToNode(node, result);
         setNodes((prev) => prev.map((candidate) => candidate.id === nodeId ? preparedNode : candidate));
@@ -4540,7 +4700,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         enterEditMode(preparedNode, editorKindForNode(preparedNode));
       } catch (e) {
         setNodeRunStatus(nodeId, null);
-        if (!handleBillingError(e)) toast.error(`Could not prepare this site for editing: ${e.message}`);
+        if (e?.challenge) {
+          // Interstitial de bot na frente do site (409 tipado do /reconstruct,
+          // nada cobrado). Aviso → job no navegador remoto (spec 2026-09-08).
+          let host = 'this site';
+          try { host = new URL(e.challenge.url || node?.origin_url || '').hostname.replace(/^www\./, ''); } catch { /* keep default */ }
+          setChallengeNotice({ nodeId, host, purpose: 'edit' });
+        } else if (!handleBillingError(e)) {
+          toast.error(`Could not prepare this site for editing: ${e.message}`);
+        }
       } finally {
         editPreparationRef.current.delete(nodeId);
       }
@@ -4780,6 +4948,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       '#rb-ed-sections-body',
       '#rb-ed-assets-body',
       '.cnode-version-menu',
+      // Native motion edit chrome (sidebar / inspector / timeline dock) owns
+      // its own overflow — wheel there must scroll, never pan/zoom the canvas.
+      '[data-native-motion-chrome]',
       '.cnode-version-ctx-menu',
       '.prompt-dock',
       '.boards-sidebar',
@@ -5963,6 +6134,103 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   }, [selectedSectionId, selectedNodeId, selectedNodeIds, sections, nodes]);
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) || null;
+
+  // DESIGN.MD lazy backfill (product rule: old nodes upgrade automatically).
+  // Pre-feature site nodes carry a screenshot but no measured colour shares;
+  // the FIRST selection samples them client-side (few ms on a canvas) and
+  // patches meta — no LLM, no capture-time cost. Guarded per node id so a
+  // failed sample never loops.
+  // ── Pointer-held iframe guard ────────────────────────────────────────
+  // EVERY canvas drag (node move, edge cord, marquee, resize, placement)
+  // commits on a window `mouseup` — and a release over ANY iframe (a node's
+  // srcDoc body, a live reference, the runtime) swallows that event: the
+  // dragged thing stays glued to the cursor. Third recurrence of this class;
+  // per-drag patches kept missing siblings. ONE mechanism, by construction:
+  // while a press that STARTED in the parent document is held, all node
+  // iframes go inert. A press that starts INSIDE an iframe never reaches the
+  // parent window, so legitimate iframe interaction is untouched.
+  // Universal unstick valve: whatever mechanism leaves a drag/ghost glued to
+  // the cursor (a swallowed mouseup, a listener that outlived its gesture),
+  // Escape force-releases it — a synthetic window mouseup runs every pending
+  // `up` handler exactly as a real release would, and the held class drops.
+  // Mechanism-agnostic on purpose: this is the safety net UNDER the specific
+  // fixes, so a stuck pointer is never a reload-the-page situation again.
+  useEffect(() => {
+    const onEsc = (e) => {
+      if (e.key !== 'Escape') return;
+      window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, buttons: 0 }));
+      document.documentElement.classList.remove('canvas-pointer-held');
+    };
+    window.addEventListener('keydown', onEsc, true);
+    return () => window.removeEventListener('keydown', onEsc, true);
+  }, []);
+
+  useEffect(() => {
+    const CLS = 'canvas-pointer-held';
+    const root = document.documentElement;
+    const down = () => root.classList.add(CLS);
+    // Multi-button: releasing ONE button while another is still held must not
+    // re-enable iframes mid-drag (Sol: right-click release during a primary
+    // drag reopened the swallow window). e.buttons is the post-release state.
+    const up = (e) => { if (!e.buttons) root.classList.remove(CLS); };
+    const clear = () => root.classList.remove(CLS);
+    window.addEventListener('mousedown', down, true);
+    window.addEventListener('mouseup', up, true);
+    window.addEventListener('blur', clear);
+    return () => {
+      root.classList.remove(CLS);
+      window.removeEventListener('mousedown', down, true);
+      window.removeEventListener('mouseup', up, true);
+      window.removeEventListener('blur', clear);
+    };
+  }, []);
+
+  const paletteBackfillRef = useRef(new Set());
+  useEffect(() => {
+    const node = selectedNode;
+    if (!node || node.kind !== 'site') return;
+    const needsColors = !(Array.isArray(node.meta?.paletteSwatches) && node.meta.paletteSwatches.length);
+    const needsType = !node.meta?.typeSample;
+    if ((!needsColors && !needsType) || paletteBackfillRef.current.has(node.id)) return;
+    paletteBackfillRef.current.add(node.id);
+    const patches = [];
+    if (needsColors && node.current_screenshot) {
+      patches.push(import('../lib/design/palette-swatches-client.js')
+        .then(({ samplePaletteSwatches }) => samplePaletteSwatches(node.current_screenshot))
+        .then((paletteSwatches) => (paletteSwatches.length ? { paletteSwatches } : null)));
+    }
+    if (needsType) {
+      // Typography backfill: render the STORED capture in a hidden inert
+      // iframe and read computed styles — old clones gain real typography
+      // without a re-capture (colors alone made the panel read as bare).
+      // Native-bundle nodes have no html on the CURRENT snapshot; fall back
+      // to the capture snapshot still in version history.
+      const htmlSource = node.current_html
+        ? Promise.resolve(node.current_html)
+        : api.listSnapshots(node.id)
+            .then((res) => {
+              const captureSnap = (res?.snapshots || res || []).find?.((s) => s.source === 'capture');
+              return captureSnap ? api.getSnapshot(node.id, captureSnap.id).then((full) => full?.snapshot?.html || full?.html || null) : null;
+            });
+      patches.push(htmlSource
+        .then((html) => (html
+          ? import('../lib/design/type-sample-client.js').then(({ sampleTypeFromHtml }) => sampleTypeFromHtml(html))
+          : null))
+        .then((typeSample) => (typeSample ? { typeSample } : null)));
+    }
+    if (!patches.length) return;
+    Promise.all(patches.map((p) => p.catch(() => null))).then((parts) => {
+      const metaMerge = Object.assign({}, ...parts.filter(Boolean));
+      if (!Object.keys(metaMerge).length) return;
+      // Merge-only (see the capture-path note): functional local merge +
+      // atomic server-side metaMerge, never a whole meta from this closure.
+      setNodes((prev) => prev.map((n) => (
+        n.id === node.id ? { ...n, meta: { ...(n.meta || {}), ...metaMerge } } : n
+      )));
+      return api.updateNode(node.id, { metaMerge });
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNode?.id]);
   const selectedSiteNode = selectedNode?.kind === 'site' ? selectedNode : null;
   const editingNode = nodes.find((node) => node.id === editingNodeId) || null;
 
@@ -6215,7 +6483,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       />
 
       <div className="canvas-zoomdock">
-        <ZoomControls scale={canvasScale} transformRef={transformRef} onFit={fitToContent} />
+        <ZoomControls scale={canvasScale} transformRef={transformRef} onFit={fitToContent} active={!editingNodeId} />
       </div>
 
       <CanvasInspector
@@ -6230,7 +6498,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
           || (selectedNode._loading && !selectedNode._challenge)
           || String(selectedNode.id).startsWith('temp-')
         ))}
-        onEditSite={() => selectedSiteNode && handleEditingToggle(selectedSiteNode.id, true)}
+        onEditSite={(details) => selectedSiteNode && handleEditingToggle(selectedSiteNode.id, true, details || {})}
         onUpgradeRequired={() => setPlansOpen(true)}
         onFrameChange={(id, patch) => {
           // Same path a drag/resize commit takes: optimistic local update +
@@ -6338,12 +6606,21 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
           // viewport-readable via inverse-scale in CSS.
           const scale = state.scale || 1;
           lastTransformRef.current = { scale, x: state.positionX || 0, y: state.positionY || 0 };
-          if (canvasViewReadyRef.current) {
+          // Edit-mode cameras never persist: they are computed for a different
+          // scale range (floor 0.04) and clamping only the scale on restore
+          // stranded the site outside the viewport (defect 2, 2026-08-20).
+          // The pre-edit camera is written back by exitEditMode instead.
+          // The scale guard mirrors parseCanvasView: the non-edit wheel floor
+          // (0.1) sits below the canonical range too, and persisting a clamped
+          // scale with the RAW position launders the same incoherent pair
+          // (Claude review 2026-08-20 #1) — persist only coherent cameras.
+          if (canvasViewReadyRef.current && !editingNodeIdRef.current
+              && clampCanvasScale(scale) === scale) {
             clearTimeout(canvasViewSaveTimerRef.current);
             const view = {
               positionX: state.positionX || 0,
               positionY: state.positionY || 0,
-              scale: clampCanvasScale(scale),
+              scale,
             };
             canvasViewSaveTimerRef.current = setTimeout(() => {
               try { localStorage.setItem(CANVAS_VIEW_KEY, JSON.stringify(view)); } catch {}
@@ -7035,34 +7312,35 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         onCancel={() => setMergeConfirm(null)}
       />
 
-      {challenge && (
-        <ChallengeModal
-          challenge={challenge}
-          onCancel={() => {
-            // User opted out — drop the placeholder locally AND from
-            // the server (the route pre-created it). DELETE is fire-
-            // and-forget; if it fails the polling-timeout cleanup
-            // catches the orphan eventually.
-            const pid = challenge.placeholderId;
-            if (pid) {
-              stopHandoffPolling(pid);
-              setNodes((prev) => prev.filter((n) => n.id !== pid));
-              if (challenge.node) {
-                fetch(`/api/nodes/${pid}`, { method: 'DELETE', credentials: 'include' })
-                  .catch((err) => console.warn('challenge cancel delete failed', err));
-              }
-            }
-            setChallenge(null);
+      {challengeNotice && (
+        <ChallengeNotice
+          host={challengeNotice.host}
+          onOk={() => {
+            const { nodeId, purpose } = challengeNotice;
+            setChallengeNotice(null);
+            challengeJob.start(nodeId, purpose).catch((e) => {
+              updateNodeLocal(nodeId, { _loading: false, _challenge: false, _loadingLabel: undefined });
+              if (!handleBillingError(e)) toast.error(e?.message || 'Could not start verification.');
+            });
           }}
-          onOpenSite={() => {
-            // Keep the placeholder + polling alive — the extension will
-            // POST the verified DOM to /api/snapshot/handoff once the
-            // user solves the challenge in the new tab, and the poll
-            // loop swaps it for the real node.
-            setChallenge(null);
+          onCancel={() => {
+            const { nodeId } = challengeNotice;
+            setChallengeNotice(null);
+            challengeJob.cancel(nodeId);
+            updateNodeLocal(nodeId, { _loading: false, _challenge: false, _loadingLabel: undefined });
           }}
         />
       )}
+
+      {[...challengeJob.jobs.entries()].map(([nodeId, j]) => (j?.liveView ? (
+        <div key={`lv-${nodeId}`} className="popup-overlay" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="popup-card" style={{ width: 'min(900px, 92vw)', height: 'min(640px, 80vh)', padding: 0, overflow: 'hidden' }}>
+            <ChallengeLiveView url={j.liveView} onDisconnected={() => {}} />
+          </div>
+        </div>
+      ) : null))}
+
+      <DevWidget />
     </div>
     </NativeMotionEditSessionProvider>
   );
@@ -7133,7 +7411,8 @@ function CanvasContextMenu({ x, y, onClose, onPickUrl, onPickHtml, onPickMd, onP
           {/* Colar nao e' "adicionar ao quadro": e' trazer o que ja esta na
               area de transferencia. Misturado com os "Add ...", a acao some no
               meio de uma lista de coisas para CRIAR. Categoria propria. */}
-          <div className="popup-menu-sep" role="separator" />
+          {/* No separator here (2026-08-17): the category TITLE already
+              separates — a rule line on top of it is double punctuation. */}
           <div className="popup-menu-title">Clipboard</div>
           <button
             className="popup-menu-btn"

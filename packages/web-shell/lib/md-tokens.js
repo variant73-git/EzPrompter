@@ -6,7 +6,9 @@
 
 const HEX_RE = /#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/g;
 const RGB_RE = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*[\d.]+)?\s*\)/gi;
-const FONT_FAMILY_RE = /font[\s-]?family\s*[:=]\s*['"]?([^'"\n,;)]+)/gi;
+// Accepts CSS-style ("font-family: X"), prose ("font family = X") AND the
+// extractor's dotted tokens ("font.family.primary=X", "font.family.stack=X, …").
+const FONT_FAMILY_RE = /font[\s.-]?family(?:\.\w+)?\s*[:=]\s*['"]?([^'"\n,;)`]+)/gi;
 // Inline-style or token-table mentions like "Inter", "Aeonik", etc.
 const QUOTED_FONT_RE = /['"`]([A-Z][A-Za-z]+(?:\s[A-Z][A-Za-z]+)?)['"`]\s*(?:,|—|–|\)|\n)/g;
 const SIZE_RE = /(\d{1,3}(?:\.\d+)?)\s*(?:px|rem|pt)\b/gi;

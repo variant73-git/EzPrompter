@@ -173,9 +173,13 @@ export function NativeMotionEditSessionProvider({
       const layout = nativeMotionEditShellLayout(window.innerWidth);
       body.style.setProperty('--native-motion-left-w', `${layout.left}px`);
       body.style.setProperty('--native-motion-right-w', `${layout.right}px`);
-      body.style.setProperty('--native-motion-timeline-h', `${layout.bottom}px`);
       body.style.setProperty('--rb-layers-width', `${layout.left}px`);
       body.style.setProperty('--rb-insp-width', `${layout.right}px`);
+      // --native-motion-timeline-h is owned by NativeMotionTimelineDock
+      // (collapse/resize change it live); the CSS fallback covers boot.
+      // NOTE (2026-08-20): the measured-topbar anchor machinery that lived
+      // here was RETIRED — the edit topbar sits BETWEEN the panels, so they
+      // anchor at the shell gutter and own the top corners (module CSS).
     };
     const handleResize = () => {
       if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
@@ -193,6 +197,7 @@ export function NativeMotionEditSessionProvider({
       body.style.removeProperty('--native-motion-left-w');
       body.style.removeProperty('--native-motion-right-w');
       body.style.removeProperty('--native-motion-timeline-h');
+      body.style.removeProperty('--native-motion-top');
       body.style.removeProperty('--rb-layers-width');
       body.style.removeProperty('--rb-insp-width');
     };

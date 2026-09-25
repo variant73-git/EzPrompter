@@ -71,6 +71,50 @@ function customControl(overrides = {}) {
 }
 
 describe('useNativeMotionController', () => {
+  it('routes an authenticated upload-request to the registered handler and replies with the path', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+
+    const handler = vi.fn(async () => ({ path: './_uploads/abc.png' }));
+    act(() => result.current.commands.setUploadHandler(handler));
+
+    const bytes = new Uint8Array([1, 2, 3]).buffer;
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: frame.contentWindow,
+      origin: 'https://runtime.uncraft.test',
+      data: {
+        protocol: MOTION_EDITOR_PROTOCOL, source: 'runtime', type: 'upload-request',
+        payload: { uploadId: 'up-1', name: 'x.png', bytes },
+      },
+    })));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(handler.mock.calls[0][0]).toBeInstanceOf(Uint8Array);
+    const reply = frame.contentWindow.postMessage.mock.calls.map((c) => c[0]).find((m) => m?.type === 'upload-result');
+    expect(reply.payload).toMatchObject({ uploadId: 'up-1', path: './_uploads/abc.png' });
+  });
+
+  it('ignores an upload-request from a foreign window (source is not the runtime frame)', async () => {
+    const frame = runtimeFrame();
+    const iframeRef = createRef();
+    iframeRef.current = frame;
+    const { result } = renderHook(() => useNativeMotionController({ iframeRef }));
+    await act(async () => window.dispatchEvent(readyMessage(frame)));
+    const handler = vi.fn(async () => ({ path: './_uploads/x.png' }));
+    act(() => result.current.commands.setUploadHandler(handler));
+
+    await act(async () => window.dispatchEvent(new MessageEvent('message', {
+      source: { postMessage: vi.fn() }, // NOT the runtime frame
+      origin: 'https://runtime.uncraft.test',
+      data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'runtime', type: 'upload-request', payload: { uploadId: 'up-2', bytes: new Uint8Array([1]).buffer } },
+    })));
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it('isolates two controllers by iframe source and survives React strict mode without duplicate listeners', async () => {
     const firstFrame = runtimeFrame();
     const secondFrame = runtimeFrame();

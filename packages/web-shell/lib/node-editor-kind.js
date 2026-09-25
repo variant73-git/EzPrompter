@@ -8,6 +8,34 @@ export const NODE_EDITOR_KIND = Object.freeze({
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const NATIVE_MOTION_MANIFEST_VERSION = 2;
 
+export const NATIVE_LINEAGE = Object.freeze({
+  READY: 'native-ready',
+  LEGACY: 'legacy',
+  INCONSISTENT: 'native-inconsistent',
+});
+export const NATIVE_SNAPSHOT_SOURCES = Object.freeze(['native-bundle', 'native-edit']);
+
+/**
+ * Structural classifier of a node's native lineage (Sol advise 2026-08-20).
+ * Readiness is decided by STRUCTURE (bundle id + manifest version); the
+ * snapshot source string is the claim. 'native-edit' (a Save from the native
+ * editor) keeps the bundle and stays READY — comparing against the single
+ * string 'native-bundle' was the defect that re-cloned (and re-charged) every
+ * node after its first Save. A node that claims native lineage but whose
+ * structure doesn't close is INCONSISTENT — an integrity failure, never an
+ * authorization to charge for a new capture.
+ */
+export function classifyNativeLineage(node) {
+  const source = node?.current_snapshot_source;
+  const claimsNative = NATIVE_SNAPSHOT_SOURCES.includes(source)
+    || node?.current_native_bundle_id != null;
+  if (!claimsNative) return NATIVE_LINEAGE.LEGACY;
+  const structureOk = NATIVE_SNAPSHOT_SOURCES.includes(source)
+    && UUID_PATTERN.test(String(node?.current_native_bundle_id || ''))
+    && Number(node?.current_motion_manifest_version) === NATIVE_MOTION_MANIFEST_VERSION;
+  return structureOk ? NATIVE_LINEAGE.READY : NATIVE_LINEAGE.INCONSISTENT;
+}
+
 export function snapshotEditorMetadata(node) {
   return {
     id: node?.current_snapshot_id || null,

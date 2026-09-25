@@ -25,6 +25,14 @@ export function isRuntimeMessage(value) {
   );
 }
 
+// targetOrigin do postMessage para o iframe: em modo lease a origem é REAL e
+// deve ser alvejada (senão a mensagem vaza para qualquer documento que o
+// iframe navegue — same-origin torna isso explorável). Origem OPACA do legado
+// chega como 'null' e não pode ser alvejada por valor: aí `'*'` é obrigatório.
+export function runtimeMessageTargetOrigin(origin) {
+  return (typeof origin === 'string' && origin && origin !== 'null') ? origin : '*';
+}
+
 export function matchesRuntimeContext(value, expected, eventOrigin) {
   if (!isRuntimeMessage(value) || value.protocol !== MOTION_EDITOR_PROTOCOL_V2) return false;
   if (!expected || typeof expected !== 'object') return false;

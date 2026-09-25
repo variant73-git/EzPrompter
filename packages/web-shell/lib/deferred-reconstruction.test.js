@@ -30,6 +30,7 @@ function makeSql({ currentId = null, currentSource = null } = {}) {
     const query = strings.join('?');
     calls.push({ query, values });
     if (/SELECT\s+n\.current_snapshot_id/i.test(query)) return Promise.resolve([{ id: currentId, source: currentSource }]);
+    if (/SELECT meta FROM nodes/i.test(query)) return Promise.resolve([{ meta: { cloneTelemetry: { totalMs: 203_000, engine: 'native', idemKey: 'k-dedup' } } }]);
     if (/UPDATE snapshots/i.test(query)) return Promise.resolve([{ id: currentId }]);
     if (/INSERT INTO snapshots/i.test(query)) return Promise.resolve([{ id: 'snap-new' }]);
     return Promise.resolve([]);
@@ -99,7 +100,7 @@ describe('reconstructSiteNode — quem e chamado no Edit', () => {
     });
 
     // A rota /reconstruct chama exatamente assim: sem `producer`.
-    expect(captureNativeBundle).toHaveBeenCalledWith('https://x.com');
+    expect(captureNativeBundle).toHaveBeenCalledWith('https://x.com', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     expect(reconstructPage).not.toHaveBeenCalled();
   });
 });
@@ -186,6 +187,181 @@ describe('deferred reconstruction result kinds', () => {
     })).rejects.toThrow();
   });
 
+  it('clones without generated controls when no validator is configured — config absence is not a failure', async () => {
+    // Production reality: captureNativeBundle emits no controlValidationTransport
+    // and UNCRAFT_MOTION_CONTROL_VALIDATOR_URL is unset in deployments where the
+    // sandbox validator service does not exist. The clone (native bundle + live
+    // editor) is the deliverable; generated controls are an overlay that only
+    // becomes part of the contract when a validator is CONFIGURED. Configured-
+    // but-failing keeps hard-fail + refund (covered by the tests below).
+    delete process.env.UNCRAFT_MOTION_CONTROL_VALIDATOR_URL;
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const generated = vi.fn();
+    const producer = vi.fn(async () => ({
+      kind: 'native',
+      bundle: {
+        entryPath: 'index.html',
+        runtimeFingerprint: runtimeHash,
+        assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+        reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+      },
+      // no controlValidationTransport / validateControlCandidate — mirrors production
+    }));
+
+    const result = await reconstructSiteNode({
+      sql,
+      userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit',
+      idemKey: 'clone-native-skip-1',
+      producer,
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: generated,
+    });
+
+    expect(generated).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ ok: true, kind: 'native', snapshotId: 'snap-native' });
+    expect(result.meta.motionControls).toMatchObject({ status: 'skipped', reason: 'validator_not_configured', acceptedControls: 0 });
+    expect(result.motionManifest.controlManifest).toEqual({});
+    const snapshotWrite = sql._calls.find((call) => /UPDATE snapshots/i.test(call.query));
+    expect(snapshotWrite.values).toContain(JSON.stringify(result.motionManifest));
+  });
+
+  it('typeSample rides the output into meta WITHOUT touching the bundle identity — no price to pay', async () => {
+    // The no-price guarantee, proven: the same bundle with and without the
+    // sibling typeSample field registers with IDENTICAL descriptor identity
+    // (contentHash/bundleId derive from bundle content only), and the sample
+    // lands in node meta.
+    const bundle = {
+      entryPath: 'index.html',
+      runtimeFingerprint: runtimeHash,
+      assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+      reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+    };
+    const typeSample = { display: { family: 'Antique Olive', size: 64, weight: 500 }, body: { family: 'Antique Olive', size: 16, weight: 400 } };
+    const [plain, sampled] = await Promise.all([
+      materializeReconstructionOutput({ kind: 'native', bundle }, { bundleStore: createMemoryBundleStore() }),
+      materializeReconstructionOutput({ kind: 'native', bundle, typeSample }, { bundleStore: createMemoryBundleStore() }),
+    ]);
+    expect(sampled.bundleDescriptor.bundleId).toBe(plain.bundleDescriptor.bundleId);
+    expect(sampled.bundleDescriptor.contentHash).toBe(plain.bundleDescriptor.contentHash);
+
+    delete process.env.UNCRAFT_MOTION_CONTROL_VALIDATOR_URL;
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const result = await reconstructSiteNode({
+      sql,
+      userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit',
+      idemKey: 'clone-native-type-1',
+      producer: vi.fn(async () => ({ kind: 'native', bundle, typeSample })),
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: vi.fn(),
+    });
+    expect(result.meta.typeSample).toEqual(typeSample);
+  });
+
+  it('persists a SANITIZED capture report in meta — counts and hosts, never full URLs (defect 1b, 2026-08-20)', async () => {
+    // The producer's relatorio was assembled and then DISCARDED by this layer;
+    // missing assets vanished without a trace. It now lands in meta as counts
+    // plus discarded HOSTS only — a full URL can carry query strings/tokens
+    // (Sol advise 2026-08-20).
+    const bundle = {
+      entryPath: 'index.html',
+      runtimeFingerprint: runtimeHash,
+      assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+      reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+    };
+    const relatorio = {
+      arquivos: 1,
+      bytes: 19,
+      // O que ficou guardado e' MENOR que o que chegou: a reescrita de
+      // referencias encurta HTML/CSS/JS. Duas quantidades, dois campos.
+      bytesNoPacote: 17,
+      // O SSIM medido na captura (pedido antigo: acompanhamento permanente).
+      // Passa SANITIZADO: numeros arredondados, nunca a URL/screenshot.
+      similarity: { ssim: 0.98765, width: 1440, height: 900, ms: 3200 },
+      entryPath: 'index.html',
+      engines: { gsap: true },
+      refsExtras: 7,
+      descartados: [
+        { u: 'https://cdn.test/a.png?token=SECRET', motivo: 'grande demais' },
+        { u: 'https://cdn.test/b.png', motivo: 'limite de arquivos' },
+        { u: 'https://other.test/c.png', motivo: 'host nao publico' },
+      ],
+      totalDescartados: 3,
+    };
+    delete process.env.UNCRAFT_MOTION_CONTROL_VALIDATOR_URL;
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const result = await reconstructSiteNode({
+      sql,
+      userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit',
+      idemKey: 'clone-native-report-1',
+      producer: vi.fn(async () => ({ kind: 'native', bundle, relatorio })),
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: vi.fn(),
+    });
+    expect(result.meta.captureReport).toEqual({
+      files: 1,
+      bytes: 19,
+      bundleBytes: 17,
+      similarity: 0.988,
+      extraRefs: 7,
+      discarded: 3,
+      discardedHosts: ['cdn.test', 'other.test'],
+      // "1 descartado" sozinho nao distingue "o site bloqueou" de "passou do
+      // tamanho" — e sao remedios opostos. O MOTIVO entra contado, e o motivo
+      // e' vocabulario nosso (nunca texto do site), entao nao vaza nada.
+      discardedReasons: { 'grande demais': 1, 'limite de arquivos': 1, 'host nao publico': 1 },
+      discardedReasonsPartial: false,
+    });
+    expect(JSON.stringify(result.meta.captureReport)).not.toContain('SECRET');
+  });
+
+  it('hard-fails when a CONFIGURED validator yields no generation result — never mislabeled as unconfigured', async () => {
+    // Sol review 2026-08-17 (v2 round): with the config gate keyed on generated's
+    // truthiness, a configured-but-broken generator resolving null would settle
+    // as "validator_not_configured" — a degraded paid state concealing a
+    // generator regression. Configured ⇒ a valid result is REQUIRED.
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const generated = vi.fn(async () => null);
+    const producer = vi.fn(async () => ({
+      kind: 'native',
+      bundle: {
+        entryPath: 'index.html',
+        runtimeFingerprint: runtimeHash,
+        assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+        reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+      },
+      controlValidationTransport: vi.fn(),
+    }));
+
+    await expect(reconstructSiteNode({
+      sql,
+      userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit',
+      idemKey: 'clone-native-null-gen',
+      producer,
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: generated,
+    })).rejects.toMatchObject({ code: 'no_output' });
+
+    expect(generated).toHaveBeenCalledTimes(1);
+    const snapshotWrite = sql._calls.find((call) => /UPDATE snapshots/i.test(call.query));
+    expect(snapshotWrite).toBeUndefined();
+  });
+
   it('automatically validates controls and persists the native snapshot before billing can settle', async () => {
     const store = createMemoryBundleStore();
     const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
@@ -257,11 +433,258 @@ describe('deferred reconstruction result kinds', () => {
           assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
           reconstructionCapabilities: { detectedEngines: [], candidateControls: [] },
         },
+        // validator configured — this test is about persistence failing AFTER
+        // generation ran, so generation must actually run under the config gate
+        controlValidationTransport: vi.fn(),
       })),
       bundleStore: store,
       persistBundle: vi.fn(async ({ descriptor }) => descriptor),
       generateControls,
     })).rejects.toThrow('persistence unavailable');
     expect(generateControls).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('conversion deadline per lane (conversion_timeout fix 2026-08-18)', () => {
+  it('gives the iter9 vision producer its measured ceiling and keeps native tight', async () => {
+    const { conversionDeadlineMs } = await import('./deferred-reconstruction.js');
+    const { captureNativeBundle } = await import('./native-clone/capture-bundle.js');
+    const { reconstructPage } = await import('./reconstruct.js');
+    // iter9 measures ~150s ±40% — 90s timed out most nominal runs. The wide
+    // ceiling is scoped to the single-item 'edit' lane; /run lanes chain
+    // several reconstructions under one 300s route and keep 90s each (Sol).
+    expect(conversionDeadlineMs(reconstructPage, 'edit')).toBe(240_000);
+    expect(conversionDeadlineMs(captureNativeBundle, 'edit')).toBe(90_000);
+    expect(conversionDeadlineMs(reconstructPage, 'transform-target')).toBe(90_000);
+    expect(conversionDeadlineMs(reconstructPage, 'runtime-source')).toBe(90_000);
+    // Route ceiling must stay above the biggest lane (maxDuration 300s).
+    expect(conversionDeadlineMs(reconstructPage, 'edit')).toBeLessThan(300_000);
+  });
+});
+
+// ── Telemetria de clone: achados do Sol ─────────────────────────────────────
+
+describe('reconstructSiteNode — telemetria (auditoria do Sol)', () => {
+  // #2: `deduped` e' IRMAO de `result` no retorno de runBilledOperation, nao
+  // propriedade dele. Ler `result.deduped` da' sempre undefined, entao o replay
+  // — que nao clonou nada — regravaria um relatorio de milissegundos POR CIMA
+  // da medicao do clone lento que de fato aconteceu.
+  it('nao regrava telemetria no replay idempotente', async () => {
+    const billing = await import('./billing/context.js');
+    billing.runBilledOperation.mockImplementationOnce(async () => ({
+      result: { snapshotId: 'snap-antigo', html: '<html>guardado</html>' },
+      credits: 3, balanceAfter: 100, deduped: true,
+    }));
+    const sql = makeSql({ currentId: 'snap-current', currentSource: 'capture' });
+    const out = await reconstructSiteNode({
+      sql, userId: 42, node: { id: 'node-d', board_id: 'b1', origin_url: 'https://x.com' },
+      reason: 'edit', idemKey: 'k-dedup',
+    });
+    const gravou = sql._calls.some((c) => /UPDATE nodes/i.test(c.query) && /cloneTelemetry/.test(JSON.stringify(c.values)));
+    expect(gravou).toBe(false);
+    // ...e devolve a medicao GUARDADA pelo clone original, nao null: e' ela que
+    // conta por que o pedido demorou (Sol, segunda metade do achado #2).
+    expect(out.cloneTelemetry).toEqual({ totalMs: 203_000, engine: 'native', idemKey: 'k-dedup' });
+  });
+
+  // #3: `captura` embrulhava produtor + gravacao dos assets do bundle. Um
+  // produtor de 24s com 100 uploads de 100s aparecia como "captura: 124s" e
+  // fazia o MOTOR parecer o lento — apagando justamente a separacao que este
+  // instrumento existe para mostrar.
+  it('separa o motor da gravacao do bundle', async () => {
+    const sql = makeSql({ currentId: 'snap-current', currentSource: 'capture' });
+    const out = await reconstructSiteNode({
+      sql, userId: 42, node: { id: 'node-e', board_id: 'b1', origin_url: 'https://x.com' },
+      reason: 'edit', idemKey: 'k-etapas',
+    });
+    const etapas = Object.keys(out.cloneTelemetry?.stages || {});
+    expect(etapas).toContain('motor');
+    expect(etapas).toContain('bundle');
+    expect(etapas).not.toContain('captura');
+  });
+});
+
+describe('relatorio de captura — o teto de hosts nao corta os motivos', () => {
+  const runtimeHash = `sha256:${'a'.repeat(64)}`;
+  it('conta o motivo de todos os descartes, mesmo passando de 10 hosts', async () => {
+    const descartados = Array.from({ length: 14 }, (_, i) => ({ u: `https://h${i}.test/a.png`, motivo: 'corpo nao chegou' }));
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const result = await reconstructSiteNode({
+      sql, userId: 42, node: { id: 'node-motivos', board_id: 'b1', origin_url: 'https://example.com' },
+      reason: 'edit', idemKey: 'k-motivos',
+      producer: vi.fn(async () => ({
+        kind: 'native',
+        bundle: {
+          entryPath: 'index.html',
+          runtimeFingerprint: runtimeHash,
+          assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+          reconstructionCapabilities: { detectedEngines: ['gsap'], candidateControls: [] },
+        },
+        relatorio: { arquivos: 1, bytes: 19, entryPath: 'index.html', descartados, totalDescartados: 14 },
+      })),
+      bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: vi.fn(),
+    });
+    expect(result.meta.captureReport.discardedHosts).toHaveLength(10);
+    expect(result.meta.captureReport.discardedReasons).toEqual({ 'corpo nao chegou': 14 });
+  });
+});
+
+describe('relatorio de captura — a soma dos motivos nao pode fingir que explica o total', () => {
+  const runtimeHash = `sha256:${'a'.repeat(64)}`;
+  async function relatar(relatorio) {
+    const result = await reconstructSiteNode({
+      sql: makeSql({ currentId: 'snap-native', currentSource: 'capture' }),
+      userId: 42, node: { id: 'node-soma', board_id: 'b1', origin_url: 'https://example.com' },
+      reason: 'edit', idemKey: `k-${Math.random()}`,
+      producer: vi.fn(async () => ({
+        kind: 'native',
+        bundle: {
+          entryPath: 'index.html', runtimeFingerprint: runtimeHash,
+          assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+          reconstructionCapabilities: { detectedEngines: [], candidateControls: [] },
+        },
+        relatorio,
+      })),
+      bundleStore: createMemoryBundleStore(),
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: vi.fn(),
+    });
+    return result.meta.captureReport;
+  }
+
+  // A amostra guardada tem 40 itens; o total pode ser 100. Contar a amostra e
+  // apresentar como explicacao faz "100 perdidos: 40x limite" parecer completo.
+  it('usa a contagem integral quando o produtor a fornece', async () => {
+    const r = await relatar({
+      arquivos: 1, bytes: 19, entryPath: 'index.html',
+      descartados: Array.from({ length: 40 }, () => ({ u: 'https://cdn.test/a.png', motivo: 'limite de arquivos' })),
+      totalDescartados: 100,
+      motivosDescartados: { 'limite de arquivos': 90, 'corpo nao chegou': 10 },
+    });
+    expect(r.discardedReasons).toEqual({ 'limite de arquivos': 90, 'corpo nao chegou': 10 });
+    expect(r.discardedReasonsPartial).toBe(false);
+  });
+
+  it('marca como PARCIAL quando so tem a amostra', async () => {
+    const r = await relatar({
+      arquivos: 1, bytes: 19, entryPath: 'index.html',
+      descartados: Array.from({ length: 40 }, () => ({ u: 'https://cdn.test/a.png', motivo: 'limite de arquivos' })),
+      totalDescartados: 100,
+    });
+    expect(r.discardedReasons).toEqual({ 'limite de arquivos': 40 });
+    expect(r.discardedReasonsPartial).toBe(true);
+  });
+});
+
+// A miniatura do node vinha da captura. O primeiro clone sobrescreve aquele
+// snapshot e a foto sobrevive; o SEGUNDO clone INSERE um snapshot novo com
+// `screenshot_url = NULL` — e o card passa a mostrar o cartão vazio "Ready to
+// edit" para sempre. MEDIDO no node do dono (2026-08-22): duas clonagens,
+// nenhuma foto. Clonar não muda a aparência do site, então a foto do pai
+// continua sendo a verdade.
+describe('clonar de novo nao apaga a miniatura do node', () => {
+  const runtimeHash = `sha256:${'a'.repeat(64)}`;
+  it('o snapshot novo herda a foto do anterior', async () => {
+    const sql = makeSql({ currentId: 'snap-native-velho', currentSource: 'native-bundle' });
+    await reconstructSiteNode({
+      sql, userId: 42, node: { id: 'node-foto', board_id: 'b1', origin_url: 'https://example.com' },
+      reason: 'edit', idemKey: 'k-foto',
+      producer: vi.fn(async () => ({
+        kind: 'native',
+        bundle: {
+          entryPath: 'index.html', runtimeFingerprint: runtimeHash,
+          assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+          reconstructionCapabilities: { detectedEngines: [], candidateControls: [] },
+        },
+      })),
+      bundleStore: createMemoryBundleStore(),
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor),
+      generateControls: vi.fn(),
+    });
+    const ins = sql._calls.find((c) => /INSERT INTO snapshots/i.test(c.query));
+    expect(ins).toBeTruthy();
+    expect(ins.query).toMatch(/SELECT screenshot_url FROM snapshots/i);
+  });
+});
+
+// ⭐ O CLONE PRECISA CONTINUAR SENDO UM NODE.
+//
+// Num node tool, o valor de um node e' ser componivel. Medido em 2026-08-22: um
+// snapshot de clone animado nao tem html, e as tres direcoes falham EM SILENCIO
+// — como alvo de uma aresta a rota troca por pagina em branco e compoe sem o
+// site; como fonte, `if (s.source_html)` pula; extrair .md nao tem o que ler.
+//
+// A fotocopia da captura ja' e' o documento que o grafo precisa: URLs
+// absolutizadas, folhas embutidas e `<base href>`. O clone a estava jogando
+// fora. Ele guarda o RUNTIME (bundle) — nao precisa destruir o DOCUMENTO.
+describe('o clone animado continua componivel', () => {
+  const runtimeHash = `sha256:${'a'.repeat(64)}`;
+  function produtorNativo() {
+    return vi.fn(async () => ({
+      kind: 'native',
+      bundle: {
+        entryPath: 'index.html', runtimeFingerprint: runtimeHash,
+        assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+        reconstructionCapabilities: { detectedEngines: [], candidateControls: [] },
+      },
+    }));
+  }
+
+  it('sobrescrevendo a captura, o documento SOBREVIVE', async () => {
+    const sql = makeSql({ currentId: 'snap-capture', currentSource: 'capture' });
+    await reconstructSiteNode({
+      sql, userId: 42, node: { id: 'node-comp', board_id: 'b1', origin_url: 'https://example.com' },
+      reason: 'edit', idemKey: 'k-comp-1',
+      producer: produtorNativo(), bundleStore: createMemoryBundleStore(),
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor), generateControls: vi.fn(),
+    });
+    const upd = sql._calls.find((c) => /UPDATE snapshots/i.test(c.query));
+    expect(upd).toBeTruthy();
+    expect(upd.query).not.toMatch(/html\s*=\s*NULL/i);
+  });
+
+  it('inserindo um snapshot novo, o documento e HERDADO do anterior', async () => {
+    const sql = makeSql({ currentId: 'snap-native-velho', currentSource: 'native-bundle' });
+    await reconstructSiteNode({
+      sql, userId: 42, node: { id: 'node-comp2', board_id: 'b1', origin_url: 'https://example.com' },
+      reason: 'edit', idemKey: 'k-comp-2',
+      producer: produtorNativo(), bundleStore: createMemoryBundleStore(),
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor), generateControls: vi.fn(),
+    });
+    const ins = sql._calls.find((c) => /INSERT INTO snapshots/i.test(c.query));
+    expect(ins).toBeTruthy();
+    expect(ins.query).toMatch(/SELECT html FROM snapshots/i);
+  });
+});
+
+describe('deadline signal reaches the producer (Astra r1 #2 / Claude r1 #3, 2026-09-06)', () => {
+  it('passes an AbortSignal so the capture browser stops when the route deadline fires', async () => {
+    delete process.env.UNCRAFT_MOTION_CONTROL_VALIDATOR_URL;
+    const store = createMemoryBundleStore();
+    const sql = makeSql({ currentId: 'snap-native', currentSource: 'capture' });
+    const producer = vi.fn(async (_url, opts) => {
+      expect(opts?.signal).toBeInstanceOf(AbortSignal);
+      expect(opts.signal.aborted).toBe(false);
+      return {
+        kind: 'native',
+        bundle: {
+          entryPath: 'index.html',
+          runtimeFingerprint: `sha256:${'c'.repeat(64)}`,
+          assets: [{ path: 'index.html', contentType: 'text/html', body: '<html>native</html>' }],
+          reconstructionCapabilities: { detectedEngines: [], candidateControls: [] },
+        },
+      };
+    });
+    const result = await reconstructSiteNode({
+      sql, userId: 42,
+      node: { id: 'node-native', board_id: 'board-1', origin_url: 'https://example.com' },
+      reason: 'edit', idemKey: 'clone-native-signal-1', producer, bundleStore: store,
+      persistBundle: vi.fn(async ({ descriptor }) => descriptor), generateControls: vi.fn(),
+    });
+    expect(result.ok).toBe(true);
+    expect(producer).toHaveBeenCalledWith('https://example.com', expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 });

@@ -75,7 +75,7 @@ describe('GET /api/nodes/[id]', () => {
     const res = await GET(req, { params: Promise.resolve({ id: 'n1' }) });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ ready: true, snapshotId: 'snap-1' });
+    expect(body).toEqual({ ready: true, snapshotId: 'snap-1', nativeReady: false });
     // Critical: ready_check must NOT transfer html — only a LENGTH() probe.
     expect(sqlMock._templates[1]).toMatch(/LENGTH\(html\)/);
     expect(sqlMock._templates[1]).not.toMatch(/SELECT[^;]*\bhtml\b\s*[,\s]/i);
@@ -92,7 +92,7 @@ describe('GET /api/nodes/[id]', () => {
     const res = await GET(req, { params: Promise.resolve({ id: 'n2' }) });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ ready: false, snapshotId: null });
+    expect(body).toEqual({ ready: false, snapshotId: null, nativeReady: false });
     // No second sql call needed when there's no snapshot id to probe.
     expect(sqlMock._templates).toHaveLength(1);
   });
@@ -106,6 +106,6 @@ describe('GET /api/nodes/[id]', () => {
     const res = await GET(req, { params: Promise.resolve({ id: 'n1' }) });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ ready: false, snapshotId: 'snap-1' });
+    expect(body).toEqual({ ready: false, snapshotId: 'snap-1', nativeReady: false });
   });
 });

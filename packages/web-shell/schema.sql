@@ -94,6 +94,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
 -- boot inteiro com `column "native_bundle_id" does not exist`. As travas de
 -- integridade (chave estrangeira e formato do manifesto) vem na migracao
 -- 2026-07-26-native-motion-editing.sql, que so precisa rodar uma vez.
+-- ⭐ Token de revisão de EDIÇÃO, na própria linha do node. O autosave o
+-- incrementa; a escrita estrutural (compose, style transfer) exige o valor que
+-- o portão examinou. Como a condição vive na linha TRAVADA, o Postgres a
+-- re-avalia depois de adquirir a trava — o que uma condição em outra tabela
+-- (`NOT EXISTS` sobre sessões) não garante: o snapshot da instrução é anterior
+-- ao lock, e uma edição salva na espera passaria batida.
+ALTER TABLE nodes ADD COLUMN IF NOT EXISTS edit_revision BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS native_bundle_id UUID;
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS motion_manifest JSONB;
 ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS motion_manifest_version SMALLINT;
@@ -111,13 +118,41 @@ CREATE TABLE IF NOT EXISTS native_motion_edit_sessions (
   draft_manifest_version SMALLINT NOT NULL DEFAULT 2 CHECK (draft_manifest_version = 2),
   revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0),
   status VARCHAR(12) NOT NULL DEFAULT 'active'
-    CHECK (status IN ('active','committed','discarded','expired')),
+    CHECK (status IN ('active','committed','discarded','expired','superseded')),
   expires_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   closed_at TIMESTAMPTZ,
   CHECK (jsonb_typeof(draft_manifest) = 'object')
 );
+-- 'superseded' e `closed_reason` separam "o usuário cancelou" de "o sistema
+-- trocou a base debaixo da sessão" (re-clone). Bancos anteriores se curam no
+-- boot: a trava CHECK antiga recusaria o valor novo, então ela é recriada.
+ALTER TABLE native_motion_edit_sessions ADD COLUMN IF NOT EXISTS closed_reason VARCHAR(40);
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'native_motion_edit_sessions'::regclass
+       AND contype = 'c'
+       AND pg_get_constraintdef(oid) LIKE '%status%'
+       AND pg_get_constraintdef(oid) NOT LIKE '%superseded%'
+  ) THEN
+    EXECUTE (
+      SELECT format('ALTER TABLE native_motion_edit_sessions DROP CONSTRAINT %I', conname)
+        FROM pg_constraint
+       WHERE conrelid = 'native_motion_edit_sessions'::regclass
+         AND contype = 'c'
+         AND pg_get_constraintdef(oid) LIKE '%status%'
+         AND pg_get_constraintdef(oid) NOT LIKE '%superseded%'
+       LIMIT 1
+    );
+    ALTER TABLE native_motion_edit_sessions
+      ADD CONSTRAINT native_motion_edit_sessions_status_check
+      CHECK (status IN ('active','committed','discarded','expired','superseded'));
+  END IF;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS native_motion_sessions_one_active_per_node
   ON native_motion_edit_sessions(node_id) WHERE status = 'active';
 CREATE INDEX IF NOT EXISTS idx_native_motion_sessions_user_status
@@ -126,6 +161,42 @@ CREATE INDEX IF NOT EXISTS idx_native_motion_sessions_node
   ON native_motion_edit_sessions(node_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_native_motion_sessions_base_snapshot
   ON native_motion_edit_sessions(base_snapshot_id);
+
+-- Lease B (2026-09-02): hostname persistido por sessão — mintado UMA vez,
+-- reusado em todo resume (sem isto cada reabertura mudaria a origem e
+-- destruiria o cache). Bancos anteriores se curam no boot.
+ALTER TABLE native_motion_edit_sessions ADD COLUMN IF NOT EXISTS runtime_hostname TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_native_motion_sessions_runtime_hostname
+  ON native_motion_edit_sessions(runtime_hostname) WHERE runtime_hostname IS NOT NULL;
+
+-- Lease opaca revogável do runtime (plano lease B): o banco guarda só o
+-- sha256 do valor do cookie; expiração SLIDING vive na linha (o cookie de
+-- sessão não tem idade própria); badge_jti UNIQUE = consumo atômico do
+-- badge one-shot; lease única ativa por sessão.
+CREATE TABLE IF NOT EXISTS native_runtime_leases (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  lease_hash CHAR(64) NOT NULL UNIQUE,
+  badge_jti VARCHAR(64) NOT NULL UNIQUE,
+  edit_session_id UUID NOT NULL REFERENCES native_motion_edit_sessions(id) ON DELETE CASCADE,
+  node_id UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  bundle_id UUID NOT NULL,
+  hostname TEXT NOT NULL,
+  status VARCHAR(12) NOT NULL DEFAULT 'active' CHECK (status IN ('active','revoked','expired')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  renewed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_native_runtime_leases_session
+  ON native_runtime_leases(edit_session_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_native_runtime_leases_one_active
+  ON native_runtime_leases(edit_session_id) WHERE status = 'active';
+
+-- Quota agregada de upload por nó, reservada por UPDATE condicional ANTES do
+-- putImmutable (contar-depois-gravar é TOCTOU).
+CREATE TABLE IF NOT EXISTS native_node_upload_quota (
+  node_id UUID PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+  bytes_used BIGINT NOT NULL DEFAULT 0 CHECK (bytes_used >= 0)
+);
 
 -- Sanitized motion diagnostics are separate from agent traces. Linked events
 -- expire after 30 days. Only anonymous groups of at least 10 events survive
@@ -573,3 +644,31 @@ CREATE INDEX IF NOT EXISTS generation_reference_uses_user_time
   ON generation_reference_uses(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS generation_reference_uses_status
   ON generation_reference_uses(user_id, status, created_at DESC);
+
+-- Sites com verificação de bot (spec 2026-09-08 §4.2): job persistido —
+-- nenhum request espera uma pessoa. Espelho de migrations/2026-09-08-challenge-jobs.sql.
+CREATE TABLE IF NOT EXISTS challenge_jobs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  board_id UUID NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+  node_id UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  purpose VARCHAR(12) NOT NULL CHECK (purpose IN ('reference','edit')),
+  target_url TEXT NOT NULL,                       -- imutável desde a criação
+  generation INTEGER NOT NULL DEFAULT 1,          -- cerca: commit só com a geração corrente
+  status VARCHAR(16) NOT NULL DEFAULT 'verifying' CHECK (status IN (
+    'verifying','needs_human','ready','capturing','committing','succeeded',
+    'failed','expired','cancelled','unsupported')),
+  bb_session_id TEXT,                             -- id do vendor; NUNCA connectUrl/URLs de visualizador
+  bb_page_id TEXT,
+  idem_key TEXT,                                  -- etiqueta de idempotência do Edit
+  human_deadline_at TIMESTAMPTZ,
+  session_expires_at TIMESTAMPTZ,
+  lease_until TIMESTAMPTZ,                        -- trava curta de controlador
+  lease_owner TEXT,
+  error_code VARCHAR(40),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_challenge_jobs_user_id_status ON challenge_jobs(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_challenge_jobs_open ON challenge_jobs(status)
+  WHERE status IN ('verifying','needs_human','ready','capturing','committing');

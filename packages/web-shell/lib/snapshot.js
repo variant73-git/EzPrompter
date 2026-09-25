@@ -77,6 +77,9 @@ export class ChallengeRequiredError extends Error {
   constructor(kind, url, signals = []) {
     super(`challenge_required: ${kind} on ${url}`);
     this.name = 'ChallengeRequiredError';
+    // `code` é o que as rotas que mapeiam erro do produtor por código (ex.:
+    // /reconstruct) leem; `instanceof` continua valendo para quem já usava.
+    this.code = 'challenge_required';
     this.kind = kind;
     this.url = url;
     this.signals = signals;
@@ -87,7 +90,12 @@ export class ChallengeRequiredError extends Error {
 // interstitial is detected; null otherwise. Kept defensive — any throw
 // becomes "no challenge" so detection is fail-open (real sites never
 // get blocked by a detector bug).
-async function detectChallengePage(page) {
+// `strict`: distinguishes "inspected and clean" (null) from "could not inspect"
+// (undefined — e.g. the execution context was destroyed by a navigation mid-
+// evaluate). The native producer needs that: on a self-reloading interstitial
+// a failed observation must NOT count as clearance (Astra r2 #1, 2026-09-06).
+// Default stays fail-open for the reference capture.
+export async function detectChallengePage(page, { strict = false } = {}) {
   try {
     return await page.evaluate(() => {
       const signals = [];
@@ -141,7 +149,7 @@ async function detectChallengePage(page) {
       return kind ? { kind, signals } : null;
     });
   } catch (e) {
-    return null;
+    return strict ? undefined : null;
   }
 }
 
@@ -467,19 +475,28 @@ function ensureBaseTag(html, baseUrl) {
  */
 export async function captureSnapshot(url, opts = {}) {
   const viewport = opts.viewport || { width: 1280, height: 800 };
-  const { onProgress = () => {} } = opts;
+  const { onProgress = () => {}, session = null } = opts;
+  // Sessão EMPRESTADA (spec 2026-09-08 §4.4): usa a página já verificada e
+  // não fecha o que não é seu. Sem `session`, comportamento idêntico.
+  const emprestada = Boolean(session && session.page);
   let browser, context, page;
+  let publicNetworkRoute = null;
   try {
-    browser = await launchBrowser();
-    context = await browser.newContext({
-      viewport,
-      userAgent: REAL_UA,
-      locale: 'en-US',
-      timezoneId: 'America/Sao_Paulo'
-    });
+    if (emprestada) {
+      browser = session.browser; context = session.context; page = session.page;
+      await page.setViewportSize(viewport).catch(() => {});
+    } else {
+      browser = await launchBrowser();
+      context = await browser.newContext({
+        viewport,
+        userAgent: REAL_UA,
+        locale: 'en-US',
+        timezoneId: 'America/Sao_Paulo'
+      });
+    }
     if (opts.publicNetworkOnly) {
       const hostChecks = new Map();
-      await context.route('**/*', async (route) => {
+      publicNetworkRoute = async (route) => {
         const requestUrl = route.request().url();
         let parsed;
         try { parsed = new URL(requestUrl); } catch { return route.abort('blockedbyclient'); }
@@ -491,9 +508,10 @@ export async function captureSnapshot(url, opts = {}) {
         } catch {
           return route.abort('blockedbyclient');
         }
-      });
+      };
+      await context.route('**/*', publicNetworkRoute);
     }
-    page = await context.newPage();
+    if (!emprestada) page = await context.newPage();
     await page.goto(url, { waitUntil: 'networkidle', timeout: NAV_TIMEOUT_MS }).catch(async () => {
       // networkidle can hang on chatty sites; fall back to load.
       await page.goto(url, { waitUntil: 'load', timeout: NAV_TIMEOUT_MS });
@@ -752,15 +770,50 @@ export async function captureSnapshot(url, opts = {}) {
       }
     }
 
+    // DESIGN.MD panel data (2026-08-17): the site's real typography, measured
+    // from computed styles while the page is still open — deterministic, no
+    // LLM, a single evaluate (~ms). Roles: the largest visible heading
+    // (display), a paragraph (body). Best-effort: capture never fails on it.
+    const typeSample = await page.evaluate(() => {
+      const pick = (selectors) => {
+        for (const sel of selectors) {
+          const el = [...document.querySelectorAll(sel)].find((cand) => {
+            const rect = cand.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && cand.textContent.trim().length > 2;
+          });
+          if (el) {
+            const cs = getComputedStyle(el);
+            return {
+              family: (cs.fontFamily.split(',')[0] || '').replace(/["']/g, '').trim(),
+              size: Math.round(parseFloat(cs.fontSize) || 0),
+              weight: Number(cs.fontWeight) || 400,
+            };
+          }
+        }
+        return null;
+      };
+      const display = pick(['h1', 'h2', '[class*="hero"] *']);
+      const body = pick(['main p', 'p', 'body']);
+      return (display || body) ? { display, body } : null;
+    }).catch(() => null);
+
     return {
       html, screenshotDataUrl, title, baseUrl: url,
       animatedDetected: detection.detected,
+      ...(typeSample ? { typeSample } : {}),
       ...(chassisEvidence ? { chassisEvidence } : {}),
       ...(classificationShadow ? { classificationShadow } : {}),
     };
   } finally {
-    if (page) await page.close().catch(() => {});
-    if (context) await context.close().catch(() => {});
-    if (browser) await browser.close().catch(() => {});
+    if (emprestada) {
+      // Página/contexto/navegador são de OUTREM: não fechar (Astra 2026-09-08 #1).
+      // Remover só a PRÓPRIA rota, pela referência exata — `unroute('**/*')` sem
+      // callback derrubaria handlers que o dono tenha instalado (Astra #3).
+      if (publicNetworkRoute && context) await context.unroute('**/*', publicNetworkRoute).catch(() => {});
+    } else {
+      if (page) await page.close().catch(() => {});
+      if (context) await context.close().catch(() => {});
+      if (browser) await browser.close().catch(() => {});
+    }
   }
 }

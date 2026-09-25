@@ -23,6 +23,7 @@ import { HOUSE_STYLE } from './design/house-style.js';
 import { buildReferenceDirective, referencesEnabled } from './design/reference-directive.js';
 import { extractStyleFromImage } from './design/style-extract.js';
 import { recordUsage } from './billing/context.js';
+import { toModelDocument, restoreModelDocument, mergeDocumentAssets } from './graph-document.js';
 
 const DEFAULT_MODEL = process.env.UNCRAFT_LLM_MODEL || 'claude-sonnet-4-6';
 
@@ -269,11 +270,40 @@ export function replaceMediaPlaceholders(html, bindings = []) {
   return output;
 }
 
-export async function runCompose({ target, sources, model, modelId, systemPromptOverride, referencePlan = null, referenceEvidence = {} }) {
+export async function runCompose({ target: targetEntrada, sources: sourcesEntrada, model, modelId, systemPromptOverride, referencePlan = null, referenceEvidence = {} }) {
+  let target = targetEntrada;
+  let sources = sourcesEntrada;
   // Caller can pass either the resolved provider model string (`model`)
   // or the picker's short id (`modelId`). resolveModel() maps the
   // short id to the SDK-friendly value via MODEL_ALIAS.
   const resolvedModel = model || resolveModel(modelId);
+  // ⭐ OS PIXELS NAO VAO AO MODELO (2026-08-22). A fotocopia fiel do DOM tem
+  // 96% de data URIs — 17 MB de base64 num documento de 18 MB — e mandar isso a
+  // um modelo e' queimar token por nada: ele nao ve a imagem, ve um paredao de
+  // caracteres. E o teto e' real: o style transfer sobre um documento desses
+  // voltava `429 Request too large`. Era por isso que o grafo so' funcionava a
+  // partir do motor legado, cuja saida tem ~70 KB.
+  //
+  // Os bytes saem, um marcador fica, e o que o modelo devolver e' re-inflado.
+  // As referencias continuam PRIVADAS: o marcador e' etiqueta local do
+  // documento, nunca endereco publico (advise do Sol).
+  const alvoEnxuto = toModelDocument(target.current_html || '');
+  const fontesEnxutas = sources.map((s) => (
+    s?.source_html ? { fonte: s, doc: toModelDocument(s.source_html) } : null
+  )).filter(Boolean);
+  const bytesRemovidos = alvoEnxuto.removedBytes
+    + fontesEnxutas.reduce((total, item) => total + item.doc.removedBytes, 0);
+  if (bytesRemovidos > 0) {
+    // eslint-disable-next-line no-console
+    console.log(`[run-flow] ${(bytesRemovidos / 1024 / 1024).toFixed(1)} MB de pixel embutido fora do prompt`);
+  }
+  const pixels = mergeDocumentAssets(alvoEnxuto.assets, ...fontesEnxutas.map((item) => item.doc.assets));
+  target = { ...target, current_html: alvoEnxuto.text };
+  sources = sources.map((s) => {
+    const enxuto = fontesEnxutas.find((item) => item.fonte === s);
+    return enxuto ? { ...s, source_html: enxuto.doc.text } : s;
+  });
+
   const buckets = bucketSources(sources);
 
   // Today's slice: only HTML-bearing targets supported.
@@ -344,7 +374,9 @@ export async function runCompose({ target, sources, model, modelId, systemPrompt
     maxTokens: 32000,
     temperature: 0.4
   });
-  const generatedHtml = stripCodeFences(text);
+  // Re-infla o que o modelo copiou adiante. Marcador que ele inventou fica como
+  // esta' — inventar bytes seria pior que uma imagem faltando.
+  const generatedHtml = restoreModelDocument(stripCodeFences(text), pixels);
   const usedMedia = mediaBindings.filter((binding) => binding.value && generatedHtml.includes(binding.placeholder));
   const html = replaceMediaPlaceholders(generatedHtml, mediaBindings);
   if (!html || !/<html/i.test(html)) {

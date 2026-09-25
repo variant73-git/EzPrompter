@@ -67,7 +67,13 @@ const nextConfig = {
         // production and owns a stricter, iframe-compatible policy in the
         // route itself. Applying the app's SAMEORIGIN/frame-ancestors headers
         // there would make the isolated iframe impossible to open.
-        source: '/:path((?!api/runtime(?:/|$)).*)',
+        // ⚠️ TODA rota que serve o runtime entra aqui — o legado (/api/runtime)
+        // E o caminho da concessão (/api/rt, /api/runtime-bootstrap). Esquecer
+        // uma deixa o Next sobrescrever o CSP da rota com o do app
+        // (frame-ancestors 'self' + X-Frame-Options SAMEORIGIN) e o app nunca
+        // consegue emoldurar — medido ao vivo 2026-09-06. next.config.test.js
+        // deriva a lista do filesystem e falha se uma rota nova ficar de fora.
+        source: '/:path((?!api/runtime(?:/|$)|api/rt(?:/|$)|api/runtime-bootstrap(?:/|$)).*)',
         headers: SECURITY_HEADERS,
       },
     ];

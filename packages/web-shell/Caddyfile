@@ -1,0 +1,17 @@
+# Proxy TLS local para o aceite do lease B (Task 14).
+# O Next dev fala HTTP puro na 3030; este proxy recebe HTTPS na 3443 para os
+# subdomínios de sessão (<aleatório>.rt.localtest.me) e repassa pro dev server.
+# Necessário porque o cookie da concessão (__Host-/Partitioned/SameSite=None)
+# exige HTTPS, e o Chrome só isenta o endereço literal "localhost".
+#
+# Pré-requisito (rode UMA vez, dentro de packages/web-shell):
+#   mkcert -install
+#   mkcert "*.rt.localtest.me"
+# (isso gera os dois .pem abaixo)
+#
+# Subir: caddy run   (a partir de packages/web-shell)
+
+*.rt.localtest.me:3443 {
+	tls ./_wildcard.rt.localtest.me.pem ./_wildcard.rt.localtest.me-key.pem
+	reverse_proxy 127.0.0.1:3030
+}

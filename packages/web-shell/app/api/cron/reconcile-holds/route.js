@@ -31,7 +31,23 @@ export async function GET(request) {
       // eslint-disable-next-line no-console
       console.warn(`[reconcile-holds] refunded ${summary.refundedCredits} credits across ${summary.reconciled}/${summary.scanned} stranded ops (ttl ${RECONCILE_TTL_SECS}s)`);
     }
-    return NextResponse.json({ ok: true, ...summary, ttlSecs: RECONCILE_TTL_SECS });
+    // Varredura dos jobs de challenge vencidos (spec 2026-09-08 §4.2): libera a
+    // sessão do vendor e marca 'expired'. Best-effort; falha aqui não derruba a
+    // reconciliação de holds.
+    let challengeJobsExpired = 0;
+    try {
+      const { sweepExpiredJobs } = await import('../../../../lib/challenge/job-service.js');
+      const jobs = await sweepExpiredJobs({ sql });
+      challengeJobsExpired = jobs.expired;
+      if (jobs.expired > 0) {
+        // eslint-disable-next-line no-console
+        console.warn(`[reconcile-holds] expired ${jobs.expired} challenge jobs (vendor sessions released)`);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[reconcile-holds] challenge sweep failed:', e?.code || e?.message);
+    }
+    return NextResponse.json({ ok: true, ...summary, challengeJobsExpired, ttlSecs: RECONCILE_TTL_SECS });
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[reconcile-holds] sweep failed:', e);

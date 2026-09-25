@@ -79,3 +79,84 @@ describe('runFlowTool', () => {
     expect(runCompose).toHaveBeenLastCalledWith(expect.objectContaining({ modelId: 'gemini-3.1-pro' }));
   });
 });
+
+// ⭐ O agente tem entrada PROPRIA e passava por fora do portao de operacao
+// estrutural: um flow disparado pelo chat podia compor sobre um clone com
+// edicoes de movimento abertas e sobrescrever o trabalho vivo, em silencio.
+describe('o agente passa pelo mesmo portao', () => {
+  it('recusa quando o clone tem edicao de movimento que o documento nao inclui', async () => {
+    runCompose.mockClear();
+    let call = 0;
+    sql.mockImplementation(() => {
+      call++;
+      // alvo: clone animado com uma transacao ja' absorvida no snapshot
+      if (call === 1) return Promise.resolve([{ id: 'n1', kind: 'site', meta: {}, board_id: 'b1',
+        current_html: '<div>old</div>', current_design_md: null, current_snapshot_id: 'snap-0',
+        native_bundle_id: '11111111-2222-4333-8444-555555555555', motion_manifest: { transactions: [{ id: 'a' }] } }]);
+      if (call === 2) return Promise.resolve([{ edge_id: 'e1', edge_payload: null, source_node_id: 's1',
+        kind: 'prompt', meta: { prompt: 'a brief' }, source_html: null, source_design_md: null }]);
+      return Promise.resolve([]);
+    });
+    const out = await runFlowTool.execute({ nodeId: 'n1' }, { userId: 1, boardId: 'b1', runId: 'r1' });
+    expect(out.error).toBe('stale_clone_document');
+    expect(runCompose).not.toHaveBeenCalled();
+  });
+
+  it('recusa quando o clone nao tem documento — senao compoe de pagina em branco', async () => {
+    let call = 0;
+    sql.mockImplementation(() => {
+      call++;
+      if (call === 1) return Promise.resolve([{ id: 'n1', kind: 'site', meta: {}, board_id: 'b1',
+        current_html: null, current_design_md: null, current_snapshot_id: 'snap-0',
+        native_bundle_id: '11111111-2222-4333-8444-555555555555', motion_manifest: { transactions: [] } }]);
+      if (call === 2) return Promise.resolve([{ edge_id: 'e1', edge_payload: null, source_node_id: 's1',
+        kind: 'prompt', meta: { prompt: 'a brief' }, source_html: null, source_design_md: null }]);
+      return Promise.resolve([]);
+    });
+    const out = await runFlowTool.execute({ nodeId: 'n1' }, { userId: 1, boardId: 'b1', runId: 'r1' });
+    expect(out.error).toBe('missing_clone_document');
+  });
+
+  // A escrita tem que ser UM comando: entre inserir e apontar, uma sessao pode
+  // abrir — e abrir sessao nao muda `current_snapshot_id`.
+  it('grava snapshot e ponteiro no mesmo comando', async () => {
+    const textos = [];
+    let call = 0;
+    sql.mockImplementation((strings) => {
+      call++;
+      textos.push(Array.isArray(strings) ? strings.join(' ') : String(strings));
+      if (call === 1) return Promise.resolve([{ id: 'n1', kind: 'site', meta: {}, board_id: 'b1',
+        current_html: '<div>old</div>', current_design_md: null, current_snapshot_id: 'snap-0',
+        native_bundle_id: null, motion_manifest: null }]);
+      if (call === 2) return Promise.resolve([{ edge_id: 'e1', edge_payload: null, source_node_id: 's1',
+        kind: 'prompt', meta: { prompt: 'a brief' }, source_html: null, source_design_md: null }]);
+      return Promise.resolve([{ id: 'snap-novo' }]);
+    });
+    runCompose.mockResolvedValueOnce({ html: '<html><body>novo</body></html>' });
+    const out = await runFlowTool.execute({ nodeId: 'n1' }, { userId: 1, boardId: 'b1', runId: 'r1' });
+    expect(out.ran).toBe(true);
+    const escrita = textos.find((t) => /INSERT INTO snapshots/i.test(t));
+    expect(escrita).toMatch(/UPDATE nodes/i);
+    expect(escrita).toMatch(/native_motion_edit_sessions/i);
+  });
+});
+
+// Sem marcar terminal, o agente chama de novo com os mesmos argumentos ate'
+// esgotar as iteracoes — a recusa vira laco (Sol).
+describe('a recusa do portao e terminal para o agente', () => {
+  it('volta como nao-repetivel, com o proximo passo escrito', async () => {
+    let call = 0;
+    sql.mockImplementation(() => {
+      call++;
+      if (call === 1) return Promise.resolve([{ id: 'n1', kind: 'site', meta: {}, board_id: 'b1',
+        current_html: '<div>x</div>', current_design_md: null, current_snapshot_id: 'snap-0',
+        native_bundle_id: '11111111-2222-4333-8444-555555555555', motion_manifest: { transactions: [{ id: 'a' }] } }]);
+      if (call === 2) return Promise.resolve([{ edge_id: 'e1', edge_payload: null, source_node_id: 's1',
+        kind: 'prompt', meta: { prompt: 'x' }, source_html: null, source_design_md: null }]);
+      return Promise.resolve([]);
+    });
+    const out = await runFlowTool.execute({ nodeId: 'n1' }, { userId: 1, boardId: 'b1', runId: 'r1' });
+    expect(out.retryable).toBe(false);
+    expect(out.nextStep).toMatch(/do not call runFlow again/i);
+  });
+});

@@ -227,10 +227,14 @@ export default function Minimap({ nodes, transformRef, frameMode = 'all', hasSel
             </g>
           );
         })}
+        {/* Corner radius follows the rect's SCALE (zoom in → smaller rect →
+            smaller radius), instead of a fixed 4px that reads huge on a tiny
+            frame. Ceiling from the nested-radius rule: the svg corner is 12px
+            (shell) and the rect clamps to a 3px inset → 12 − 3 = 9. */}
         <rect
           x={vx0} y={vy0}
           width={vRectW} height={vRectH}
-          rx={4} ry={4}
+          rx={Math.max(0.75, Math.min(9, Math.min(vRectW, vRectH) * 0.04))}
           className="minimap-viewport"
         />
       </svg>
