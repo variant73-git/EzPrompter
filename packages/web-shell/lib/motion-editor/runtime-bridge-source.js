@@ -258,11 +258,38 @@ function nativeMotionRuntimeBridge() {
     return (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
   }
 
+  // The visible text of a split ROOT — an element whose DIRECT children are
+  // split tokens (lines / words / chars). Words are re-joined with spaces
+  // (SplitText drops the inter-word whitespace into its own nodes); a
+  // char-only split of one word ("CropTab™") just collapses its textContent.
+  // Returns '' for anything that is not itself a split root, so a wrapper that
+  // merely contains a split heading is never mistaken for text.
+  function splitRootText(element) {
+    if (!(element instanceof Element)) return '';
+    const kids = Array.from(element.children);
+    if (!kids.length || !kids.some((child) => child.matches(SPLIT_TOKEN))) return '';
+    const words = element.querySelectorAll('.word');
+    const raw = words.length
+      ? Array.from(words).map((word) => word.textContent).join(' ')
+      : (element.textContent || '');
+    return raw.replace(/\s+/g, ' ').trim();
+  }
+
   function directText(element) {
     if (!element) return '';
     if (element.matches('input,textarea')) return element.value || '';
     const splitLabel = element.querySelector(SPLIT_TOKEN) && element.getAttribute('aria-label');
     if (splitLabel) return splitLabel.trim();
+    // A split root WITHOUT an aria-label (farmminerals' "CropTab™" h1: every
+    // glyph in its own span, no authored label) has no direct text nodes, so
+    // the old fallback returned '' — the inline-edit overlay was born EMPTY
+    // while the original was hidden, and the logo vanished on double-click
+    // (beforeText was '' too, so any keystroke became a bogus patch). Use the
+    // tokens' visible text instead. Scoped to the split ROOT only — its direct
+    // children are tokens — never to a wrapper that merely contains a split,
+    // or a whole hero section would start reading (and editing) as one text.
+    const splitValue = splitRootText(element);
+    if (splitValue) return splitValue;
     return Array.from(element.childNodes)
       .filter((node) => node.nodeType === Node.TEXT_NODE)
       .map((node) => node.textContent)
@@ -6558,8 +6585,193 @@ function nativeMotionRuntimeBridge() {
     }
   }
 
-  function chooseElement(target) {
+  // Text the site made pointer-events:none (Webflow/GSAP animated headings do
+  // this — measured on farmminerals /promo: "Most fertilizers…", "Up to 70% of
+  // nitrogen…") is invisible to the browser's hit-test, so a click on it lands
+  // on a parent wrapper and the wrapper gets selected instead of the text. When
+  // a click resolves against a point, drill into the SMALLEST pointer-events:none
+  // text element under the cursor. Nothing on the page is mutated (that would
+  // turn click-through overlays into blockers and could wake the site's own
+  // hover/handlers) — only OUR selection resolution is refined, and only for
+  // pointer-events:none elements that actually carry text, so overlays the site
+  // made click-through are left alone.
+  // The visible pointer-events:none text under a point, inside `root` (the
+  // element the browser's hit-test landed on). Geometric, not caret-based:
+  // caretRangeFromPoint snaps to the NEAREST text, which under an overlapping
+  // wordmark is the wordmark's own (pointer-events:auto) text — measured on
+  // farmminerals: it kept returning "CropTab™" instead of the "Most
+  // fertilizers…" line beneath, so the wrapper got selected. Walks ELEMENTS only
+  // and REJECTS whole SVG subtrees (an inline Lottie is thousands of nodes with
+  // no HTML text), so a hero wrapper stays cheap to search. Selection-only path.
+  // TEXT HAS PRIORITY (Adilson, 2026-09-24): if the click lands on text, the
+  // user wants that text — over any div, wrapper, overlay graphic or
+  // pointer-events trick that would otherwise win the browser's hit-test. One
+  // rule for every site. Tie-break for text over text (a huge decorative
+  // wordmark sitting on a small line): a VISIBLE text beats a ghost one, and
+  // among equals the SMALLEST (most specific) wins. Returns the best candidate
+  // in `root`'s subtree (root included) as { el, ghost, area }, or null.
+  // Text whose box contains the point but is clipped away by an overflow
+  // ancestor is not visible there — it must not win (Astra).
+  function isClippedAt(el, x, y) {
+    let p = el.parentElement;
+    while (p && p !== document.documentElement) {
+      const overflow = getComputedStyle(p).overflow;
+      if (overflow && overflow !== 'visible') {
+        const r = p.getBoundingClientRect();
+        if (x < r.left || x > r.right || y < r.top || y > r.bottom) return true;
+      }
+      p = p.parentElement;
+    }
+    return false;
+  }
+  // A layer that PAINTS at the point (solid colour, background-image, or a
+  // raster/media element) hides everything beneath it — text behind an
+  // opaque modal must never be selected over the modal (Astra). An <svg>
+  // root does not count: it is transparent wherever nothing is drawn, and the
+  // hero's inline Lottie sits between the click and its own section's text.
+  function occludesBeneath(el) {
+    // Only CERTAIN occluders stop the search. Raster media paints its box
+    // (residual: a PNG/canvas with transparent regions still stops). An <svg>
+    // root never does (residual: an opaque SVG rect does not stop). A
+    // background-image may be a transparent PNG or an alpha gradient —
+    // coverage at the point is UNKNOWN, so it must not stop; and a colour
+    // only counts when fully opaque (alpha 0.06 is not a wall) (Astra r2).
+    if (/^(img|video|canvas|picture)$/i.test(el.tagName)) return true;
+    if (el.namespaceURI === 'http://www.w3.org/2000/svg') return false;
+    const s = getComputedStyle(el);
+    if (s.backgroundImage && s.backgroundImage !== 'none') return false;
+    const c = parseCssColor(s.backgroundColor);
+    return Boolean(c && c.alpha >= 0.98);
+  }
+  function betterTextCandidate(a, b) {
+    if (!b) return a;
+    if (!a) return b;
+    if (a.ghost !== b.ghost) return a.ghost ? b : a;
+    return a.area <= b.area ? a : b;
+  }
+  function textAtPoint(root, x, y) {
+    if (!(root instanceof Element) || typeof x !== 'number' || typeof y !== 'number') return null;
+    let best = null;
+    const consider = (el) => {
+      if (!directText(el)) return;
+      const r = el.getBoundingClientRect();
+      if (x < r.left || x > r.right || y < r.top || y > r.bottom) return;
+      // Only text the user can actually SEE at the point: ghosts (hidden /
+      // transparent / low-contrast) are EXCLUDED, not merely demoted — a
+      // hidden text must never become the selection just because it is the
+      // only candidate — and text clipped away by an overflow ancestor does
+      // not count (Astra).
+      if (isSelectionGhost(el) || isClippedAt(el, x, y)) return;
+      best = betterTextCandidate(best, { el, ghost: false, area: r.width * r.height });
+    };
+    consider(root);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
+      acceptNode(node) {
+        return node.namespaceURI === 'http://www.w3.org/2000/svg'
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    let visited = 0;
+    let node;
+    while ((node = walker.nextNode())) {
+      if (++visited > 5000) break;
+      consider(node);
+    }
+    return best;
+  }
+
+  // A "ghost": an element that occupies the point but isn't meaningfully
+  // visible there — fully transparent / hidden / zero-size, or a pinned
+  // (fixed/sticky) element that a scroll-driven animation has faded and left
+  // hovering over scrolled content (farmminerals' CropTab logo does exactly
+  // this). In edit mode a click should select what the user SEES, so ghosts are
+  // skipped in favour of the visible content beneath (the Layers panel still
+  // reaches the ghost itself).
+  // rgb()/rgba() parser used by occludesBeneath. (A contrast-based "invisible
+  // text" heuristic once lived here and was removed: ancestor colours cannot
+  // establish the backdrop — white text over a dark image SIBLING read as
+  // white-on-white — and color:transparent + background-clip:text is visible.
+  // "Text wins, smallest first" already makes content beat a huge decorative
+  // wordmark wherever they overlap; where only the wordmark is, it is real.)
+  function parseCssColor(value) {
+    const m = String(value || '').match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    const parts = m[1].split(',').map((s) => parseFloat(s));
+    if (parts.length < 3 || parts.slice(0, 3).some((n) => !Number.isFinite(n))) return null;
+    return { rgb: parts.slice(0, 3), alpha: parts.length > 3 && Number.isFinite(parts[3]) ? parts[3] : 1 };
+  }
+
+  function isSelectionGhost(el) {
+    if (!(el instanceof Element)) return true;
+    if (el === document.documentElement || el === document.body) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return true;
+    // Walk the ANCESTOR chain, not just the element: a hit-testable SVG <path>
+    // is position:static but inherits the fade of a fixed/sticky wrapper (the
+    // CropTab logo is exactly this — the visible glyph is a descendant of a
+    // faded pinned layer). Effective opacity multiplies down the chain; a pinned
+    // ancestor anywhere marks the whole layer as pinned (Astra).
+    let opacity = 1;
+    let pinned = false;
+    let p = el;
+    while (p && p !== document.documentElement) {
+      const s = getComputedStyle(p);
+      if (s.visibility === 'hidden' || s.visibility === 'collapse') return true;
+      opacity *= parseFloat(s.opacity || '1');
+      if (s.position === 'fixed' || s.position === 'sticky') pinned = true;
+      p = p.parentElement;
+    }
+    if (opacity < 0.02) return true;
+    if (pinned && opacity < 0.5) return true;
+    return false;
+  }
+  function resolveVisibleTarget(event) {
+    const target = event.target;
+    if (!(target instanceof Element) || !isSelectionGhost(target)) return target;
+    const x = event.clientX;
+    const y = event.clientY;
+    if (typeof x !== 'number' || typeof y !== 'number') return target;
+    const stack = document.elementsFromPoint(x, y);
+    for (const el of stack) {
+      if (el === document.documentElement) continue;
+      if (!isSelectionGhost(el)) return el;
+    }
+    return target;
+  }
+
+  function chooseElement(target, point) {
     if (!(target instanceof Element)) return null;
+    if (point) {
+      // If the visible text actually under the cursor is a pointer-events:none
+      // element (invisible to elementFromPoint), select it instead of whatever
+      // opaque layer the browser hit. The text is a descendant of SOME layer in
+      // the hit stack — not necessarily the topmost: on farmminerals the stack
+      // under a click is [CropTab h1 (ghost), the Lottie <svg>, div.promo-hero,
+      // …] and the "Most fertilizers…" line lives under promo-hero, so drilling
+      // only the first layer found nothing. Try each non-ghost layer in order,
+      // bounded to a few layers; html/body are excluded (whole-page walk).
+      const roots = [target];
+      const stack = document.elementsFromPoint(point.x, point.y);
+      for (const el of stack) {
+        if (el === document.documentElement || el === document.body) continue;
+        if (!roots.includes(el) && !isSelectionGhost(el)) roots.push(el);
+        // Foreground occlusion: once a layer that PAINTS at the point has been
+        // searched, nothing beneath it is visible — stop there, so text behind
+        // an opaque modal can never beat the modal (its own text still can).
+        if (occludesBeneath(el)) break;
+        if (roots.length >= 6) break;
+      }
+      // Text wins: pick the best text candidate ACROSS every layer, not the first
+      // layer that has one — the click target itself is often a text (the
+      // CropTab wordmark) and must still lose to the smaller visible line under
+      // it, which lives in a deeper layer's subtree.
+      let pick = null;
+      for (const root of roots) {
+        pick = betterTextCandidate(pick, textAtPoint(root, point.x, point.y));
+      }
+      if (pick) target = pick.el;
+    }
     const textContainer = textRoot(target);
     if (textContainer) return textContainer;
     const exact = target.closest(SELECTABLE);
@@ -6623,23 +6835,79 @@ function nativeMotionRuntimeBridge() {
   }
 
   function writeSplitText(element, value) {
-    const chars = Array.from(element.querySelectorAll('.char'))
+    // Nodes WE insert are marked so a shrink or an undo can REMOVE them; the
+    // site's own nodes are only ever emptied, never removed (its animation may
+    // still hold references to them).
+    const ADDED = 'uncraftSplitAdded';
+    const isWhitespaceText = (node) => Boolean(node) && node.nodeType === 3 && /^\s+$/.test(node.textContent);
+    const leafChars = (root) => Array.from(root.querySelectorAll('.char'))
       .filter((node) => !node.querySelector('.char'));
+    // Write `glyphs` into `chars` one per node; extra glyphs clone the last
+    // char node; surplus char nodes: ours are removed, the site's are emptied.
+    const fillChars = (chars, glyphs) => {
+      chars.forEach((node, index) => {
+        if (index < glyphs.length) { node.textContent = glyphs[index]; return; }
+        if (node.dataset[ADDED]) node.remove(); else node.textContent = '';
+      });
+      if (glyphs.length > chars.length && chars.length) {
+        const template = chars.at(-1);
+        for (let index = chars.length; index < glyphs.length; index += 1) {
+          const clone = template.cloneNode(false);
+          clone.removeAttribute('style');
+          clone.dataset[ADDED] = 'true';
+          clone.textContent = glyphs[index];
+          template.parentElement.appendChild(clone);
+        }
+      }
+    };
+    // Word-aware: a split has NO char node for the whitespace between words,
+    // so writing glyphs straight through would shift every letter after the
+    // first space (Astra). Map word → .word node, glyphs → that word's chars.
+    // Extra words clone the last .word AND replicate the split's own separator
+    // (a whitespace text node between words, when it uses one) — otherwise
+    // "fertilizers" + "ever" would render as "fertilizersever" while the
+    // reconstructed string still read fine (Astra r2).
+    const words = Array.from(element.querySelectorAll('.word'))
+      .filter((node) => !node.querySelector('.word'));
+    if (words.length) {
+      const nextWords = String(value).split(/\s+/).filter(Boolean);
+      const separator = isWhitespaceText(words.at(-1).previousSibling) ? words.at(-1).previousSibling : null;
+      nextWords.forEach((word, index) => {
+        let node = words[index];
+        if (!node) {
+          const template = words.at(-1);
+          const after = template.nextSibling;
+          node = template.cloneNode(true);
+          node.removeAttribute('style');
+          node.dataset[ADDED] = 'true';
+          node.querySelectorAll('.char').forEach((c) => c.removeAttribute('style'));
+          if (separator) template.parentElement.insertBefore(separator.cloneNode(true), after);
+          template.parentElement.insertBefore(node, after);
+          words.push(node);
+        }
+        const chars = leafChars(node);
+        if (chars.length) fillChars(chars, Array.from(word));
+        else node.textContent = word;
+      });
+      for (let index = nextWords.length; index < words.length; index += 1) {
+        const node = words[index];
+        if (node.dataset[ADDED]) {
+          if (separator && isWhitespaceText(node.previousSibling)) node.previousSibling.remove();
+          node.remove();
+          continue;
+        }
+        const chars = leafChars(node);
+        if (chars.length) chars.forEach((c) => { if (c.dataset[ADDED]) c.remove(); else c.textContent = ''; });
+        else node.textContent = '';
+      }
+      return;
+    }
+    const chars = leafChars(element);
     if (!chars.length) {
       element.textContent = value;
       return;
     }
-    const glyphs = Array.from(value);
-    chars.forEach((node, index) => { node.textContent = glyphs[index] || ''; });
-    if (glyphs.length > chars.length) {
-      const template = chars.at(-1);
-      for (let index = chars.length; index < glyphs.length; index += 1) {
-        const clone = template.cloneNode(false);
-        clone.removeAttribute('style');
-        clone.textContent = glyphs[index];
-        template.parentElement.appendChild(clone);
-      }
-    }
+    fillChars(chars, Array.from(value));
   }
 
   function finishInlineTextEdit(commit = true) {
@@ -8327,7 +8595,7 @@ function nativeMotionRuntimeBridge() {
     on(document, 'pointerleave', () => hover(null), true);
     on(document, 'pointerdown', (event) => {
       if (mode !== 'edit' || tool !== 'move' || event.button !== 0) return;
-      const element = chooseElement(event.target);
+      const element = chooseElement(resolveVisibleTarget(event), { x: event.clientX, y: event.clientY });
       if (!element) return;
       event.preventDefault();
       event.stopPropagation();
@@ -8408,7 +8676,7 @@ function nativeMotionRuntimeBridge() {
         event.stopPropagation();
         return;
       }
-      const element = chooseElement(event.target);
+      const element = chooseElement(resolveVisibleTarget(event), { x: event.clientX, y: event.clientY });
       if (!element) return;
       event.preventDefault();
       event.stopPropagation();
@@ -8417,7 +8685,7 @@ function nativeMotionRuntimeBridge() {
     }, true);
     on(document, 'dblclick', (event) => {
       if (mode !== 'edit' || tool !== 'select') return;
-      const element = chooseElement(event.target);
+      const element = chooseElement(resolveVisibleTarget(event), { x: event.clientX, y: event.clientY });
       if (!element || !isEditableText(element)) return;
       event.preventDefault();
       event.stopPropagation();
