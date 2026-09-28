@@ -142,6 +142,42 @@ function inRanges(offset, ranges) {
   return ranges.some(([start, end]) => offset >= start && offset < end);
 }
 
+/**
+ * Absolute URLs that live INSIDE a script body.
+ *
+ * The markup scanner skips script bodies on purpose: they are code, and a URL
+ * there can be IDENTITY (a canonical, a config key, an analytics endpoint)
+ * rather than something the page fetches. But a site can keep a DATA ARRAY of
+ * asset URLs in an inline script. Measured on the farmminerals /promo capture:
+ * 272 of the 373 CDN references in the captured HTML sit inside <script>, and
+ * ALL 262 images the bundle could not serve were among them — the clone stayed
+ * dependent on the live CDN for its scroll image sequence, which is what the
+ * verbatim gate caught (264 external attempts, SSIM floor 0.64).
+ *
+ * What makes touching them safe is the invariant the markup pass already
+ * relies on, and nothing more: only a COMPLETE absolute URL that EXACTLY
+ * matches a CAPTURED RESPONSE is replaced. Presence in the map means the
+ * browser actually fetched that URL and we stored the bytes; an identity
+ * string is never fetched, so it can never be in the map. No JavaScript is
+ * parsed, no other byte is altered, and the emitted value is a plain relative
+ * path — HTML entities are NOT decoded inside a script body, so entity
+ * encoding here would corrupt the string it is trying to fix.
+ */
+function scriptUrlTokens(html, ranges) {
+  const tokens = [];
+  // Stops at whatever can end a JS string literal or a URL in source.
+  const re = /https?:\/\/[^\s"'`\\<>)]+/g;
+  for (const [start, end] of ranges) {
+    const slice = html.slice(start, end);
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(slice))) {
+      tokens.push({ start: start + m.index, end: start + m.index + m[0].length, raw: m[0], inScript: true });
+    }
+  }
+  return tokens;
+}
+
 /** Every url(...) / @import "..." occurrence in a CSS text, with offsets. */
 function cssTokens(css, offset = 0) {
   const tokens = [];
@@ -254,7 +290,11 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
       baseWasRemoved = true;
     }
   }
-  const tokens = tokensFor(body, kind);
+  // Script bodies carry data URLs the markup scanner is right to skip; see
+  // scriptUrlTokens. Only HTML has them — a CSS or SVG body has no <script>.
+  const tokens = kind === 'html'
+    ? [...tokensFor(body, kind), ...scriptUrlTokens(body, scriptRanges(body, commentRanges(body)))]
+    : tokensFor(body, kind);
   if (!tokens.length) return body;
   const fromDir = posix.dirname(assetPath);
   const edits = [];
@@ -289,7 +329,10 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
     let relative = posix.relative(fromDir === '.' ? '' : fromDir, target);
     if (!relative.startsWith('.')) relative = `./${relative}`;
     const replacement = `${relative}${hash}`;
-    edits.push({ start: token.start, end: token.end, value: markup ? encodeForMarkup(replacement) : replacement });
+    // Inside a script body the text is not markup: entities are not decoded
+    // there, so encoding one would write the escape sequence into the string.
+    const encode = markup && !token.inScript;
+    edits.push({ start: token.start, end: token.end, value: encode ? encodeForMarkup(replacement) : replacement });
   }
   if (!edits.length) return body;
   // Back to front: an earlier replacement can never be re-scanned or shift
