@@ -149,8 +149,58 @@ function editabilityProbe() {
   };
 }
 
+// TRILHA DE MOVIMENTO — o controle do candidato CONGELADO.
+//
+// Os 23 quadros de aceitação são tirados PARADOS (450ms de espera em cada
+// ponto): um clone com a animação morta passa em todos eles. A receita pede o
+// vídeo justamente para julgar coreografia; mas vídeo é formato ERRADO para a
+// métrica — H.264 é com perda e duas gravações do mesmo conteúdo já diferem por
+// ruído de codec, e alinhar dois vídeos com tempos distintos é problema por si
+// só. Então: rajada curta em cada parada, reduzida a UM número por ponto.
+// Custo: kilobytes (nada vai para disco) contra megabytes de MP4.
+//
+// energia = diferença média por pixel entre quadros consecutivos, medida em
+// miniatura (a redução mata ruído de antialiasing e barateia a conta). Onde a
+// referência tem energia e o candidato tem ~0, a animação morreu ali.
+const BURST_FRAMES = 3;
+const BURST_GAP_MS = 160;
+
+async function motionEnergy(page, probe) {
+  const shots = [];
+  for (let i = 0; i < BURST_FRAMES; i += 1) {
+    if (i) await page.waitForTimeout(BURST_GAP_MS);
+    shots.push((await page.screenshot({ type: 'png' })).toString('base64'));
+  }
+  return probe.evaluate(async (frames) => {
+    const SMALL = 240;
+    const draw = (img) => {
+      const c = document.createElement('canvas');
+      c.width = SMALL; c.height = Math.max(1, Math.round(SMALL * img.naturalHeight / img.naturalWidth));
+      const x = c.getContext('2d', { willReadFrequently: true });
+      x.drawImage(img, 0, 0, c.width, c.height);
+      return x.getImageData(0, 0, c.width, c.height).data;
+    };
+    const load = (b64) => new Promise((res, rej) => {
+      const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = `data:image/png;base64,${b64}`;
+    });
+    const imgs = await Promise.all(frames.map(load));
+    const data = imgs.map(draw);
+    let total = 0; let pairs = 0;
+    for (let k = 1; k < data.length; k += 1) {
+      const a = data[k - 1]; const b = data[k];
+      let sum = 0; let n = 0;
+      for (let p = 0; p < a.length; p += 4) {
+        sum += Math.abs(a[p] - b[p]) + Math.abs(a[p + 1] - b[p + 1]) + Math.abs(a[p + 2] - b[p + 2]);
+        n += 3;
+      }
+      total += sum / n; pairs += 1;
+    }
+    return pairs ? Number((total / pairs).toFixed(3)) : 0;
+  }, shots);
+}
+
 // Percorre a MESMA sequência de entrada e devolve as dimensões + os quadros.
-async function runTrajectory(page, { targets, outDir, allowNetwork }) {
+async function runTrajectory(page, { targets, outDir, allowNetwork, probe }) {
   const frames = [];
   const t0 = Date.now();
   await page.waitForLoadState('load').catch(() => {});
@@ -177,7 +227,8 @@ async function runTrajectory(page, { targets, outDir, allowNetwork }) {
     const file = path.join(outDir, `frame-${String(index).padStart(3, '0')}.png`);
     await page.screenshot({ path: file, type: 'png' });
     await accumulate();
-    frames.push({ index, target, observed, atMs: Date.now() - t0, file: path.basename(file) });
+    const motion = probe ? await motionEnergy(page, probe).catch(() => null) : null;
+    frames.push({ index, target, observed, atMs: Date.now() - t0, file: path.basename(file), motion });
   };
 
   await shoot(0, 0);
@@ -252,7 +303,12 @@ async function measure({ label, outDir, url, serveRoot, trajectory }) {
     if (!targets.length) targets = [0];
   }
 
-  const run = await runTrajectory(page, { targets, outDir, allowNetwork: !allowPrefix });
+  // Página-sonda para a matemática de imagem da trilha de movimento. Fica em
+  // about:blank no MESMO browser — nada dela toca a página julgada.
+  const probe = await context.newPage();
+  await probe.goto('about:blank');
+
+  const run = await runTrajectory(page, { targets, outDir, allowNetwork: !allowPrefix, probe });
   const hosts = (list) => [...new Set(list.map((u) => { try { return new URL(u).host; } catch { return u.slice(0, 40); } }))];
 
   const report = {
@@ -330,6 +386,24 @@ async function compare(refDir, candDir) {
     },
     errors: cand.errors,
     ssim: { perFrame, min: measured.length ? Math.min(...measured.map((f) => f.ssim)) : null, framesMissing: missing },
+    // Contrato de MOVIMENTO: onde a referência se move e o candidato não, a
+    // animação morreu ali — falha que nenhum quadro em repouso denuncia.
+    motion: (() => {
+      const LIMIAR = 0.5;   // energia abaixo disso é ruído, não movimento
+      const pontos = ref.frames.map((rf) => {
+        const cf = cand.frames.find((f) => f.index === rf.index);
+        return { index: rf.index, target: rf.target, reference: rf.motion, candidate: cf ? cf.motion : null };
+      });
+      const vivos = pontos.filter((p) => typeof p.reference === 'number' && p.reference >= LIMIAR);
+      const congelados = vivos.filter((p) => typeof p.candidate === 'number' && p.candidate < LIMIAR);
+      return {
+        limiar: LIMIAR,
+        pontosComMovimentoNaReferencia: vivos.length,
+        pontosCongeladosNoCandidato: congelados.length,
+        congelados: congelados.map((p) => ({ target: p.target, reference: p.reference, candidate: p.candidate })).slice(0, 8),
+        porPonto: pontos,
+      };
+    })(),
   };
   console.log(JSON.stringify(out, null, 2));
   return out;
