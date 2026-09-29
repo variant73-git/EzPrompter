@@ -24,7 +24,7 @@
 //   node scripts/verbatim-audit.mjs --bundle <dir> --inventory _verbatim/source/motion-inventory.json
 
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
 
@@ -149,20 +149,79 @@ async function main() {
   await context.close(); await browser.close();
   await new Promise((d) => served.server.close(d));
 
-  // (1) agregação
+  // (1) agregação + ONDE cada referência nasce, que é o que decide o conserto.
+  //
+  // Duas perguntas por URL:
+  //   • o asset JÁ ESTÁ no bundle? Se sim, a captura funcionou e o defeito é só
+  //     de REESCRITA (barato). Se não, o defeito é de CAPTURA (o recurso nunca
+  //     foi baixado) — conserto diferente.
+  //   • a URL aparece no HTML, num CSS, ou em NENHUM dos dois? "Em nenhum"
+  //     significa construída em runtime por JS, a única classe que a reescrita
+  //     estática não alcança.
   const unicas = [...tentativas.entries()].map(([url, v]) => ({ url, ...v }));
   const totalTentativas = unicas.reduce((a, b) => a + b.n, 0);
+
+  const arquivos = await readdir(assets, { recursive: true }).catch(() => []);
+  const noBundle = new Set(arquivos.map((f) => String(f).split(path.sep).join('/')));
+  const textos = [];
+  for (const f of arquivos) {
+    const rel = String(f).split(path.sep).join('/');
+    if (!/\.(html|css|js|json)$/i.test(rel) || rel.endsWith('.uncraft-meta.json')) continue;
+    const corpo = await readFile(path.join(assets, rel), 'utf8').catch(() => null);
+    if (corpo) textos.push({ rel, corpo });
+  }
+  const html = textos.filter((t) => /\.html$/i.test(t.rel));
+  const css = textos.filter((t) => /\.css$/i.test(t.rel));
+  const js = textos.filter((t) => /\.(js|json)$/i.test(t.rel));
+
+  // Caminho que este recurso TERIA dentro do bundle, na convenção da captura.
+  const caminhoNoBundle = (u) => {
+    try {
+      const url = new URL(u);
+      return `_ext/${url.host}${url.pathname}`.replace(/\/+/g, '/');
+    } catch { return null; }
+  };
+  // Token distintivo para procurar nos textos: o último segmento, sem query.
+  const token = (u) => {
+    try {
+      const url = new URL(u);
+      const seg = decodeURIComponent(url.pathname).split('/').filter(Boolean).pop() || '';
+      return seg.slice(0, 60);
+    } catch { return null; }
+  };
+
+  const diag = { assetPresente: 0, assetAusente: 0, noHtml: 0, noCss: 0, noJs: 0, emLugarNenhum: 0, comEncoded: 0 };
+  const exemplos = { assetPresenteNoHtml: [], assetAusente: [], emLugarNenhum: [] };
+  for (const u of unicas) {
+    const alvo = caminhoNoBundle(u.url);
+    const presente = alvo ? noBundle.has(alvo) : false;
+    if (presente) diag.assetPresente += 1; else diag.assetAusente += 1;
+    if (/%2F/i.test(u.url)) diag.comEncoded += 1;
+    const t = token(u.url);
+    const achaEm = (lista) => Boolean(t) && lista.some((x) => x.corpo.includes(t));
+    const h = achaEm(html); const c = achaEm(css); const j = achaEm(js);
+    if (h) diag.noHtml += 1;
+    if (c) diag.noCss += 1;
+    if (j) diag.noJs += 1;
+    if (!h && !c && !j) {
+      diag.emLugarNenhum += 1;
+      if (exemplos.emLugarNenhum.length < 3) exemplos.emLugarNenhum.push(u.url.slice(0, 110));
+    } else if (presente && h && exemplos.assetPresenteNoHtml.length < 3) {
+      exemplos.assetPresenteNoHtml.push(u.url.slice(0, 110));
+    }
+    if (!presente && exemplos.assetAusente.length < 3) exemplos.assetAusente.push(u.url.slice(0, 110));
+  }
+
   const porClasse = {};
   for (const u of unicas) porClasse[u.classe] = (porClasse[u.classe] || 0) + 1;
-  const maisPedidas = unicas.sort((a, b) => b.n - a.n).slice(0, 5)
-    .map((u) => ({ tentativas: u.n, classe: u.classe, url: `${u.url.slice(0, 96)}…` }));
 
   console.log(JSON.stringify({
     referenciasExternas: {
       tentativas: totalTentativas,
       urlsUnicas: unicas.length,
       porClasse,
-      maisPedidas,
+      diagnostico: diag,
+      exemplos,
     },
     inventarioResolve: resolucao,
   }, null, 2));
