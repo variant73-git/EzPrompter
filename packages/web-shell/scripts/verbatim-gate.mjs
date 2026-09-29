@@ -198,14 +198,31 @@ const BURST_GAP_MS = 120;
 // par deixa de descrever "quanto a página mudou num instante" e passa a
 // descrever quanto a máquina demorou.
 const GAP_ALVO_MS = 400;
-// ⚠️ LIMIARES. Ficam aqui, nomeados, e o relatório DIZ se foram calibrados: os
-// anteriores eram os números da unidade antiga reaplicados a outra grandeza, e
-// isso tornou "congelado" inalcançável sem que nada no JSON avisasse. Enquanto
-// PISO_CALIBRADO for falso, a trilha de movimento não emite veredito.
-const PISO_CALIBRADO = false;
-const PISO_REFERENCIA = 0.5;   // a referência precisa se mover ao menos isto para o ponto ser julgável
-const PISO_MORTO = 0.05;       // praticamente parado: a assinatura do congelamento real
-const RAZAO_FRACA = 0.25;      // move-se, mas muito menos que a referência
+// ⭐ LIMIARES CALIBRADOS POR MEDIÇÃO (2026-09-29). Os anteriores eram os números da
+// unidade antiga reaplicados a outra grandeza, o que tornou "congelado"
+// inalcançável sem que nada no JSON avisasse.
+//
+// PISO DE RUÍDO = ZERO, medido: 24 rajadas sobre três quadros reais servidos como
+// imagem estática, sem script, deram energia 0 em TODAS. Conteúdo idêntico produz
+// bytes idênticos, então o caminho de medição não introduz ruído. Consequência
+// direta: qualquer energia diferente de zero é movimento REAL, e "congelado" é
+// exatamente zero — não uma vizinhança de limiar.
+//
+// ESCALA, medida deslocando o quadro inteiro por um número conhecido de pixels:
+//   0px -> 0      1px -> 0,52    2px -> 1,00    4px -> 1,87    8px -> 3,35
+//   16px -> 4,94  32px -> 7,04   64px -> 8,57   128px -> 11,46
+// A curva é SUBLINEAR (energia ~ 0,52 * px^0,66), o que importa para ler a razão.
+const PISO_CALIBRADO = true;
+// Abaixo disto a referência se moveu menos que UM PIXEL equivalente de quadro
+// inteiro — perguntar sobre paridade ali não é pergunta significativa.
+const PISO_REFERENCIA = 0.5;
+// Zero exato. Não há vizinhança a tolerar porque não há ruído; a margem é só
+// contra imprecisão de ponto flutuante.
+const PISO_MORTO = 0.0001;
+// Como a curva é sublinear, razão de ENERGIA subestima a falta de DISTÂNCIA: 0,25
+// de energia corresponde ao candidato percorrer ~13% do caminho da referência.
+// Ou seja o rótulo "fraco" só dispara em déficit grande — conservador de propósito.
+const RAZAO_FRACA = 0.25;
 // ⚠️ DUAS, não três. Medido em gsap.com: com três tentativas o candidato re-fazia a
 // rajada em 8 de 13 paradas e o custo médio do instrumento subiu para 6,1 s contra
 // 3,5 s da referência — a cadência então atuou só num lado e o portão de regime
@@ -698,7 +715,7 @@ async function compare(refDir, candDir) {
         unidade: 'diferenca media por canal de pixel entre quadros consecutivos, em intervalos VERIFICADOS como comparaveis (sem normalizacao temporal)',
         limiares: { pisoReferencia: PISO_REFERENCIA, pisoMorto: PISO_MORTO, razaoFraca: RAZAO_FRACA, gapAlvoMs: GAP_ALVO_MS, fatorGap: FATOR_GAP },
         origemDosLimiares: PISO_CALIBRADO
-          ? 'medidos no piso de ruido do proprio conteudo em repouso (JavaScript desligado)'
+          ? 'piso de ruido MEDIDO em 0 (24 rajadas sobre quadros reais servidos como imagem estatica, sem script); escala medida deslocando o quadro inteiro por N pixels: 1px=0,52 2px=1,00 8px=3,35 32px=7,04'
           : 'NAO CALIBRADOS — provisorios; a trilha de movimento nao e veredito',
         vivo: conta('vivo'), fraco: conta('fraco'), congelado: conta('congelado'),
         referenciaParada: conta('referencia-parada'),
