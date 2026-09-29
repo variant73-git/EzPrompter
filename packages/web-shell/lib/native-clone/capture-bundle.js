@@ -29,6 +29,8 @@ import { ChallengeRequiredError, detectChallengePage } from '../snapshot.js';
 import { criarContabilidade } from './byte-ledger.js';
 import { parseContentRange } from './byte-range.js';
 import { referenceKindFor, rewriteDocumentReferences } from './rewrite-references.js';
+import { runtimeFetchMap, runtimeFetchShim } from './runtime-fetch-map.js';
+import { leadingDoctypeEnd } from '../motion-editor/native-clone-gateway.js';
 
 /**
  * SSRF — o produtor GRAVA o corpo de cada resposta num bundle que o usuário vê.
@@ -454,7 +456,14 @@ export async function captureNativeBundle(url, opts = {}) {
           }
           // O corpo já está em mão: confirma na hora.
           conta.confirmar(bilhete);
-          recursos.set(u, { bytes, contentType: (res.headers()['content-type'] || '').split(';')[0].trim() });
+          // ⚠️ O TIPO do recurso é guardado porque `fetch`/`xhr` precisam de
+          // tratamento próprio na montagem: a URL deles é construída em código e
+          // a reescrita estática não a alcança (ver o remendo de fetch abaixo).
+          recursos.set(u, {
+            bytes,
+            contentType: (res.headers()['content-type'] || '').split(';')[0].trim(),
+            tipo: req.resourceType(),
+          });
         } catch (_) { /* resposta sem corpo (redirect, 204, 304) não é falha */ }
         finally {
           if (registrei) {
@@ -855,7 +864,7 @@ export async function captureNativeBundle(url, opts = {}) {
             // Publicar exige a vaga ainda nula E a mesma geração (Astra r3:
             // o `await` acima é um microtask — a checagem de dentro não basta).
             if (valor && recursos.get(u) === null && (geracao.get(u) || 0) === valor.geracao) {
-              recursos.set(u, { bytes: valor.bytes, contentType: valor.contentType });
+              recursos.set(u, { bytes: valor.bytes, contentType: valor.contentType, tipo: valor.tipo });
             }
           } catch { /* segue faltando, e o relatório dirá */ }
         }
@@ -924,6 +933,11 @@ export async function captureNativeBundle(url, opts = {}) {
     }
     const entryPath = mapa.get(entradaOriginal);
 
+    // Mapa das respostas que só existem em tempo de execução (fetch/XHR) e o script
+    // que as redireciona para o pacote. Vazio => nada é injetado.
+    const mapaDeFetch = runtimeFetchMap(congelados, mapa);
+    const remendoDeFetch = runtimeFetchShim(mapaDeFetch);
+
     const assets = [];
     for (const [u, valor] of congelados) {
       // Cinto extra sobre o snapshot congelado (Claude review 2026-08-20 #2):
@@ -953,6 +967,18 @@ export async function captureNativeBundle(url, opts = {}) {
         // passa a BLOQUEAR o próprio arquivo que acabamos de preservar — a
         // página abriria sem script nenhum. Achado P1 do Sol.
         if (/\.html?$/i.test(caminho)) texto = texto.replace(/\s+integrity=(["'])[^"']*\1/gi, '');
+        // ⭐ REMENDO DE `fetch`/XHR no documento de ENTRADA (2026-09-29). Uma URL
+        // montada em código não aparece como texto, então a reescrita não a alcança;
+        // sem isto o clone perde o conteúdo que a página busca em runtime (medido no
+        // gsap.com: 3 imagens ausentes por causa de um `fetch` morto). Entra logo após
+        // o doctype, antes de qualquer marcação do site — se o site guardar uma
+        // referência a `fetch` antes, o remendo não o alcança. A âncora é a MESMA do
+        // gateway (`leadingDoctypeEnd`), que espelha os tokens do modo "initial" do
+        // parser; escrever outra por regex divergiria dele.
+        if (caminho === entryPath && remendoDeFetch) {
+          const at = leadingDoctypeEnd(texto);
+          texto = `${texto.slice(0, at)}${remendoDeFetch}${texto.slice(at)}`;
+        }
         corpo = Buffer.from(texto, 'utf8');
       }
       assets.push({ path: caminho, body: new Uint8Array(corpo), contentType: contentType || undefined });
@@ -1037,6 +1063,8 @@ export async function captureNativeBundle(url, opts = {}) {
         // falha NOSSA (repescagem, teto, tardia); "nunca houve resposta" é o
         // navegador ou a rede recusando. Tratar as duas como a mesma coisa
         // esconderia defeito nosso atrás de recusa alheia.
+        // Quantas chamadas de runtime o clone passou a alcançar dentro do pacote.
+        chamadasDeRuntimeMapeadas: Object.keys(mapaDeFetch).length,
         pedidosQueFalharam: (() => {
           const lista = [...recusados].map(([u, info]) => ({ u, erro: info.erro, tipo: info.tipo }));
           const nossa = lista.filter((x) => geracao.has(x.u));

@@ -26,6 +26,15 @@
 //    saem da REFERÊNCIA, nunca da altura própria de cada candidato: esticar
 //    cada um pela própria porcentagem esconde justamente a distância de scroll
 //    que falta. O scrollY observado é diagnóstico, não o critério.
+//  • ⭐ O SSIM NÃO SE LÊ SEM AUTOCONTROLE (2026-09-29). Medido: a referência
+//    comparada com ELA MESMA (duas execuções do mesmo site vivo, mesma
+//    trajetória) dá piso 0,8864. Dois clones do mesmo site deram 0,934 e 0,924 —
+//    ou seja AMBOS melhores que o site contra si próprio, e a diferença entre
+//    eles está muito dentro da auto-variância. Antes deste controle eu vinha
+//    lendo 0,834 → 0,892 → 0,934 como progressão de fidelidade; não era.
+//    REGRA: rodar a referência DUAS vezes e comparar uma com a outra ANTES de
+//    atribuir significado a qualquer piso de SSIM de candidato. O comando é o
+//    mesmo: `--compare <ref1> <ref2>`.
 //  • DIMENSÕES INDEPENDENTES. Altura, alcance de scroll, cobertura de texto e
 //    de seções, requisições externas, recursos ausentes, erros de console e
 //    SSIM por quadro são reportados SEPARADAMENTE e nunca viram uma média —
@@ -608,6 +617,10 @@ async function compare(refDir, candDir) {
   const missing = perFrame.length - measured.length;
   const out = {
     reference: ref.label, candidate: cand.label,
+    // Quando os dois lados são execuções de REFERÊNCIA, esta comparação é o
+    // AUTOCONTROLE: o piso que o instrumento alcança com o site contra si mesmo.
+    // Nenhum piso de candidato tem significado sem ele.
+    autoControle: /^reference /.test(String(ref.label)) && /^reference /.test(String(cand.label)),
     // Dimensões INDEPENDENTES — nunca uma nota única.
     pageHeight: { reference: ref.geometry.pageHeight, candidate: cand.geometry.pageHeight, coverage: `${Math.round(100 * cand.geometry.pageHeight / (ref.geometry.pageHeight || 1))}%` },
     scrollReach: { reference: ref.geometry.maxScroll, candidate: cand.geometry.maxScroll },

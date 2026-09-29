@@ -68,7 +68,7 @@ const HTML_SPACE = /[\t\n\f\r ]/;
 // ignores. Only these forms can resolve to HTML whitespace.
 const WHITESPACE_REFERENCE = /^&(?:#(\d+);?|#[xX]([0-9a-fA-F]+);?|(Tab|NewLine);)/;
 
-function leadingDoctypeEnd(html) {
+export function leadingDoctypeEnd(html) {
   let at = html.charCodeAt(0) === 0xfeff ? 1 : 0;
   for (;;) {
     while (at < html.length && HTML_SPACE.test(html[at])) at += 1;
