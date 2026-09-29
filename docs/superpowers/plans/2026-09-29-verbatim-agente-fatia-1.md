@@ -64,3 +64,16 @@ Registrar, por execução: modelo; tokens de entrada/saída por etapa (investiga
 - **Modelo:** Fable 5.1 via `Agent` desta sessão. **Custo** sai do uso reportado ao fim + `WORKLOG.md` com carimbo por fase.
 - **Saída:** `_verbatim/verbatim-farm/assets/index.html`.
 - **Julgamento (depois, máquina livre):** referência dupla nova sob o portão atual → autocontrole; candidato verbatim; candidato native (`_verbatim/native3`) na mesma trajetória; `verbatim-traces --dom` nos dois.
+
+## 8. Fila — JEV como ADAPTADOR DE PROMPT por site (pedido do Adilson, 2026-09-29)
+
+**Ideia:** o prompt do verbatim é um só para todo site. Sites diferem no que têm — GSAP, ScrollTrigger, Lottie, parallax, pin, smooth-scroll (Lenis), vídeo, canvas/WebGL, 3D — e no que não têm. Um prompt que fala de Lottie para um site sem Lottie gasta atenção do modelo; um que não fala de pin num site cheio de pin perde fidelidade. O JEV adaptaria o prompt ao site.
+
+**Divisão de trabalho, para não errar de novo o alvo do JEV:**
+1. **Fatos, determinísticos e grátis (já existem):** `engines` da captura (`gsap`, `scrollTrigger`, `lenis`, `lottie`, `browserAnimations`); inventário de movimento (contagens, scrub/pin/start/end por gatilho, durações, easings); sinais de stack (`meta generator`, nomes de bundle, marcadores de hydration — Webflow/Framer/Next/Vite); chamadas de runtime (`envelopesDeReplay` > 0 = conteúdo buscado em runtime); challenge; formulários/consent/auth; `<video>`, `<canvas>`, WebGL; sliders; sticky.
+2. **JEV — julgamento sobre os fatos (uma-de-N / sim-não / nota):** arquétipo do site (`marketing-animado` · `spa-com-dados-em-runtime` · `estático` · `webgl-pesado` · `challenge-first`…); **família** de cada gatilho de rolagem (`reveal` · `parallax` · `pin` · `scrub` · `wipe` · `loop`) — os números vêm do inventário, o NOME da família é julgamento; e as chaves não-animação que mudam o prompt (tem formulário → neutralizar; tem vídeo de fundo → reproduzir playback; conteúdo em runtime → o replay tem que estar no substrato).
+3. **Prompt condicional:** o template ganha blocos ligados/desligados pelo resultado do JEV, em vez de um parágrafo genérico para tudo.
+
+**Critério de aceite (sem ele é fé):** A/B pelo portão no MESMO site — prompt genérico × prompt adaptado — nas dimensões de fidelidade, movimento e vestígios. Se o adaptado não ganhar de forma clara, a adaptação não paga (mesmo custando ~US$ 0,0001 por site em JEV).
+
+**Ordem:** depois das execuções 1 e 2 (verbatim puro e terceira via), porque só faz sentido adaptar um prompt cujo resultado base já foi medido.
