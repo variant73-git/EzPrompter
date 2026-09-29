@@ -6629,14 +6629,93 @@ function nativeMotionRuntimeBridge() {
   // opaque modal must never be selected over the modal (Astra). An <svg>
   // root does not count: it is transparent wherever nothing is drawn, and the
   // hero's inline Lottie sits between the click and its own section's text.
-  function occludesBeneath(el) {
-    // Only CERTAIN occluders stop the search. Raster media paints its box
-    // (residual: a PNG/canvas with transparent regions still stops). An <svg>
-    // root never does (residual: an opaque SVG rect does not stop). A
-    // background-image may be a transparent PNG or an alpha gradient —
-    // coverage at the point is UNKNOWN, so it must not stop; and a colour
-    // only counts when fully opaque (alpha 0.06 is not a wall) (Astra r2).
-    if (/^(img|video|canvas|picture)$/i.test(el.tagName)) return true;
+  // COBERTURA MEDIDA, não presumida (2026-09-28).
+  //
+  // `occludesBeneath` tratava toda mídia raster como parede. Medido no
+  // farmminerals: uma `<img>` decorativa com `pointer-events:none` pintada por
+  // cima de um texto — transparente justamente naquele pixel — fazia a busca
+  // parar nela, e o texto que o usuário está VENDO ficava inalcançável. Era a
+  // classe que custava a maior parte dos 17% de textos não alcançados.
+  //
+  // Agora se lê o ALPHA REAL do pixel. Três respostas, e a terceira importa:
+  // opaco (é parede), transparente (não é), e DESCONHECIDO — imagem de outra
+  // origem suja o canvas e não se pode ler. Desconhecido resolve-se como
+  // PAREDE, porque o erro nessa direção é "não alcancei um texto" (o usuário
+  // percebe e tem o painel de camadas), e na outra direção é "selecionei algo
+  // invisível" (silencioso, e o inspetor passa a mentir).
+  //
+  // Resíduos declarados: `object-position` diferente do centro não é honrado;
+  // `background-image` continua fora (exigiria renderizar para saber a
+  // cobertura); `<video>` segue parede.
+  const cobertura1x1 = { canvas: null, ctx: null };
+  function alphaDoPixel(el, x, y) {
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    const tag = el.tagName.toLowerCase();
+    let nw = 0; let nh = 0;
+    if (tag === 'img') {
+      // Imagem que não carregou não pinta nada — não é parede.
+      if (!el.complete || !el.naturalWidth) return false;
+      nw = el.naturalWidth; nh = el.naturalHeight;
+    } else if (tag === 'canvas') {
+      nw = el.width; nh = el.height;
+      if (!nw || !nh) return false;
+    } else {
+      return null;
+    }
+    // Onde o CONTEÚDO cai dentro da caixa, conforme object-fit. Fora dele
+    // (as bordas de um `contain`) nada é pintado.
+    const fit = (getComputedStyle(el).objectFit || 'fill').trim();
+    let dx = r.left; let dy = r.top; let dw = r.width; let dh = r.height;
+    if (fit !== 'fill') {
+      let escala;
+      if (fit === 'contain') escala = Math.min(r.width / nw, r.height / nh);
+      else if (fit === 'cover') escala = Math.max(r.width / nw, r.height / nh);
+      else if (fit === 'none') escala = 1;
+      else if (fit === 'scale-down') escala = Math.min(1, Math.min(r.width / nw, r.height / nh));
+      else return null;
+      dw = nw * escala; dh = nh * escala;
+      dx = r.left + (r.width - dw) / 2; dy = r.top + (r.height - dh) / 2;
+    }
+    if (x < dx || x > dx + dw || y < dy || y > dy + dh) return false;
+    const sx = Math.max(0, Math.min(nw - 1, Math.floor(((x - dx) / dw) * nw)));
+    const sy = Math.max(0, Math.min(nh - 1, Math.floor(((y - dy) / dh) * nh)));
+    try {
+      if (tag === 'canvas') {
+        const ctx = el.getContext('2d');
+        if (!ctx) return null;                                   // webgl: não se lê barato
+        return ctx.getImageData(sx, sy, 1, 1).data[3] >= 250;
+      }
+      if (!cobertura1x1.canvas) {
+        cobertura1x1.canvas = document.createElement('canvas');
+        cobertura1x1.canvas.width = 1; cobertura1x1.canvas.height = 1;
+        cobertura1x1.ctx = cobertura1x1.canvas.getContext('2d', { willReadFrequently: true });
+      }
+      const ctx = cobertura1x1.ctx;
+      if (!ctx) return null;
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.drawImage(el, sx, sy, 1, 1, 0, 0, 1, 1);
+      return ctx.getImageData(0, 0, 1, 1).data[3] >= 250;
+    } catch (_) {
+      return null;                                               // origem cruzada: desconhecido
+    }
+  }
+
+  function occludesBeneath(el, x, y) {
+    // Só paredes CERTAS param a busca. Para mídia raster a cobertura é MEDIDA
+    // no pixel (ver acima); desconhecido = parede. Um `<picture>` não pinta —
+    // quem pinta é a `<img>` dentro dele, que aparece ACIMA na pilha e é
+    // avaliada por si. Um `<svg>` raiz nunca para (resíduo: um rect opaco de
+    // SVG não para). `background-image` pode ser PNG transparente ou gradiente
+    // com alpha — cobertura DESCONHECIDA, então não para; e cor só conta se for
+    // totalmente opaca (alpha 0,06 não é parede) (Astra r2).
+    if (/^picture$/i.test(el.tagName)) return false;
+    if (/^video$/i.test(el.tagName)) return true;
+    if (/^(img|canvas)$/i.test(el.tagName)) {
+      if (typeof x !== 'number' || typeof y !== 'number') return true;
+      const opaco = alphaDoPixel(el, x, y);
+      return opaco === null ? true : opaco;
+    }
     if (el.namespaceURI === 'http://www.w3.org/2000/svg') return false;
     const s = getComputedStyle(el);
     if (s.backgroundImage && s.backgroundImage !== 'none') return false;
@@ -6679,6 +6758,53 @@ function nativeMotionRuntimeBridge() {
       consider(node);
     }
     return best;
+  }
+
+  // ⭐ POR QUE O HIT-TEST É REFEITO SEM `pointer-events` (2026-09-28).
+  //
+  // Uma subárvore com `pointer-events:none` NUNCA aparece em
+  // `elementsFromPoint`, então a busca de "texto vence" — que percorre as
+  // camadas da pilha — não consegue alcançá-la nem em princípio. Medido no
+  // farmminerals: o texto "Most fertilizers never make it to your plants" tem
+  // opacidade 1, o clique cai dentro do retângulo dele, e a pilha no ponto é
+  // [croptab-lottie, promo-hero-content, img.promo-hero-bg] — nenhuma contém o
+  // texto, que vive em `texts-animation-1-wrap` com `pe:none` em toda a cadeia.
+  // É o caso que motivou a regra do Adilson ("texto é prioridade, dando bypass
+  // em qualquer div e qualquer outra coisa que obstrua").
+  //
+  // ⚠️ A PRIMEIRA TENTATIVA ERA INSEGURA e o Astra a derrubou com razão: ela
+  // varria o documento inteiro procurando texto com `pe:none`, argumentando que
+  // "texto atrás de um modal tem pe:auto, logo não qualifica". Isso confunde duas
+  // propriedades independentes — `pointer-events` não diz nada sobre ordem de
+  // pintura. Reproduzido numa fixture: um texto `pe:none` atrás de um modal
+  // BRANCO OPACO era escolhido, enquanto o navegador acertava o modal.
+  //
+  // A correção não acrescenta uma segunda proteção de oclusão: ela faz o caso
+  // cair no caminho que JÁ tem proteção. Pergunta-se ao navegador qual é a pilha
+  // se `pointer-events` não existisse — e daí para frente tudo é o fluxo normal,
+  // com `occludesBeneath` parando a busca na primeira camada que PINTA. No caso
+  // do modal a parada acontece nele, e o texto de trás fica inalcançável por
+  // construção. De quebra, morre o percurso do documento inteiro (e o teto
+  // silencioso de 20.000 nós, que o Astra mostrou ser instável à ordem da
+  // árvore).
+  //
+  // A folha entra e sai dentro do MESMO bloco síncrono: nenhum quadro é
+  // desenhado e nenhum código do site roda no meio, então não há cintilação nem
+  // efeito observável além do próprio teste de acerto.
+  function hitStackIgnoringPointerEvents(x, y) {
+    if (typeof document.elementsFromPoint !== 'function') return [];
+    const folha = document.createElement('style');
+    folha.setAttribute('data-uncraft-hit-probe', '');
+    folha.textContent = '*{pointer-events:auto!important}';
+    const raiz = document.head || document.documentElement;
+    raiz.appendChild(folha);
+    let pilha;
+    try {
+      pilha = document.elementsFromPoint(x, y);
+    } finally {
+      folha.remove();
+    }
+    return pilha.filter((el) => el !== folha);
   }
 
   // A "ghost": an element that occupies the point but isn't meaningfully
@@ -6732,6 +6858,8 @@ function nativeMotionRuntimeBridge() {
     const x = event.clientX;
     const y = event.clientY;
     if (typeof x !== 'number' || typeof y !== 'number') return target;
+    // Mesma guarda do resolvedor de clique: API ausente degrada, não lança.
+    if (typeof document.elementsFromPoint !== 'function') return target;
     const stack = document.elementsFromPoint(x, y);
     for (const el of stack) {
       if (el === document.documentElement) continue;
@@ -6752,14 +6880,18 @@ function nativeMotionRuntimeBridge() {
       // only the first layer found nothing. Try each non-ghost layer in order,
       // bounded to a few layers; html/body are excluded (whole-page walk).
       const roots = [target];
-      const stack = document.elementsFromPoint(point.x, point.y);
+      const stack = hitStackIgnoringPointerEvents(point.x, point.y);
+      // Pilha COMO SE `pointer-events` não existisse (ver acima). Se a API não
+      // existir, a pilha vem vazia e a resolução se restringe à camada clicada —
+      // o comportamento anterior, nunca uma exceção (defeito pré-existente:
+      // sem guarda, 347 testes de um arquivo ficavam vermelhos).
       for (const el of stack) {
         if (el === document.documentElement || el === document.body) continue;
         if (!roots.includes(el) && !isSelectionGhost(el)) roots.push(el);
         // Foreground occlusion: once a layer that PAINTS at the point has been
         // searched, nothing beneath it is visible — stop there, so text behind
         // an opaque modal can never beat the modal (its own text still can).
-        if (occludesBeneath(el)) break;
+        if (occludesBeneath(el, point.x, point.y)) break;
         if (roots.length >= 6) break;
       }
       // Text wins: pick the best text candidate ACROSS every layer, not the first
