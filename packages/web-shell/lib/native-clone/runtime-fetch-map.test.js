@@ -64,6 +64,15 @@ describe('montarReplay + remendo', () => {
     expect(porUrlGet).toEqual({ 'https://site/dados': './_replay/id2' });
   });
 
+  // O XHR recebe o arquivo CRU; um envelope JSON reescrito carrega o marcador de
+  // origem que so o caminho do fetch resolve. Servir isso por XHR seria replay ERRADO.
+  it('envelope JSON com marcador de origem fica FORA do indice do XHR', () => {
+    const env = new Map([['idg', [{ metodo: 'GET', url: 'https://site/api.json', status: 200, statusText: '', headers: {}, contentType: 'application/json', bytes: Buffer.from('{"foto":"https://site/media/f.png"}') }]]]);
+    const { porUrlGet, arquivos } = montarReplay(env, mapa);
+    expect(Buffer.from(arquivos[0].body).toString('utf8')).toContain('__UNCRAFT_ORIGIN__');
+    expect(porUrlGet).toEqual({});
+  });
+
   it('sem envelope nao injeta nada', () => {
     expect(runtimeFetchShim({})).toBe('');
     expect(runtimeFetchShim(null)).toBe('');

@@ -69,6 +69,13 @@ export function montarReplay(envelopes, mapa) {
         } catch { body = env.bytes; }
       }
       arquivos.push({ path, body: new Uint8Array(body), contentType: env.contentType || undefined });
+      // ⚠️ O marcador de origem so e resolvido no caminho do FETCH (o remendo reconstroi
+      // a Response e troca o marcador). Um XHR GET recebe o ARQUIVO CRU pelo indice
+      // sincrono — com o marcador nao resolvido, o site leria "__UNCRAFT_ORIGIN__/..."
+      // como URL e quebraria. Envelope reescrito fica FORA do indice do XHR: prefere-se
+      // "nao replaya por XHR" (a chamada sai e e bloqueada, como antes) a "replaya
+      // errado". Residual declarado; corrigir exige interceptar responseText.
+      const carregaMarcador = Buffer.from(body).includes('__UNCRAFT_ORIGIN__');
       entradas.push({
         status: env.status, statusText: env.statusText || '', headers: env.headers || {}, path: `./${path}`,
         // Diagnosticável: o manifesto diz o que cada identidade era.
@@ -78,7 +85,7 @@ export function montarReplay(envelopes, mapa) {
       });
       // Índice síncrono para XHR: GET/HEAD sem corpo resolve pela URL.
       const m = String(env.metodo || 'GET').toUpperCase();
-      if (n === 0 && (m === 'GET' || m === 'HEAD')) porUrlGet[env.url] = `./${path}`;
+      if (n === 0 && (m === 'GET' || m === 'HEAD') && !carregaMarcador) porUrlGet[env.url] = `./${path}`;
     });
     manifesto[id] = entradas;
   }
