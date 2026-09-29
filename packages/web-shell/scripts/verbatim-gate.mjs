@@ -58,7 +58,10 @@ const DWELL_MS = 450;        // parada em cada ponto, igual para todos
 // SSIM. Agora a parada i acontece em t0 + i*PASSO_MS nos dois lados: quem
 // termina antes espera, e quem estoura o orçamento é DECLARADO atrasado, nunca
 // silenciosamente dessincronizado.
-const PASSO_MS = Math.max(1500, Number(process.env.UNCRAFT_GATE_PASSO_MS) || 6000);
+// O orçamento por parada tem que caber o custo do instrumento nos DOIS lados, senão a
+// cadência atua num só. Medido: custo médio 3,5 s (referência) e 6,1 s (candidato),
+// com picos de 16 s — 6 s era apertado demais.
+const PASSO_MS = Math.max(1500, Number(process.env.UNCRAFT_GATE_PASSO_MS) || 11000);
 const HOLD_MS = 2500;        // permanência no fim, para o rodapé animar
 const STEP_PX = 900;         // passo do scroll único e contínuo
 const MAX_STEPS = 40;        // teto de segurança
@@ -203,7 +206,13 @@ const PISO_CALIBRADO = false;
 const PISO_REFERENCIA = 0.5;   // a referência precisa se mover ao menos isto para o ponto ser julgável
 const PISO_MORTO = 0.05;       // praticamente parado: a assinatura do congelamento real
 const RAZAO_FRACA = 0.25;      // move-se, mas muito menos que a referência
-const TENTATIVAS_RAJADA = 3;
+// ⚠️ DUAS, não três. Medido em gsap.com: com três tentativas o candidato re-fazia a
+// rajada em 8 de 13 paradas e o custo médio do instrumento subiu para 6,1 s contra
+// 3,5 s da referência — a cadência então atuou só num lado e o portão de regime
+// (corretamente) recusou a comparação. Repetir é útil (às vezes a 2a passa), mas
+// repetir três vezes numa página consistentemente lenta só queima orçamento e
+// falha igual: melhor declarar não-comparável e seguir.
+const TENTATIVAS_RAJADA = 2;
 
 // ⭐ POR QUE NÃO SE DIVIDE PELO TEMPO (correção de 2026-09-28, 2ª rodada).
 //
@@ -224,7 +233,22 @@ const TENTATIVAS_RAJADA = 3;
 // A rajada é repetida até os intervalos caírem numa faixa estreita; o que não
 // conseguir sai marcado como não-comparável, e comparação de não-comparável é
 // INCONCLUSIVO — nunca um número convertido. Custa cobertura e devolve verdade.
-async function motionEnergy(page, probe) {
+// ⭐ A RAJADA CAPTURA POR CDP, NÃO PELA VIA DO PLAYWRIGHT (2026-09-29).
+// Medido nos mesmos alvos: `page.screenshot` levou 80–300 ms por quadro e
+// `Page.captureScreenshot` cru levou ~30 ms. Com a via caríssima, o intervalo real
+// da rajada estourava o alvo em 11 de 13 paradas e a trilha de movimento ficava com
+// ZERO pontos conclusivos — o instrumento não conseguia medir movimento porque
+// media a si mesmo. O CDP devolve base64 direto, sem Buffer no meio.
+// Fail-open: sem sessão CDP, cai na via do Playwright (mais lenta, mas funciona).
+async function capturaRapida(page, cdp) {
+  if (cdp) {
+    const r = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 60 });
+    return r.data;
+  }
+  return (await page.screenshot({ type: 'jpeg', quality: 60 })).toString('base64');
+}
+
+async function motionEnergy(page, probe, cdp) {
   let ultima = null;
   for (let tentativa = 1; tentativa <= TENTATIVAS_RAJADA; tentativa += 1) {
     const shots = [];
@@ -233,9 +257,7 @@ async function motionEnergy(page, probe) {
       if (i) await page.waitForTimeout(BURST_GAP_MS);
       // Carimbo LOGO ANTES: interessa o instante em que o quadro foi pedido.
       stamps.push(Date.now());
-      // JPEG só na rajada; os quadros de aceitação seguem PNG sem perda, porque
-      // é sobre eles que o SSIM decide.
-      shots.push((await page.screenshot({ type: 'jpeg', quality: 60 })).toString('base64'));
+      shots.push(await capturaRapida(page, cdp));
     }
     const gaps = stamps.slice(1).map((t, i) => t - stamps[i]);
     const gapMaxMs = Math.max(...gaps);
@@ -280,7 +302,7 @@ async function motionEnergy(page, probe) {
 }
 
 // Percorre a MESMA sequência de entrada e devolve as dimensões + os quadros.
-async function runTrajectory(page, { targets, outDir, allowNetwork, probe }) {
+async function runTrajectory(page, { targets, outDir, allowNetwork, probe, cdp }) {
   const frames = [];
   // Três relógios, porque eles respondem perguntas diferentes:
   //   tNav  — desde a navegação: inclui o tempo de carga, que é legitimamente
@@ -325,7 +347,7 @@ async function runTrajectory(page, { targets, outDir, allowNetwork, probe }) {
     const captureAtMs = Date.now() - t0;
     await page.screenshot({ path: file, type: 'png' });
     await accumulate();
-    const motion = probe ? await motionEnergy(page, probe).catch(() => null) : null;
+    const motion = probe ? await motionEnergy(page, probe, cdp).catch(() => null) : null;
     frames.push({
       index, target, observed,
       captureAtMs,
@@ -476,7 +498,9 @@ async function measure({ label, outDir, url, serveRoot, trajectory }) {
   const probe = await context.newPage();
   await probe.goto('about:blank');
 
-  const run = await runTrajectory(page, { targets, outDir, allowNetwork: !allowPrefix, probe });
+  // Sessão CDP na página julgada, só para a rajada de movimento (ver capturaRapida).
+  const cdp = await context.newCDPSession(page).catch(() => null);
+  const run = await runTrajectory(page, { targets, outDir, allowNetwork: !allowPrefix, probe, cdp });
   const hosts = (list) => [...new Set(list.map((u) => { try { return new URL(u).host; } catch { return u.slice(0, 40); } }))];
 
   const report = {
@@ -525,6 +549,14 @@ async function compare(refDir, candDir) {
   if (!mesmo(ref.trajectoryTargets, cand.trajectoryTargets)) falhasDeRegime.push('trajetória diferente: o candidato não percorreu os mesmos alvos da referência');
   if (ref.timing?.passoMs == null || cand.timing?.passoMs == null) falhasDeRegime.push(`cadência ausente num dos lados (referência ${ref.timing?.passoMs ?? 'ausente'}, candidato ${cand.timing?.passoMs ?? 'ausente'}) — relatório de versão anterior do portão`);
   else if (ref.timing.passoMs !== cand.timing.passoMs) falhasDeRegime.push(`cadência diferente: ${ref.timing.passoMs} vs ${cand.timing.passoMs}`);
+  // ⚠️ Cadência igual no PAPEL não é cadência igual de FATO. Medido em gsap.com: os
+  // dois lados com `passoMs: 6000`, a referência esperou em 5 paradas e o candidato
+  // em ZERO — ou seja de um lado o relógio governou o percurso e do outro governou o
+  // custo do instrumento. Comparar assim é comparar trajetórias diferentes, e o
+  // número só aparecia como enfeite no relatório.
+  const esperas = (r) => r.timing?.paradasQueEsperaram;
+  if (esperas(ref) == null || esperas(cand) == null) falhasDeRegime.push('contador de esperas ausente num dos lados — relatório de versão anterior do portão');
+  else if ((esperas(ref) === 0) !== (esperas(cand) === 0)) falhasDeRegime.push(`cadência atuou em um lado só (referência esperou ${esperas(ref)} paradas, candidato ${esperas(cand)}) — as duas trajetórias não são a mesma sequência de entrada`);
   const semCarimbo = (r) => r.frames.filter((f) => typeof f.captureAtMs !== 'number').length;
   if (semCarimbo(ref) || semCarimbo(cand)) falhasDeRegime.push(`quadros sem carimbo de captura (referência ${semCarimbo(ref)}, candidato ${semCarimbo(cand)}) — relatório de versão anterior do portão`);
   if (falhasDeRegime.length) {
