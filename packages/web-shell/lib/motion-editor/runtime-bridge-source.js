@@ -6287,6 +6287,15 @@ function nativeMotionRuntimeBridge() {
     const rect = element.getBoundingClientRect();
     const splitText = Boolean(element.matches(SPLIT_TOKEN) || element.querySelector(SPLIT_TOKEN));
     const canEditText = isEditableText(element);
+    // ⭐ O elemento É um link, ou está DENTRO de um? O inspetor usa isto para avisar
+    // por que clicar ali pode seguir o link em vez de selecionar (ver
+    // InteractionSwitches). `closest` cobre os dois casos de uma vez.
+    //
+    // ⚠️ A regra de "navegável" é a MESMA de `alvoDeNavegacao`, que decide a guarda:
+    // href vazio ou começando com `#` não troca o documento. Duas regras separadas
+    // divergiriam, e o aviso passaria a mentir em relação ao comportamento.
+    const ancora = typeof element.closest === 'function' ? element.closest('a[href],area[href]') : null;
+    const hrefDaAncora = ancora ? (ancora.getAttribute('href') || '') : '';
     return {
       id,
       tag: element.tagName.toLowerCase(),
@@ -6297,6 +6306,12 @@ function nativeMotionRuntimeBridge() {
       classes: Array.from(element.classList || []).filter((name) => !/^uncraft-/.test(name)),
       authoredId: element.id || '',
       webflowId: element.getAttribute('data-w-id') || '',
+      link: ancora ? {
+        href: hrefDaAncora,
+        // `true` = o próprio elemento é a âncora; `false` = está dentro dela.
+        proprio: ancora === element,
+        navegavel: Boolean(hrefDaAncora) && !hrefDaAncora.startsWith('#'),
+      } : null,
       rect: {
         x: Math.round(rect.x), y: Math.round(rect.y),
         width: Math.round(rect.width), height: Math.round(rect.height),

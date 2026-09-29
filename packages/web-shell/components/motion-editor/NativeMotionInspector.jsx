@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Code2 } from 'lucide-react';
+import { Code2, Link2 } from 'lucide-react';
 import {
   CodePanel,
   MotionPanel,
@@ -9,6 +9,8 @@ import {
 } from './NativeMotionEditor.jsx';
 import CustomControlsSection from './CustomControlsSection.jsx';
 import MotionOwnershipChoice from './MotionOwnershipChoice.jsx';
+import ShortcutKey from '../ShortcutKey.jsx';
+import { TECLA_DE_LINK } from './InteractionSwitches.jsx';
 import styles from './native-motion-canvas.module.css';
 
 const TABS = ['properties', 'motion', 'code'];
@@ -50,6 +52,34 @@ export default function NativeMotionInspector({
           <span className={styles.loopIndicator} data-motion-loop="true">Loop</span>
         )}
       </div>
+      {/* ⭐ PONTEIRO CONTEXTUAL DE LINK. Segue o padrão do indicador de Lock (item
+          168): aparece onde o problema aparece e explica, em vez de duplicar o
+          controle — a fonte de verdade continua sendo a chave da barra de topo.
+          Aparece sob o cabeçalho porque é sobre a SELEÇÃO, e por isso vale em
+          qualquer aba.
+          Dois estados, porque a informação útil é diferente: com links desligados o
+          que falta é saber COMO abrir um (a tecla); com links ligados o que falta é
+          saber POR QUE o clique não seleciona. */}
+      {selected?.link?.navegavel && (
+        <div
+          className={styles.linkNotice}
+          data-link-following={controller?.interaction?.links ? 'true' : undefined}
+          role="note"
+        >
+          <Link2 aria-hidden="true" />
+          {controller?.interaction?.links ? (
+            <span>
+              Following links is on — clicking {selected.link.proprio ? 'this link' : 'inside this link'} opens
+              it instead of selecting.
+            </span>
+          ) : (
+            <span>
+              {selected.link.proprio ? 'This is a link.' : 'Inside a link.'} Hold{' '}
+              <ShortcutKey>{TECLA_DE_LINK}</ShortcutKey> and click to open it.
+            </span>
+          )}
+        </div>
+      )}
       <div className={styles.panelTabs} role="tablist" aria-label="Inspector tabs">
         {TABS.map((tab) => {
           const label = tab[0].toUpperCase() + tab.slice(1);

@@ -584,3 +584,35 @@
     transition: none;
   }
 }
+
+/* ---- Ponteiro contextual de link no inspetor. Ver o comentário em
+   NativeMotionInspector.jsx: informa e ensina o atalho, sem duplicar o controle. */
+.linkNotice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 7px;
+  margin: 0 10px 8px;
+  padding: 8px 9px;
+  border: 1px solid var(--border-frosted);
+  border-radius: var(--radius-xs);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  /* Nunca cortar nem rolar na horizontal: o texto quebra em linhas (regra fixa). */
+  overflow-wrap: anywhere;
+}
+
+.linkNotice svg {
+  width: 13px;
+  height: 13px;
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+
+/* Links ligados é o estado em que o clique DEIXA de selecionar — o aviso pesa mais. */
+.linkNotice[data-link-following] {
+  border-color: var(--border-frosted-strong);
+  color: var(--text-primary);
+}

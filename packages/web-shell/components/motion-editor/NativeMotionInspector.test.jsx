@@ -289,3 +289,43 @@ describe('NativeMotionInspector', () => {
     expect(resetCustomControl).toHaveBeenCalledWith(ready);
   });
 });
+
+// ⭐ Ponteiro contextual de link (2026-09-29). Padrão do indicador de Lock: aparece
+// onde o problema aparece e EXPLICA, sem duplicar o controle da barra de topo.
+describe('ponteiro de link no inspetor', () => {
+  const comLink = (link, interaction = { links: false, hover: true }) => controllerFixture({
+    selected: { ...selected, link },
+    interaction,
+  });
+
+  it('não aparece quando a seleção não está em link algum', () => {
+    render(<NativeMotionInspector controller={comLink(null)} />);
+    expect(screen.queryByRole('note')).not.toBeInTheDocument();
+  });
+
+  it('não aparece para âncora interna, que não troca o documento', () => {
+    render(<NativeMotionInspector controller={comLink({ href: '#secao', proprio: true, navegavel: false })} />);
+    expect(screen.queryByRole('note')).not.toBeInTheDocument();
+  });
+
+  it('com links desligados, ensina o atalho — e a tecla vem pela convenção', () => {
+    const { container } = render(<NativeMotionInspector controller={comLink({ href: '/x', proprio: false, navegavel: true })} />);
+    const nota = screen.getByRole('note');
+    expect(nota.textContent).toContain('Inside a link.');
+    expect(nota.textContent).toContain('and click to open it');
+    expect([...container.querySelectorAll('kbd')].map((k) => k.textContent)).toContain('L');
+  });
+
+  it('distingue SER o link de estar DENTRO dele', () => {
+    render(<NativeMotionInspector controller={comLink({ href: '/x', proprio: true, navegavel: true })} />);
+    expect(screen.getByRole('note').textContent).toContain('This is a link.');
+  });
+
+  it('com links LIGADOS, avisa que o clique deixa de selecionar', () => {
+    render(<NativeMotionInspector controller={comLink({ href: '/x', proprio: false, navegavel: true }, { links: true, hover: true })} />);
+    const nota = screen.getByRole('note');
+    expect(nota.textContent).toContain('opens');
+    expect(nota.textContent).toContain('instead of selecting');
+    expect(nota).toHaveAttribute('data-link-following', 'true');
+  });
+});
