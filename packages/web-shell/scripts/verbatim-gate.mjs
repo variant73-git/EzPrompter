@@ -232,6 +232,8 @@ const PISO_MORTO = 0.0001;
 // de energia corresponde ao candidato percorrer ~13% do caminho da referência.
 // Ou seja o rótulo "fraco" só dispara em déficit grande — conservador de propósito.
 const RAZAO_FRACA = 0.25;
+// Pontos conclusivos necessários para a trilha de movimento emitir veredito.
+const MINIMO_CONCLUSIVOS = 3;
 // ⚠️ DUAS, não três. Medido em gsap.com: com três tentativas o candidato re-fazia a
 // rajada em 8 de 13 paradas e o custo médio do instrumento subiu para 6,1 s contra
 // 3,5 s da referência — a cadência então atuou só num lado e o portão de regime
@@ -595,6 +597,21 @@ async function compare(refDir, candDir) {
   const page = await browser.newPage();
   await page.addScriptTag({ content: `window.__ssim = ${computeSsimRgb.toString()};` });
 
+  // ⭐ DERIVA É JULGADA POR PONTO, NÃO POR EXECUÇÃO (2026-09-29). Medido: uma execução
+  // com deriva média de 17,9 s emitiu "MOVIMENTO MAIS FRACO" e a nota ao lado dizia
+  // que o piso não era veredito — quem lê o veredito não lê a nota. A re-execução deu
+  // média de 331 ms com UM ponto a 3,4 s: recusar a execução inteira pelo máximo
+  // jogaria fora doze pontos bons por um ruim. Então cada quadro cuja deriva estoura
+  // o limite sai do SSIM e do movimento como INCONCLUSIVO; o veredito fica sobre os
+  // que sobram, e só vale se sobrar a maioria.
+  const DERIVA_MAX_MS = 2000;
+  const derivaDoQuadro = new Map();
+  for (const rf of ref.frames) {
+    const cf = cand.frames.find((f) => f.index === rf.index);
+    if (cf && typeof rf.captureAtMs === 'number' && typeof cf.captureAtMs === 'number') derivaDoQuadro.set(rf.index, cf.captureAtMs - rf.captureAtMs);
+  }
+  const foraDeSincronia = (index) => Math.abs(derivaDoQuadro.get(index) ?? 0) > DERIVA_MAX_MS;
+
   const perFrame = [];
   for (const rf of ref.frames) {
     const cf = cand.frames.find((f) => f.index === rf.index);
@@ -609,12 +626,16 @@ async function compare(refDir, candDir) {
       const grab = (img) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); x.drawImage(img, 0, 0); return x.getImageData(0, 0, w, h).data; };
       return window.__ssim(grab(ia), grab(ib), w, h);
     }, [da.toString('base64'), db.toString('base64')]);
-    perFrame.push({ index: rf.index, target: rf.target, refObserved: rf.observed, candObserved: cf.observed, ssim: Number(ssim.toFixed(4)) });
+    perFrame.push({
+      index: rf.index, target: rf.target, refObserved: rf.observed, candObserved: cf.observed, ssim: Number(ssim.toFixed(4)),
+      ...(foraDeSincronia(rf.index) ? { excluido: true, note: `inconclusivo — deriva ${derivaDoQuadro.get(rf.index)} ms` } : {}),
+    });
   }
   await browser.close();
 
-  const measured = perFrame.filter((f) => typeof f.ssim === 'number');
-  const missing = perFrame.length - measured.length;
+  const measured = perFrame.filter((f) => typeof f.ssim === 'number' && !f.excluido);
+  const missing = perFrame.filter((f) => typeof f.ssim !== 'number').length;
+  const excluidosPorDeriva = perFrame.filter((f) => f.excluido).length;
   const out = {
     reference: ref.label, candidate: cand.label,
     // Quando os dois lados são execuções de REFERÊNCIA, esta comparação é o
@@ -638,7 +659,13 @@ async function compare(refDir, candDir) {
         ? `${Math.round(100 * ref.editability.reachable / ref.editability.inViewport)}%` : null,
     },
     errors: cand.errors,
-    ssim: { perFrame, min: measured.length ? Math.min(...measured.map((f) => f.ssim)) : null, framesMissing: missing },
+    ssim: {
+      perFrame,
+      min: measured.length ? Math.min(...measured.map((f) => f.ssim)) : null,
+      framesMissing: missing,
+      quadrosExcluidosPorDeriva: excluidosPorDeriva,
+      quadrosNoVeredito: measured.length,
+    },
     // DERIVA DE TEMPO — reportada ANTES do SSIM ser lido como fidelidade.
     // Numa página dirigida por rolagem, o mesmo alvo em px alcançado em
     // instantes diferentes compara estados de animação diferentes. Enquanto a
@@ -707,6 +734,7 @@ async function compare(refDir, candDir) {
           gapRefMs: r?.gapMaxMs ?? null, gapCandMs: c?.gapMaxMs ?? null,
         };
         if (!r || !c) return { ...base, faixa: 'sem-medida' };
+        if (foraDeSincronia(rf.index)) return { ...base, faixa: 'inconclusivo-deriva', derivaMs: derivaDoQuadro.get(rf.index) };
         if (r.formatoAntigo || c.formatoAntigo) return { ...base, faixa: 'formato-antigo' };
         if (!r.comparavel || !c.comparavel) return { ...base, faixa: 'inconclusivo-intervalo-longo' };
         const maior = Math.max(r.gapMaxMs, c.gapMaxMs); const menor = Math.max(1, Math.min(r.gapMaxMs, c.gapMaxMs));
@@ -723,7 +751,7 @@ async function compare(refDir, candDir) {
       // fala. Se for pequeno, o instrumento não julgou a página — e dizer isso é
       // obrigação dele, não nota de rodapé.
       const inconclusivos = conta('sem-medida') + conta('formato-antigo')
-        + conta('inconclusivo-intervalo-longo') + conta('inconclusivo-intervalos-desiguais');
+        + conta('inconclusivo-intervalo-longo') + conta('inconclusivo-intervalos-desiguais') + conta('inconclusivo-deriva');
       return {
         unidade: 'diferenca media por canal de pixel entre quadros consecutivos, em intervalos VERIFICADOS como comparaveis (sem normalizacao temporal)',
         limiares: { pisoReferencia: PISO_REFERENCIA, pisoMorto: PISO_MORTO, razaoFraca: RAZAO_FRACA, gapAlvoMs: GAP_ALVO_MS, fatorGap: FATOR_GAP },
@@ -738,10 +766,16 @@ async function compare(refDir, candDir) {
           formatoAntigo: conta('formato-antigo'),
           intervaloLongo: conta('inconclusivo-intervalo-longo'),
           intervalosDesiguais: conta('inconclusivo-intervalos-desiguais'),
+          deriva: conta('inconclusivo-deriva'),
         },
         pontosConclusivos: conclusivos,
+        // ⚠️ MÍNIMO DE PONTOS. Medido: duas execuções do MESMO pacote, com 2 pontos
+        // conclusivos cada, deram "MAIS FRACO" numa e "PRESENTE" na outra. Veredito
+        // sobre 2 pontos é moeda. Abaixo de MINIMO_CONCLUSIVOS a trilha diz que não
+        // sabe — e diz por quê — em vez de sortear.
         veredito: !PISO_CALIBRADO ? 'NAO CALIBRADO'
           : conclusivos === 0 ? 'INCONCLUSIVO — nenhum ponto com medida valida e referencia em movimento'
+          : conclusivos < MINIMO_CONCLUSIVOS ? `INCONCLUSIVO — so ${conclusivos} ponto(s) conclusivo(s); o minimo e ${MINIMO_CONCLUSIVOS}. Pagina com pouca animacao ou muitas paradas fora de sincronia`
           : conta('congelado') > 0 ? 'CONGELAMENTO DETECTADO'
           : conta('fraco') > 0 ? 'MOVIMENTO MAIS FRACO QUE A REFERENCIA'
           : 'MOVIMENTO PRESENTE nos pontos conclusivos',
@@ -751,6 +785,13 @@ async function compare(refDir, candDir) {
       };
     })(),
   };
+  out.comparacaoCruzadaValida = excluidosPorDeriva * 2 < perFrame.length;
+  if (!out.comparacaoCruzadaValida) {
+    const motivo = `INCONCLUSIVO — ${excluidosPorDeriva} de ${perFrame.length} quadros fora de sincronia (> ${DERIVA_MAX_MS} ms); repetir sem outra carga na maquina`;
+    out.ssim = { ...out.ssim, veredito: motivo };
+    out.motion = { ...out.motion, veredito: motivo };
+    process.exitCode = 2;
+  }
   console.log(JSON.stringify(out, null, 2));
   return out;
 }
