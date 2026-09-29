@@ -274,6 +274,15 @@ export async function captureNativeBundle(url, opts = {}) {
   // Geração do documento principal por URL (ver o handler): recarregar a
   // mesma URL substitui o documento anterior mesmo com o corpo dele em voo.
   const geracao = new Map();
+  // ⭐ PEDIDOS QUE O NAVEGADOR RECUSOU (2026-09-28). A captura só escutava
+  // `response`, então um recurso cuja resposta o próprio Chrome bloqueia era
+  // INVISÍVEL: nada a gravar, nenhum descarte nomeado, e a referência ficava
+  // absoluta no HTML — o clone herdava uma chamada externa condenada a falhar
+  // para sempre. Medido no farmminerals: dois `<script>` do Webflow com
+  // separador percent-encoded (`%2F`) que o Chrome recusa por ORB (Opaque
+  // Response Blocking) NA PÁGINA VIVA TAMBÉM. Eles nunca executam em lugar
+  // nenhum; o clone só herdava o pedido morto.
+  const recusados = new Map();   // url -> { erro, tipo }
   // ⚠️ O `Promise.race` de fora rejeita, mas nada cancelava a captura — o
   // navegador seguia rolando por horas numa página gigante. Achado P0 do Sol.
   let cancelado = false;
@@ -287,6 +296,16 @@ export async function captureNativeBundle(url, opts = {}) {
     const context = emprestada ? session.context : await browser.newContext({ viewport });
     const page = emprestada ? session.page : await context.newPage();
     if (emprestada) await page.setViewportSize(viewport).catch(() => {});
+
+    page.on('requestfailed', (req) => {
+      const u = req.url();
+      if (!/^https?:/i.test(u)) return;
+      const erro = req.failure()?.errorText || 'desconhecido';
+      // Só o PRIMEIRO registro por URL: uma retentativa que falhe de novo não
+      // muda o veredito, e uma que tenha sucesso aparece em `recursos` — é lá
+      // que a decisão final é tomada, nunca aqui.
+      if (!recusados.has(u)) recusados.set(u, { erro, tipo: req.resourceType() });
+    });
 
     page.on('response', (res) => {
       const tarefa = (async () => {
@@ -844,6 +863,7 @@ export async function captureNativeBundle(url, opts = {}) {
     }
 
     for (const [u, v] of [...recursos]) if (!v) { recursos.delete(u); descartados.push({ u, motivo: 'corpo nao chegou' }); }
+
     // SNAPSHOT IMUTÁVEL (Sol r2 #2, 2026-08-20): daqui em diante `mapa`,
     // reescrita e montagem leem o MESMO congelado de entradas completas. Uma
     // resposta tardia (mais lenta que o timeout do closing-refs) que chegue
@@ -989,6 +1009,47 @@ export async function captureNativeBundle(url, opts = {}) {
         refsExtras,
         // Nada some em silêncio: o que não coube é nomeado.
         descartados: descartados.slice(0, 40),
+        // ⭐ PEDIDOS QUE FALHARAM (2026-09-28). Antes disto a captura só
+        // escutava `response`, então um recurso cujo pedido falha era
+        // INVISÍVEL: nada gravado, nenhum descarte nomeado, e a referência
+        // ficava absoluta no HTML — o clone herdava uma chamada condenada.
+        //
+        // NÃO se fabrica destino para eles. Uma primeira versão gravava um
+        // arquivo VAZIO no lugar, e a auditoria (Astra + revisor Claude,
+        // convergentes) derrubou por três razões medidas: (1) um 200 vazio faz
+        // o `<script>` disparar `load` onde ao vivo dispara `error`, então um
+        // site com caminho de erro muda de comportamento — o oposto de
+        // preservar; (2) o módulo já tem o invariante deliberado de que
+        // referência localizada sem asset é proibida ("pior que o crash"),
+        // então fabricar destino contraria decisão existente; (3) se o pedido
+        // bloqueado fosse o DOCUMENTO de entrada, o clone sairia com
+        // `index.html` de zero byte e PASSARIA, em vez de estourar
+        // `native_bundle_entry_not_captured`.
+        //
+        // Então a referência externa fica como está, e o clone falha
+        // exactamente onde o site falha — fidelidade, inclusive na falha. O que
+        // muda é que a falha passa a ser DITA.
+        //
+        // ⚠️ A separação é o ponto: `geracao` recebe toda URL que teve resposta
+        // e passou o dedup, então `geracao.has(u)` distingue as duas classes que
+        // de outro modo se confundem — o purge de entradas sem corpo roda ANTES
+        // daqui e apagaria a evidência. "Houve resposta e o corpo não entrou" é
+        // falha NOSSA (repescagem, teto, tardia); "nunca houve resposta" é o
+        // navegador ou a rede recusando. Tratar as duas como a mesma coisa
+        // esconderia defeito nosso atrás de recusa alheia.
+        pedidosQueFalharam: (() => {
+          const lista = [...recusados].map(([u, info]) => ({ u, erro: info.erro, tipo: info.tipo }));
+          const nossa = lista.filter((x) => geracao.has(x.u));
+          const alheia = lista.filter((x) => !geracao.has(x.u));
+          return {
+            total: lista.length,
+            // Amostra COM NOMES, não contagem anônima: uma contagem sem nomes é
+            // silêncio, e foi exatamente o que obrigou a reconstruir por fora o
+            // diagnóstico das 264 tentativas externas.
+            recusadosPelaRedeOuNavegador: { n: alheia.length, amostra: alheia.slice(0, 20) },
+            houveRespostaMasNaoEntrou: { n: nossa.length, amostra: nossa.slice(0, 20) },
+          };
+        })(),
         totalDescartados: descartados.length,
         // ⭐ Contagem sobre a lista INTEIRA, antes do corte da amostra. Sem
         // ela, quem lê contaria os 40 guardados e apresentaria "100 perdidos:
