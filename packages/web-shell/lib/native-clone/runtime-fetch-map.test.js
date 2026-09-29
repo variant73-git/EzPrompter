@@ -1,4 +1,5 @@
 import { webcrypto } from 'node:crypto';
+import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { montarReplay, runtimeFetchShim } from './runtime-fetch-map.js';
 import { cabecalhosDeReplay, identidadeDeRequisicao } from './capture-bundle.js';
@@ -76,5 +77,51 @@ describe('montarReplay + remendo', () => {
     expect(shim).toContain('new Response(saida, { status: env.status');
     expect(shim).toContain('multipart');                 // FormData passa intacto
     expect(shim).toContain("m === 'GET' || m === 'HEAD'"); // XHR so sem corpo
+  });
+});
+
+// ⚠️ A sonda do Astra, reproduzida: o remendo rodando numa sandbox com um fetch
+// original que FALHA na rede. A 1a versao chamava o original DUAS vezes (o catch
+// envolvia o proprio passthrough) — para um POST real, envio duplo.
+describe('o remendo rodando de verdade (sandbox)', () => {
+  function sandbox(manifesto, fetchOriginal) {
+    const shim = runtimeFetchShim(manifesto);
+    const js = shim.slice(shim.indexOf('>') + 1, shim.lastIndexOf('</script>'));
+    function XHR() {} XHR.prototype.open = function () {};
+    const ctx = {
+      window: { crypto: webcrypto, fetch: fetchOriginal }, Request, Response, TextEncoder, Uint8Array, URL,
+      document: { baseURI: 'https://clone/' }, location: { href: 'https://clone/', origin: 'https://clone' }, XMLHttpRequest: XHR,
+    };
+    ctx.window.window = ctx.window; ctx.window.document = ctx.document; ctx.window.location = ctx.location; ctx.window.XMLHttpRequest = XHR;
+    vm.runInNewContext(js, ctx);
+    return ctx.window;
+  }
+  const manifesto = { x: [{ path: './x', status: 200, statusText: 'OK', headers: {}, texto: false }] };
+
+  it('chamada NAO mapeada que falha na rede: o original e chamado UMA vez e a falha chega ao site', async () => {
+    let n = 0;
+    const w = sandbox(manifesto, async () => { n += 1; throw new TypeError('network down'); });
+    await expect(w.fetch('https://origin/api', { method: 'POST', body: 'x' })).rejects.toThrow('network down');
+    expect(n).toBe(1);
+  });
+
+  it('Request COM corpo nao mapeado passa intacto, com o corpo ainda utilizavel', async () => {
+    let recebido = null;
+    const w = sandbox(manifesto, async (entrada) => { recebido = entrada; return new Response('ok'); });
+    const req = new Request('https://origin/api', { method: 'POST', body: 'abc' });
+    const r = await w.fetch(req);
+    expect(await r.text()).toBe('ok');
+    expect(recebido).toBe(req);            // o MESMO objeto, nao uma copia
+    expect(req.bodyUsed).toBe(false);      // e o corpo nao foi consumido pelo remendo
+  });
+
+  it('chamada MAPEADA: o original e chamado so para o envelope LOCAL, uma vez', async () => {
+    const chamadas = [];
+    const w = sandbox(manifesto, async (u) => { chamadas.push(String(u instanceof Request ? u.url : u)); return new Response(new Uint8Array([1, 2, 3])); });
+    // identidade 'x' e falsa de proposito; o que se testa aqui e que uma identidade
+    // NAO encontrada nao gera duas chamadas — a mapeada de verdade e testada no
+    // navegador (gsap.com), onde o hash e calculado dos dois lados.
+    await w.fetch('https://origin/outra');
+    expect(chamadas).toEqual(['https://origin/outra']);
   });
 });

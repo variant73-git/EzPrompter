@@ -116,16 +116,31 @@ export function runtimeFetchShim(manifesto, porUrlGet = {}) {
   if (typeof fOriginal === 'function' && subtle) {
     window.fetch = function (entrada, init) {
       var args = arguments, self = this;
+      // O passthrough e chamado NO MAXIMO UMA VEZ, e sua rejeicao nunca e capturada
+      // por este remendo: a falha de rede e do site, e tem que chegar ao site como
+      // chegaria sem nos. A 1a versao envolvia tudo num catch — uma chamada NAO
+      // mapeada que falhava na rede disparava um SEGUNDO passthrough (sonda do
+      // Astra: n=2), e para um POST que alcance servidor real isso e envio duplo.
+      var promessaPassthrough = null;
+      var passthrough = function () {
+        if (!promessaPassthrough) promessaPassthrough = fOriginal.apply(self, args);
+        return promessaPassthrough;
+      };
       var req;
-      try { req = new Request(entrada, init); } catch (e) { return fOriginal.apply(self, args); }
+      try {
+        // Construir um Request a partir de outro Request CONSOME o corpo do original;
+        // o passthrough depois receberia um corpo ja usado. Clona-se ANTES.
+        var fonte = (typeof Request !== 'undefined' && entrada instanceof Request) ? entrada.clone() : entrada;
+        req = new Request(fonte, init);
+      } catch (e) { return passthrough(); }
       // FormData/multipart nunca bate (fronteira aleatoria): passa intacto.
       var ct = req.headers.get('content-type') || '';
-      if (/multipart\\/form-data/i.test(ct)) return fOriginal.apply(self, args);
-      return req.clone().arrayBuffer().then(function (corpo) {
+      if (/multipart\\/form-data/i.test(ct)) return passthrough();
+      return req.arrayBuffer().then(function (corpo) {
         return identidade(req.method, req.url, corpo);
       }).then(function (id) {
         var lista = M[id];
-        if (!lista || !lista.length) return fOriginal.apply(self, args);
+        if (!lista || !lista.length) return passthrough();
         var n = vezes[id] || 0; vezes[id] = n + 1;
         var env = lista[Math.min(n, lista.length - 1)];
         return fOriginal.call(window, local(env.path), { cache: 'no-store' }).then(function (r) {
@@ -135,8 +150,8 @@ export function runtimeFetchShim(manifesto, porUrlGet = {}) {
           // a URL continua absoluta http(s), que e o que o codigo do site testa.
           var saida = env.texto ? corpo.split('__UNCRAFT_ORIGIN__').join(location.origin) : corpo;
           return new Response(saida, { status: env.status, statusText: env.statusText || '', headers: env.headers || {} });
-        });
-      }).catch(function () { return fOriginal.apply(self, args); });
+        }, passthrough);   // so a falha ao ler o ENVELOPE local cai no passthrough
+      }, passthrough);     // so a falha na fase de IDENTIDADE cai no passthrough
     };
   }
   var abrirOriginal = XMLHttpRequest.prototype.open;
