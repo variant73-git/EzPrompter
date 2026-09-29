@@ -177,31 +177,31 @@ describe('corpo JSON (dado consumido em runtime)', () => {
     map: mapa(),
   });
 
-  it('reconhece JSON pelo content-type, mesmo com extensao enganosa', () => {
-    // O caso real: a resposta da API do gsap.com chega como `.php` com JSON dentro.
-    expect(referenceKindFor('community/index.93580e97.php', 'application/json')).toBe('json');
-    expect(referenceKindFor('dados.json', '')).toBe('json');
+  it('JSON estatico NAO e reconhecido: so o envelope de replay e reescrito', () => {
+    expect(referenceKindFor('community/index.93580e97.php', 'application/json')).toBeNull();
+    expect(referenceKindFor('dados.json', '')).toBeNull();
     expect(referenceKindFor('pagina.php', 'text/html')).toBe('html');
   });
 
   it('acha a URL apesar do escape de barra do JSON, e devolve o mesmo escape', () => {
     const saida = reescreve('{"foto": "https:\\/\\/site.com\\/media\\/foto.png"}');
-    expect(saida).toContain('.\\/media\\/foto.png');
-    expect(JSON.parse(saida).foto).toBe('./media/foto.png');
+    expect(saida).toContain('__UNCRAFT_ORIGIN__\\/media\\/foto.png');
+    expect(JSON.parse(saida).foto).toBe('__UNCRAFT_ORIGIN__/media/foto.png');
   });
 
   it('tambem funciona sem escape (JSON nao obriga a escapar barra)', () => {
     const saida = reescreve('{"foto": "https://site.com/media/foto.png"}');
-    expect(JSON.parse(saida).foto).toBe('./media/foto.png');
+    expect(JSON.parse(saida).foto).toBe('__UNCRAFT_ORIGIN__/media/foto.png');
     expect(saida).not.toContain('\\/');
   });
 
-  it('o caminho e relativo a RAIZ, nao a pasta do JSON', () => {
-    // Quem resolve o caminho e quem CONSOME o dado (o script poe em img.src), e essa
-    // resolucao acontece contra o DOCUMENTO. Relativo a `api/` apontaria errado.
+  it('o valor continua PARECENDO URL absoluta (marcador de origem), nunca caminho relativo', () => {
+    // Medido: o site faz `new URL(photo)` e cai em JSON.parse se nao for http(s). Um
+    // `./media/...` muda o TIPO do valor e quebra; o marcador vira `location.origin`
+    // na hora de servir.
     const saida = reescreve('{"foto": "https://site.com/media/foto.png"}');
-    expect(JSON.parse(saida).foto).toBe('./media/foto.png');
-    expect(JSON.parse(saida).foto).not.toBe('../media/foto.png');
+    expect(JSON.parse(saida).foto).toMatch(/^__UNCRAFT_ORIGIN__\/media\/foto\.png$/);
+    expect(JSON.parse(saida).foto).not.toMatch(/^\.\.?\//);
   });
 
   it('nao toca texto que apenas se parece com URL nem URL nao capturada', () => {
@@ -212,7 +212,7 @@ describe('corpo JSON (dado consumido em runtime)', () => {
   it('mantem o JSON parseavel quando ha varias ocorrencias', () => {
     const saida = reescreve('{"a": "https://site.com/media/foto.png", "b": "https://cdn.outro.com/x.js"}');
     const o = JSON.parse(saida);
-    expect(o.a).toBe('./media/foto.png');
-    expect(o.b).toBe('./_ext/cdn.outro.com/x.js');
+    expect(o.a).toBe('__UNCRAFT_ORIGIN__/media/foto.png');
+    expect(o.b).toBe('__UNCRAFT_ORIGIN__/_ext/cdn.outro.com/x.js');
   });
 });

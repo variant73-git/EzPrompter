@@ -1,68 +1,80 @@
+import { webcrypto } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { runtimeFetchMap, runtimeFetchShim } from './runtime-fetch-map.js';
+import { montarReplay, runtimeFetchShim } from './runtime-fetch-map.js';
+import { cabecalhosDeReplay, identidadeDeRequisicao } from './capture-bundle.js';
 
-describe('mapa de fetch do runtime', () => {
-  it('mapeia SÓ respostas de fetch/xhr que entraram no pacote', () => {
-    const congelados = new Map([
-      ['https://site/api/dados', { tipo: 'fetch' }],
-      ['https://site/api/xhr', { tipo: 'xhr' }],
-      ['https://site/hero.png', { tipo: 'image' }],     // asset comum: a reescrita estática já alcança
-      ['https://site/api/sem-caminho', { tipo: 'fetch' }], // capturado mas fora do pacote
-      ['https://site/doc', { tipo: 'document' }],
-    ]);
-    const caminhos = new Map([
-      ['https://site/api/dados', 'api/dados.json'],
-      ['https://site/api/xhr', 'api/xhr.json'],
-      ['https://site/hero.png', 'hero.png'],
-      ['https://site/doc', 'index.html'],
-    ]);
-    expect(runtimeFetchMap(congelados, caminhos)).toEqual({
-      'https://site/api/dados': './api/dados.json',
-      'https://site/api/xhr': './api/xhr.json',
-    });
+// A formula do NAVEGADOR, transcrita do remendo, rodando sobre o SubtleCrypto do Node.
+async function identidadeNoNavegador(metodo, url, corpo) {
+  const subtle = webcrypto.subtle;
+  const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const h = await subtle.digest('SHA-256', corpo);
+  const texto = `${String(metodo || 'GET').toUpperCase()}\n${url}\n${hex(h)}`;
+  return hex(await subtle.digest('SHA-256', new TextEncoder().encode(texto)));
+}
+
+describe('identidade de requisição', () => {
+  it('a formula do Node e a do navegador dao o MESMO id (paridade)', async () => {
+    const corpo = Buffer.from('{"query":"{core{me{photo}}}"}', 'utf8');
+    const url = 'https://site/community/index.php?app=x&controller=api';
+    const node = identidadeDeRequisicao('post', url, corpo);
+    const pagina = await identidadeNoNavegador('POST', url, new Uint8Array(corpo));
+    expect(node).toBe(pagina);
+    // GET sem corpo tambem.
+    expect(identidadeDeRequisicao('GET', url, Buffer.alloc(0))).toBe(await identidadeNoNavegador('GET', url, new Uint8Array(0)));
   });
 
-  it('não injeta nada quando não há chamada de runtime', () => {
+  it('corpo diferente na mesma URL = identidade diferente (o que o mapa por URL nao sabia)', () => {
+    const url = 'https://site/api';
+    expect(identidadeDeRequisicao('POST', url, Buffer.from('a'))).not.toBe(identidadeDeRequisicao('POST', url, Buffer.from('b')));
+    expect(identidadeDeRequisicao('POST', url, Buffer.from('a'))).not.toBe(identidadeDeRequisicao('GET', url, Buffer.from('a')));
+  });
+
+  it('cabeçalhos de segredo e de transporte ficam fora; os de conteudo entram', () => {
+    const h = cabecalhosDeReplay({ 'Content-Type': 'application/json', 'Set-Cookie': 'a=b', 'X-Csrf-Token': 't', 'Content-Length': '9', 'Content-Encoding': 'br' });
+    expect(h).toEqual({ 'content-type': 'application/json', 'x-csrf-token': 't' });
+  });
+});
+
+describe('montarReplay + remendo', () => {
+  const envelopes = () => new Map([
+    ['id1', [
+      { metodo: 'POST', url: 'https://site/api', status: 200, statusText: 'OK', headers: { 'content-type': 'application/json' }, contentType: 'application/json', bytes: Buffer.from('{"foto":"https://site/media/f.png"}') },
+      { metodo: 'POST', url: 'https://site/api', status: 201, statusText: 'Created', headers: {}, contentType: 'application/json', bytes: Buffer.from('{"n":2}') },
+    ]],
+    ['id2', [{ metodo: 'GET', url: 'https://site/dados', status: 200, statusText: '', headers: {}, contentType: 'text/plain', bytes: Buffer.from('ola') }]],
+  ]);
+  const mapa = new Map([['https://site/media/f.png', 'media/f.png']]);
+
+  it('cada envelope vira um arquivo, a mesma identidade repetida numera', () => {
+    const { arquivos, manifesto } = montarReplay(envelopes(), mapa);
+    expect(arquivos.map((a) => a.path)).toEqual(['_replay/id1', '_replay/id1.1', '_replay/id2']);
+    expect(manifesto.id1.map((e) => e.status)).toEqual([200, 201]);
+    expect(manifesto.id1[1].path).toBe('./_replay/id1.1');
+  });
+
+  it('corpo JSON do envelope sai REESCRITO (e o que faz img.src ficar local)', () => {
+    const { arquivos } = montarReplay(envelopes(), mapa);
+    expect(JSON.parse(Buffer.from(arquivos[0].body).toString('utf8')).foto).toBe('__UNCRAFT_ORIGIN__/media/f.png');
+    expect(Buffer.from(arquivos[2].body).toString('utf8')).toBe('ola');   // texto nao-JSON intacto
+  });
+
+  it('GET sem corpo entra no indice sincrono do XHR; POST nao', () => {
+    const { porUrlGet } = montarReplay(envelopes(), mapa);
+    expect(porUrlGet).toEqual({ 'https://site/dados': './_replay/id2' });
+  });
+
+  it('sem envelope nao injeta nada', () => {
     expect(runtimeFetchShim({})).toBe('');
     expect(runtimeFetchShim(null)).toBe('');
   });
 
-  it('o script não pode fechar a própria tag nem carregar separador de linha cru', () => {
-    // Uma URL com `</script` dentro viraria fim de tag e o resto do documento
-    // passaria a ser tratado como marcação.
-    const shim = runtimeFetchShim({ 'https://site/a</script><b>': './a.json' });
-    expect(shim).toContain('<script data-uncraft-runtime-fetch-map>');
+  it('o script nao fecha a propria tag e reconstroi a Response com status e cabecalhos', () => {
+    const { manifesto } = montarReplay(new Map([['x', [{ metodo: 'POST', url: 'https://s/a</script><b>', status: 418, statusText: 'teapot', headers: { 'x-k': 'v' }, contentType: 'text/plain', bytes: Buffer.from('') }]]]), new Map());
+    const shim = runtimeFetchShim(manifesto);
     expect(shim.slice(shim.indexOf('>') + 1)).not.toContain('</script><b>');
-    expect(shim).toContain('\\u003c/script');
-    expect(shim).not.toContain('\u2028');
-    expect(shim).not.toContain('\u2029');
-  });
-
-  // ⚠️ Achado do Astra: a 1a versao dizia no comentario que "Request com corpo passa
-  // intacto" e era FALSO — a guarda existia so no ramo do objeto Request, enquanto a
-  // forma comum `fetch(url, { method: 'POST', body })` passa a URL como STRING e era
-  // traduzida. Metodo e corpo colapsavam num arquivo estatico, e converter outra
-  // origem em mesma origem remove a fronteira CORS.
-  it('só traduz GET/HEAD sem corpo, lendo o método do init E do Request', () => {
-    const shim = runtimeFetchShim({ 'https://site/api': './api.json' });
-    expect(shim).toContain("m === 'GET' || m === 'HEAD'");
-    expect(shim).toContain('init && init.method');       // o init vence, como na plataforma
-    expect(shim).toContain('init && init.body != null'); // corpo no init tambem barra
-    expect(shim).toContain('seguro(metodo)');            // XHR usa a mesma regra
-    // Nao forca mais mode/credentials: mexer nisso muda semantica observavel.
-    expect(shim).not.toContain("mode: 'same-origin'");
-    expect(shim).not.toContain("credentials: 'same-origin'");
-  });
-
-  it('resolve o caminho local contra a URL do documento, não contra <base href>', () => {
-    const shim = runtimeFetchShim({ 'https://site/api': './api.json' });
-    expect(shim).toContain('new URL(M[abs], location.href).href');
-  });
-
-  it('o script é idempotente e protege a página de si mesmo', () => {
-    const shim = runtimeFetchShim({ 'https://site/api': './api.json' });
-    expect(shim).toContain('__uncraftFetchMapped');          // não remenda duas vezes
-    expect(shim).toContain('XMLHttpRequest.prototype.open'); // XHR também
-    expect(shim).toContain('catch (e)');                     // nunca derruba a página
+    expect(shim).toContain("split('__UNCRAFT_ORIGIN__').join(location.origin)");
+    expect(shim).toContain('new Response(saida, { status: env.status');
+    expect(shim).toContain('multipart');                 // FormData passa intacto
+    expect(shim).toContain("m === 'GET' || m === 'HEAD'"); // XHR so sem corpo
   });
 });

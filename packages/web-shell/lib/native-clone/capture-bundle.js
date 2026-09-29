@@ -29,7 +29,7 @@ import { ChallengeRequiredError, detectChallengePage } from '../snapshot.js';
 import { criarContabilidade } from './byte-ledger.js';
 import { parseContentRange } from './byte-range.js';
 import { referenceKindFor, rewriteDocumentReferences } from './rewrite-references.js';
-import { runtimeFetchMap, runtimeFetchShim } from './runtime-fetch-map.js';
+import { montarReplay, runtimeFetchShim } from './runtime-fetch-map.js';
 import { leadingDoctypeEnd } from './doctype-anchor.js';
 
 /**
@@ -106,6 +106,28 @@ const COLETA_TETO_MS = Math.max(200, Number(process.env.UNCRAFT_CAPTURE_COLLECT_
 const CHALLENGE_TOLERANCIA_MS = 5_000;
 
 const sha256 = (bytes) => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+const hexSha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+// ⭐ IDENTIDADE DE REQUISIÇÃO para replay (2026-09-29). A lição do gsap.com: a
+// chamada de runtime é POST com corpo GraphQL, e um mapa por URL não pode
+// representá-la (a mesma URL com outro corpo devolve outra coisa). A identidade é
+// método + URL + hash do corpo, e a MESMA fórmula roda no navegador (SubtleCrypto)
+// — qualquer divergência entre os dois lados vira "não encontrado", nunca replay
+// errado. Cabeçalhos que carregam segredo ou são de transporte ficam de fora.
+export function identidadeDeRequisicao(metodo, url, corpo) {
+  const corpoHash = hexSha256(corpo && corpo.length ? corpo : Buffer.alloc(0));
+  return hexSha256(`${String(metodo || 'GET').toUpperCase()}\n${url}\n${corpoHash}`);
+}
+const CABECALHO_PROIBIDO = /^(set-cookie|cookie|authorization|proxy-authorization|transfer-encoding|connection|content-length|content-encoding|keep-alive|strict-transport-security)$/i;
+export function cabecalhosDeReplay(headers) {
+  const saida = {};
+  for (const [nome, valor] of Object.entries(headers || {})) {
+    if (CABECALHO_PROIBIDO.test(nome)) continue;
+    saida[nome.toLowerCase()] = String(valor);
+  }
+  return saida;
+}
+const ENVELOPE_MAX_BYTES = 4 * 1024 * 1024;
 
 /**
  * Caminho de bundle a partir de uma URL absoluta. Determinístico e sem colisão
@@ -285,6 +307,10 @@ export async function captureNativeBundle(url, opts = {}) {
   // Response Blocking) NA PÁGINA VIVA TAMBÉM. Eles nunca executam em lugar
   // nenhum; o clone só herdava o pedido morto.
   const recusados = new Map();   // url -> { erro, tipo }
+  // Envelopes de fetch/XHR por IDENTIDADE (método+URL+corpo). Lista por identidade:
+  // a mesma chamada repetida pode receber respostas diferentes, e o replay entrega a
+  // n-ésima na ordem em que foram vistas.
+  const envelopes = new Map();   // identidade -> [{ metodo, url, status, statusText, headers, contentType, bytes }]
   // ⚠️ O `Promise.race` de fora rejeita, mas nada cancelava a captura — o
   // navegador seguia rolando por horas numa página gigante. Achado P0 do Sol.
   let cancelado = false;
@@ -464,6 +490,27 @@ export async function captureNativeBundle(url, opts = {}) {
             contentType: (res.headers()['content-type'] || '').split(';')[0].trim(),
             tipo: req.resourceType(),
           });
+          // ⭐ ENVELOPE DE REPLAY para fetch/XHR — AQUI, com os bytes já em mão e
+          // depois de TODAS as guardas (host, mídia, tamanho medido antes de
+          // materializar, contabilidade). Uma versão anterior lia o corpo mais cedo,
+          // antes da reserva: quebrava a ordem que os testes do Sol protegem e deixava
+          // uma resposta que nunca termina SEM reserva — logo sem nome no relatório.
+          // Resíduo declarado: um 2º POST para a MESMA URL com outro corpo não entra
+          // (o dedup por URL fica intacto); a identidade por corpo já está na chave,
+          // então estender é só registrar antes do dedup — com as mesmas guardas.
+          const tipoDoRecurso = req.resourceType();
+          if ((tipoDoRecurso === 'fetch' || tipoDoRecurso === 'xhr') && bytes.byteLength <= ENVELOPE_MAX_BYTES) {
+            const corpoReq = typeof req.postDataBuffer === 'function' ? (req.postDataBuffer() || Buffer.alloc(0)) : Buffer.alloc(0);
+            const id = identidadeDeRequisicao(req.method(), u, corpoReq);
+            const lista = envelopes.get(id) || [];
+            lista.push({
+              metodo: req.method(), url: u, status: res.status(), statusText: res.statusText() || '',
+              headers: cabecalhosDeReplay(res.headers()),
+              contentType: (res.headers()['content-type'] || '').split(';')[0].trim(),
+              bytes,
+            });
+            envelopes.set(id, lista);
+          }
         } catch (_) { /* resposta sem corpo (redirect, 204, 304) não é falha */ }
         finally {
           if (registrei) {
@@ -935,8 +982,8 @@ export async function captureNativeBundle(url, opts = {}) {
 
     // Mapa das respostas que só existem em tempo de execução (fetch/XHR) e o script
     // que as redireciona para o pacote. Vazio => nada é injetado.
-    const mapaDeFetch = runtimeFetchMap(congelados, mapa);
-    const remendoDeFetch = runtimeFetchShim(mapaDeFetch);
+    const { manifesto: manifestoDeReplay, porUrlGet, arquivos: arquivosDeReplay } = montarReplay(envelopes, mapa);
+    const remendoDeFetch = runtimeFetchShim(manifestoDeReplay, porUrlGet);
 
     const assets = [];
     for (const [u, valor] of congelados) {
@@ -983,6 +1030,8 @@ export async function captureNativeBundle(url, opts = {}) {
       }
       assets.push({ path: caminho, body: new Uint8Array(corpo), contentType: contentType || undefined });
     }
+
+    for (const a of arquivosDeReplay) assets.push(a);
 
     if (!emprestada) await context.close();
     onProgress({ etapa: 'finalizing' });
@@ -1064,7 +1113,10 @@ export async function captureNativeBundle(url, opts = {}) {
         // navegador ou a rede recusando. Tratar as duas como a mesma coisa
         // esconderia defeito nosso atrás de recusa alheia.
         // Quantas chamadas de runtime o clone passou a alcançar dentro do pacote.
-        chamadasDeRuntimeMapeadas: Object.keys(mapaDeFetch).length,
+        // Quantas IDENTIDADES de chamada de runtime o clone consegue responder do
+        // pacote, e quantos envelopes ao todo (a mesma chamada pode ter várias).
+        chamadasDeRuntimeMapeadas: Object.keys(manifestoDeReplay).length,
+        envelopesDeReplay: arquivosDeReplay.length,
         pedidosQueFalharam: (() => {
           const lista = [...recusados].map(([u, info]) => ({ u, erro: info.erro, tipo: info.tipo }));
           const nossa = lista.filter((x) => geracao.has(x.u));

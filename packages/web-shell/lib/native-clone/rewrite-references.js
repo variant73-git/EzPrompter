@@ -366,10 +366,17 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
     // `./uploads/a.png`, que o documento na raiz resolve como `/uploads/a.png`, e o
     // asset está em `community/uploads/a.png`. Para JSON o caminho é relativo à
     // ENTRADA, que é a raiz do pacote.
+    // ⚠️ E NÃO É SÓ "relativo à raiz": tem que continuar PARECENDO URL ABSOLUTA.
+    // Medido no gsap.com: `ipsMemberPhoto(photo)` faz `new URL(photo)` e, se não for
+    // http(s), cai em `JSON.parse(photo)` — a reescrita para `./community/...` mudou
+    // o TIPO do valor aos olhos do código e quebrou o avatar. Dentro de dado, URL é
+    // identidade, não só referência (Astra). O marcador `__UNCRAFT_ORIGIN__` é
+    // trocado por `location.origin` por quem SERVE o envelope (o remendo de replay),
+    // então o site recebe uma URL absoluta http da origem local.
     let relative = kind === 'json'
-      ? target
+      ? `__UNCRAFT_ORIGIN__/${target}`
       : posix.relative(fromDir === '.' ? '' : fromDir, target);
-    if (!relative.startsWith('.')) relative = `./${relative}`;
+    if (kind !== 'json' && !relative.startsWith('.')) relative = `./${relative}`;
     const replacement = `${relative}${hash}`;
     // Inside a script body the text is not markup: entities are not decoded
     // there, so encoding one would write the escape sequence into the string.
@@ -391,10 +398,9 @@ export function referenceKindFor(path, contentType = '') {
   if (/\.html?$/i.test(path) || /^text\/html/i.test(contentType)) return 'html';
   if (/\.css$/i.test(path) || /^text\/css/i.test(contentType)) return 'css';
   if (/\.svg$/i.test(path) || /^image\/svg/i.test(contentType)) return 'svg';
-  // JSON entra porque corpo de API carrega URL de asset que o site põe em runtime
-  // (ver jsonTokens). Só o tipo declarado vale: `.json` na extensão OU
-  // `application/json` no cabeçalho — a resposta do gsap.com chega como
-  // `community/index.<hash>.php` com content-type JSON, e é a segunda regra que a pega.
-  if (/\.json$/i.test(path) || /^application\/json/i.test(contentType)) return 'json';
+  // JSON NÃO entra aqui de propósito: asset JSON estático fica intacto. Só o ENVELOPE
+  // de replay é reescrito (montarReplay chama `kind: 'json'` explicitamente), porque é
+  // o único caminho pelo qual o site consome esse corpo — e porque a reescrita de JSON
+  // emite um marcador de origem que só quem serve o envelope sabe resolver.
   return null;
 }
