@@ -268,24 +268,39 @@ const TENTATIVAS_RAJADA = 2;
 // ZERO pontos conclusivos — o instrumento não conseguia medir movimento porque
 // media a si mesmo. O CDP devolve base64 direto, sem Buffer no meio.
 // Fail-open: sem sessão CDP, cai na via do Playwright (mais lenta, mas funciona).
+// ⚠️ Os dois caminhos NÃO são semanticamente equivalentes (Astra B1 #4): o Playwright
+// esconde o cursor de texto por padrão, o CDP cru não; e uma falha de `cdp.send` no
+// meio da rajada não era fallback — virava rajada nula. Regras: (1) o BACKEND de cada
+// rajada é registrado (`captureMode`) e o `compare` recusa comparar rajadas de
+// backends diferentes; (2) se o CDP falhar, a rajada INTEIRA é refeita no Playwright,
+// nunca misturando amostras; (3) `caret: 'hide'` nos dois, para o cursor não virar
+// "movimento" num lado só.
 async function capturaRapida(page, cdp) {
   if (cdp) {
     const r = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 60 });
     return r.data;
   }
-  return (await page.screenshot({ type: 'jpeg', quality: 60 })).toString('base64');
+  return (await page.screenshot({ type: 'jpeg', quality: 60, caret: 'hide' })).toString('base64');
 }
 
 async function motionEnergy(page, probe, cdp) {
   let ultima = null;
+  let backend = cdp ? 'cdp' : 'playwright';
   for (let tentativa = 1; tentativa <= TENTATIVAS_RAJADA; tentativa += 1) {
     const shots = [];
     const stamps = [];
-    for (let i = 0; i < BURST_FRAMES; i += 1) {
-      if (i) await page.waitForTimeout(BURST_GAP_MS);
-      // Carimbo LOGO ANTES: interessa o instante em que o quadro foi pedido.
-      stamps.push(Date.now());
-      shots.push(await capturaRapida(page, cdp));
+    try {
+      for (let i = 0; i < BURST_FRAMES; i += 1) {
+        if (i) await page.waitForTimeout(BURST_GAP_MS);
+        // Carimbo LOGO ANTES: interessa o instante em que o quadro foi pedido.
+        stamps.push(Date.now());
+        shots.push(await capturaRapida(page, backend === 'cdp' ? cdp : null));
+      }
+    } catch (_) {
+      // CDP falhou no meio: refaz a rajada inteira no outro backend (consistente),
+      // e a rajada fica marcada com o backend que de fato a produziu.
+      if (backend === 'cdp') { backend = 'playwright'; tentativa -= 1; continue; }
+      throw _;
     }
     const gaps = stamps.slice(1).map((t, i) => t - stamps[i]);
     const gapMaxMs = Math.max(...gaps);
@@ -323,6 +338,8 @@ async function motionEnergy(page, probe, cdp) {
       gapMaxMs,
       comparavel: gapMaxMs <= GAP_ALVO_MS,
       tentativas: tentativa,
+      captureMode: backend,
+      viewport: { width: VIEWPORT.width, height: VIEWPORT.height, dpr: 1 },
     };
     if (ultima.comparavel) return ultima;
   }
@@ -734,8 +751,19 @@ async function compare(refDir, candDir) {
           gapRefMs: r?.gapMaxMs ?? null, gapCandMs: c?.gapMaxMs ?? null,
         };
         if (!r || !c) return { ...base, faixa: 'sem-medida' };
-        if (foraDeSincronia(rf.index)) return { ...base, faixa: 'inconclusivo-deriva', derivaMs: derivaDoQuadro.get(rf.index) };
         if (r.formatoAntigo || c.formatoAntigo) return { ...base, faixa: 'formato-antigo' };
+        // Backends de captura diferentes não se comparam (cursor de texto, política de
+        // captura): não é "um pouco de ruído", é outra medida (Astra B1 #4).
+        if (r.captureMode && c.captureMode && r.captureMode !== c.captureMode) return { ...base, faixa: 'inconclusivo-backend', backends: `${r.captureMode} vs ${c.captureMode}` };
+        if (foraDeSincronia(rf.index)) {
+          // ⚠️ Ponto fora de sincronia onde a REFERÊNCIA se move NÃO some do
+          // denominador: sumir seria censura seletiva — os quadros caros (os que
+          // animam) são justamente os que atrasam, e excluí-los deixa só as cenas
+          // fáceis (Astra B1 #2). Ele fica marcado como ponto móvel perdido, e a
+          // trilha inteira vira inconclusiva se houver algum.
+          const movelPerdido = r.bruto >= PISO_REFERENCIA;
+          return { ...base, faixa: movelPerdido ? 'inconclusivo-deriva-em-ponto-movel' : 'inconclusivo-deriva', derivaMs: derivaDoQuadro.get(rf.index) };
+        }
         if (!r.comparavel || !c.comparavel) return { ...base, faixa: 'inconclusivo-intervalo-longo' };
         const maior = Math.max(r.gapMaxMs, c.gapMaxMs); const menor = Math.max(1, Math.min(r.gapMaxMs, c.gapMaxMs));
         if (maior / menor > FATOR_GAP) return { ...base, faixa: 'inconclusivo-intervalos-desiguais', fatorGap: Number((maior / menor).toFixed(2)) };
@@ -751,7 +779,13 @@ async function compare(refDir, candDir) {
       // fala. Se for pequeno, o instrumento não julgou a página — e dizer isso é
       // obrigação dele, não nota de rodapé.
       const inconclusivos = conta('sem-medida') + conta('formato-antigo')
-        + conta('inconclusivo-intervalo-longo') + conta('inconclusivo-intervalos-desiguais') + conta('inconclusivo-deriva');
+        + conta('inconclusivo-intervalo-longo') + conta('inconclusivo-intervalos-desiguais') + conta('inconclusivo-deriva')
+        + conta('inconclusivo-deriva-em-ponto-movel') + conta('inconclusivo-backend');
+      const pontosMoveisPerdidos = conta('inconclusivo-deriva-em-ponto-movel');
+      // Quantos pontos MÓVEIS a referência tem ao todo (conclusivos + perdidos): é o
+      // escopo real do veredito. Uma página com 1 ponto móvel recebe veredito LIMITADO
+      // a esse ponto, não um "inconclusivo" eterno (Astra B1 #5).
+      const pontosMoveisNaReferencia = conclusivos + pontosMoveisPerdidos;
       return {
         unidade: 'diferenca media por canal de pixel entre quadros consecutivos, em intervalos VERIFICADOS como comparaveis (sem normalizacao temporal)',
         limiares: { pisoReferencia: PISO_REFERENCIA, pisoMorto: PISO_MORTO, razaoFraca: RAZAO_FRACA, gapAlvoMs: GAP_ALVO_MS, fatorGap: FATOR_GAP },
@@ -767,15 +801,28 @@ async function compare(refDir, candDir) {
           intervaloLongo: conta('inconclusivo-intervalo-longo'),
           intervalosDesiguais: conta('inconclusivo-intervalos-desiguais'),
           deriva: conta('inconclusivo-deriva'),
+          derivaEmPontoMovel: pontosMoveisPerdidos,
+          backend: conta('inconclusivo-backend'),
         },
+        pontosMoveisNaReferencia,
         pontosConclusivos: conclusivos,
         // ⚠️ MÍNIMO DE PONTOS. Medido: duas execuções do MESMO pacote, com 2 pontos
         // conclusivos cada, deram "MAIS FRACO" numa e "PRESENTE" na outra. Veredito
         // sobre 2 pontos é moeda. Abaixo de MINIMO_CONCLUSIVOS a trilha diz que não
         // sabe — e diz por quê — em vez de sortear.
+        // ⚠️ Escopo, não mínimo absoluto (Astra B1 #5): se a página tem menos pontos
+        // móveis que MINIMO_CONCLUSIVOS, o veredito sai LIMITADO a eles; o que torna a
+        // trilha inconclusiva é perder ponto móvel por deriva (censura), não a página
+        // ser pouco animada. E a instabilidade entre execuções em poucos pontos é
+        // declarada no escopo, não escondida.
         veredito: !PISO_CALIBRADO ? 'NAO CALIBRADO'
+          : pontosMoveisPerdidos > 0 ? `INCONCLUSIVO — ${pontosMoveisPerdidos} ponto(s) MOVEL(is) da referencia perdido(s) por deriva; excluir seria censurar justamente onde anima. Repetir sem outra carga na maquina`
           : conclusivos === 0 ? 'INCONCLUSIVO — nenhum ponto com medida valida e referencia em movimento'
-          : conclusivos < MINIMO_CONCLUSIVOS ? `INCONCLUSIVO — so ${conclusivos} ponto(s) conclusivo(s); o minimo e ${MINIMO_CONCLUSIVOS}. Pagina com pouca animacao ou muitas paradas fora de sincronia`
+          : conclusivos < MINIMO_CONCLUSIVOS && pontosMoveisNaReferencia < MINIMO_CONCLUSIVOS ? (
+            conta('congelado') > 0 ? `CONGELAMENTO DETECTADO (escopo LIMITADO a ${conclusivos} ponto(s) movel(is) — a pagina nao tem mais)`
+            : conta('fraco') > 0 ? `MOVIMENTO MAIS FRACO QUE A REFERENCIA (escopo LIMITADO a ${conclusivos} ponto(s) movel(is))`
+            : `MOVIMENTO PRESENTE (escopo LIMITADO a ${conclusivos} ponto(s) movel(is) — a pagina nao tem mais; veredito em poucos pontos e instavel entre execucoes)`)
+          : conclusivos < MINIMO_CONCLUSIVOS ? `INCONCLUSIVO — so ${conclusivos} de ${pontosMoveisNaReferencia} ponto(s) movel(is) conclusivo(s); o minimo e ${MINIMO_CONCLUSIVOS}. Muitas paradas fora de sincronia`
           : conta('congelado') > 0 ? 'CONGELAMENTO DETECTADO'
           : conta('fraco') > 0 ? 'MOVIMENTO MAIS FRACO QUE A REFERENCIA'
           : 'MOVIMENTO PRESENTE nos pontos conclusivos',
@@ -785,9 +832,15 @@ async function compare(refDir, candDir) {
       };
     })(),
   };
-  out.comparacaoCruzadaValida = excluidosPorDeriva * 2 < perFrame.length;
+  // Validade cruzada: maioria dos quadros em sincronia E nenhum ponto MÓVEL da
+  // referência perdido — maioria global sozinha deixa passar a censura seletiva dos
+  // quadros que animam (Astra B1 #2).
+  const moveisPerdidosSsim = out.motion?.detalheInconclusivos?.derivaEmPontoMovel || 0;
+  out.comparacaoCruzadaValida = excluidosPorDeriva * 2 < perFrame.length && moveisPerdidosSsim === 0;
   if (!out.comparacaoCruzadaValida) {
-    const motivo = `INCONCLUSIVO — ${excluidosPorDeriva} de ${perFrame.length} quadros fora de sincronia (> ${DERIVA_MAX_MS} ms); repetir sem outra carga na maquina`;
+    const motivo = moveisPerdidosSsim > 0
+      ? `INCONCLUSIVO — ${moveisPerdidosSsim} ponto(s) MOVEL(is) da referencia fora de sincronia; o SSIM minimo sobre os restantes seria seletivo. Repetir sem outra carga na maquina`
+      : `INCONCLUSIVO — ${excluidosPorDeriva} de ${perFrame.length} quadros fora de sincronia (> ${DERIVA_MAX_MS} ms); repetir sem outra carga na maquina`;
     out.ssim = { ...out.ssim, veredito: motivo };
     out.motion = { ...out.motion, veredito: motivo };
     process.exitCode = 2;

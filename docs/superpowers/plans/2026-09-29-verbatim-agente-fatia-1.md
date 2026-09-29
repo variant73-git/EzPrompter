@@ -124,3 +124,14 @@ Native e espelho terem a mesma fidelidade não é inteiramente tautológico (o p
 - Evidência forte, agora estrutural, de que o agente produziu um **espelho localizado** — exatamente o que o prompt pediu.
 - Se o portão confirmar paridade, o **`native` é provisoriamente superior** para a tarefa "espelho local 1:1": mesmo resultado, 24 s, zero tokens.
 - **NÃO se pode concluir:** que o agente não consegue homogeneizar; que native e verbatim têm a mesma editabilidade (a medir); que a terceira via perde; que os SSIM baixos são inofensivos; quanto Sonnet custaria; que qualquer coisa generaliza para outros sites.
+
+## 11. Astra B1 (portão) — adjudicado, 2026-09-29
+
+Cinco achados, cinco procedentes. Aplicados agora (lado do `compare` + metadata da rajada):
+- **#2 censura seletiva por deriva** — ponto fora de sincronia onde a REFERÊNCIA se move não some do denominador: vira `inconclusivo-deriva-em-ponto-movel` e torna SSIM e movimento inconclusivos. Maioria global sozinha deixava passar exatamente os quadros que animam.
+- **#3 regime por XOR** — coberto pela deriva por quadro + #2 (déficit por parada já está em `atrasoAcumuladoMs`).
+- **#4 backends misturados** — cada rajada registra `captureMode` + viewport/DPR; `compare` recusa `cdp` vs `playwright` no mesmo ponto; falha do CDP refaz a rajada INTEIRA no Playwright; `caret:'hide'` nos dois.
+- **#5 mínimo absoluto = falso vermelho** — vira ESCOPO: página com < 3 pontos móveis recebe veredito *limitado a N ponto(s)*, com a instabilidade declarada; inconclusivo só por ponto móvel perdido.
+
+**Pendente — muda o instrumento e exige recapturar:**
+- **#1 calibração não transferível (Crítico).** Energia é média sobre o quadro inteiro: depende de área, contraste e tipo (deslocamento ≠ opacidade ≠ vídeo). Um botão 200×50 se movendo 8 px lê ~0,10 e cai abaixo de `PISO_REFERENCIA=0,5` (falso "referência parada"); um cursor/vídeo/canvas alheio dá energia a um candidato com a animação principal congelada (falso verde). Correção desenhada: **energia por REGIÃO** — máscara dos pixels que mudaram na referência, energia do candidato medida só nela e normalizada pela área; calibração por classe; piso medido em página viva ociosa, não só em `<img>`. Exige guardar o mapa de diferença por parada → re-runs.
