@@ -76,6 +76,24 @@ function nativeMotionRuntimeBridge() {
   //    que foi revertida de propósito. Quem desliga é o usuário.
   let linksNavegaveis = false;
   let hoverAtivo = true;
+  // ⭐ ATALHO DE SEGURAR (pedido do Adilson): enquanto a tecla está pressionada, os
+  // links funcionam. É a saída rápida para "só quero clicar neste link uma vez", sem
+  // marcar a caixa e sem perder a seleção depois.
+  //
+  // A tecla é `L` (de link) e NÃO um modificador de propósito: Alt, Shift e Ctrl já
+  // têm papel no editor (espelho e uniforme nas guias) ou no navegador (Shift+clique
+  // abre janela, Ctrl+clique é botão direito no macOS). Fica em constante para trocar
+  // numa linha.
+  //
+  // ⚠️ Estado de tecla PRECISA de porta de escape: um `keyup` perdido (troca de janela,
+  // atalho do sistema) travaria a navegação ligada para sempre. Solta-se também em
+  // `blur` da janela e em mudança de visibilidade.
+  const TECLA_DE_LINK = 'l';
+  let teclaDeLinkPressionada = false;
+  // A navegação é permitida pela caixa OU pela tecla. Nada é persistido: o estado
+  // nasce desligado em cada injeção do bridge, então sair do canvas e voltar reseta —
+  // que é o comportamento pedido.
+  const navegacaoPermitida = () => linksNavegaveis || teclaDeLinkPressionada;
   let tool = 'select';
   let selectedId = null;
   let speed = 1;
@@ -8627,8 +8645,17 @@ function nativeMotionRuntimeBridge() {
       // Um comando para as duas chaves. Ausente = não muda, para o painel poder
       // mandar só a que o usuário tocou.
       if (typeof payload.links === 'boolean') linksNavegaveis = payload.links;
+      // O host também informa a tecla: se o foco está no painel de fora, o `keydown`
+      // nunca chega ao documento do clone, e sem isto segurar a tecla não faria nada.
+      if (typeof payload.linksHold === 'boolean') teclaDeLinkPressionada = payload.linksHold;
       if (typeof payload.hover === 'boolean') definirHover(payload.hover);
-      post({ type: 'interaction-state', links: linksNavegaveis, hover: hoverAtivo });
+      emit('interaction-state', {
+        links: linksNavegaveis,
+        linksHold: teclaDeLinkPressionada,
+        navegacaoPermitida: navegacaoPermitida(),
+        hover: hoverAtivo,
+        teclaDeLink: TECLA_DE_LINK,
+      });
     } else if (message.type === 'set-mode') {
       if (payload.mode === 'preview') enterPreviewMode();
       else leavePreviewMode();
@@ -8788,6 +8815,7 @@ function nativeMotionRuntimeBridge() {
     on(document, 'pointerleave', () => hover(null), true);
     on(document, 'pointerdown', (event) => {
       if (mode !== 'edit' || tool !== 'move' || event.button !== 0) return;
+      if (navegacaoPermitida() && alvoDeNavegacao(event)) return;   // idem: o link vence
       const element = chooseElement(resolveVisibleTarget(event), { x: event.clientX, y: event.clientY });
       if (!element) return;
       event.preventDefault();
@@ -8860,6 +8888,11 @@ function nativeMotionRuntimeBridge() {
     }, true);
     on(document, 'click', (event) => {
       if (mode !== 'edit') return;
+      // ⭐ Navegação ligada: o clique num link SEGUE o link em vez de selecionar. É a
+      // resposta do dono à pergunta de comportamento — e é por isso que o tooltip da
+      // caixa precisa avisar que, ligada, clicar dentro de um link deixa de selecionar.
+      // O desvio é ESCOPADO ao alvo de navegação: em todo o resto a seleção continua.
+      if (navegacaoPermitida() && alvoDeNavegacao(event)) return;
       if (textEditState) {
         if (textEditState.element.contains(event.target) || textEditState.editable?.contains(event.target)) return;
         finishInlineTextEdit(true);
@@ -8927,12 +8960,25 @@ function nativeMotionRuntimeBridge() {
     // entrega `chrome-error://chromewebdata/` e o clone desaparece com o runtime.
     // Prender a guarda a `mode === 'edit'` deixava justamente o caso perigoso de fora.
     const barrarNavegacao = (event) => {
-      if (linksNavegaveis) return;
+      if (navegacaoPermitida()) return;
       if (!alvoDeNavegacao(event)) return;
       event.preventDefault();
     };
     on(document, 'click', barrarNavegacao, true);
     on(document, 'auxclick', barrarNavegacao, true);
+    const digitando = (alvo) => alvo instanceof Element
+      && (alvo.isContentEditable || /^(input|textarea|select)$/i.test(alvo.tagName));
+    on(document, 'keydown', (event) => {
+      if (textEditState || digitando(event.target)) return;   // escrever "l" não liga link
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (String(event.key).toLowerCase() === TECLA_DE_LINK) teclaDeLinkPressionada = true;
+    }, true);
+    on(document, 'keyup', (event) => {
+      if (String(event.key).toLowerCase() === TECLA_DE_LINK) teclaDeLinkPressionada = false;
+    }, true);
+    // Portas de escape contra `keyup` perdido.
+    on(window, 'blur', () => { teclaDeLinkPressionada = false; }, true);
+    on(document, 'visibilitychange', () => { if (document.hidden) teclaDeLinkPressionada = false; }, true);
     // Single live instance per document. Re-injecting the bridge (iframe reload,
     // double gateway injection) must REPLACE the previous one — two live bridges
     // handle every command twice: duplicated patches, duplicated playback.
