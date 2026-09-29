@@ -62,6 +62,20 @@ function nativeMotionRuntimeBridge() {
   // transient fragment (found live: "most fertilizers…" was unselectable).
   const SPLIT_TOKEN = '.char,.word,.line,[data-split-text],[data-split-type],[text-split],[text-split-delay],[class*="split_line"],[class*="split-line"],[class*="split_word"],[class*="split-word"],[class*="split_char"],[class*="split-char"]';
   let mode = 'edit';
+  // ⭐ INTERAÇÃO DO CLONE (2026-09-29, pedido do Adilson). Duas coisas que o clone faz
+  // por ser o site e que atrapalham quem está editando:
+  //
+  //  • NAVEGAR. Medido: um clique num link do clone troca o documento. Num pacote de
+  //    página única o destino não existe, o Chrome entrega
+  //    `chrome-error://chromewebdata/` e o runtime morre junto — a sessão de edição
+  //    inteira se perde. A classe é maior que "link externo": `/pricing` é INTERNO e
+  //    cai igual. Padrão: navegação INERTE nos DOIS modos — em visualização é onde o
+  //    dano acontece, porque lá o handler de seleção não consome o clique.
+  //  • REAGIR AO PONTEIRO. Efeito de hover atrapalha ver e medir o estado de repouso.
+  //    Padrão: LIGADO — o clone é o site, e o editor antigo matava hover por decisão
+  //    que foi revertida de propósito. Quem desliga é o usuário.
+  let linksNavegaveis = false;
+  let hoverAtivo = true;
   let tool = 'select';
   let selectedId = null;
   let speed = 1;
@@ -6918,6 +6932,47 @@ function nativeMotionRuntimeBridge() {
     return exact;
   }
 
+  // Desligar `:hover` não se faz por CSS: não existe regra que cancele regra alheia.
+  // O caminho é o CSSOM — percorrer as folhas e ESVAZIAR as declarações das regras
+  // cujo seletor contém `:hover`, guardando o texto para reverter. Esvaziar em vez de
+  // mexer no seletor evita cirurgia em lista de seletores (`a:hover, b:hover` exigiria
+  // prefixar cada parte, e vírgula dentro de `:is()`/`:not()` quebra o corte ingênuo).
+  //
+  // ⚠️ Isto só é possível porque o pacote é de MESMA ORIGEM: ler `cssRules` de folha
+  // de outra origem lança, e num site ao vivo a maior parte do CSS é externa. É uma
+  // capacidade do clone, não do editor.
+  //
+  // Resíduo declarado: hover feito por JavaScript (`mouseenter`/`mouseover` que muda
+  // estilo) não é alcançado — só regra CSS.
+  const hoverSalvo = [];
+  function percorrerRegras(lista, visita) {
+    for (const regra of Array.from(lista || [])) {
+      if (regra.selectorText && /:hover\b/i.test(regra.selectorText)) visita(regra);
+      let internas = null;
+      try { internas = regra.cssRules; } catch (_) { internas = null; }
+      if (internas) percorrerRegras(internas, visita);
+    }
+  }
+  function definirHover(ativo) {
+    if (ativo) {
+      for (const { regra, texto } of hoverSalvo) { try { regra.style.cssText = texto; } catch (_) {} }
+      hoverSalvo.length = 0;
+      hoverAtivo = true;
+      return;
+    }
+    if (!hoverAtivo) return;
+    for (const folha of Array.from(document.styleSheets)) {
+      let regras = null;
+      try { regras = folha.cssRules; } catch (_) { continue; }   // outra origem: não se lê
+      percorrerRegras(regras, (regra) => {
+        if (!regra.style) return;
+        hoverSalvo.push({ regra, texto: regra.style.cssText });
+        try { regra.style.cssText = ''; } catch (_) {}
+      });
+    }
+    hoverAtivo = false;
+  }
+
   function pauseElementMotion(element) {
     const paused = [];
     if (typeof element.getAnimations !== 'function') return paused;
@@ -8568,6 +8623,12 @@ function nativeMotionRuntimeBridge() {
       });
     } else if (message.type === 'recover-control') {
       recoverControl(message, payload);
+    } else if (message.type === 'set-interaction') {
+      // Um comando para as duas chaves. Ausente = não muda, para o painel poder
+      // mandar só a que o usuário tocou.
+      if (typeof payload.links === 'boolean') linksNavegaveis = payload.links;
+      if (typeof payload.hover === 'boolean') definirHover(payload.hover);
+      post({ type: 'interaction-state', links: linksNavegaveis, hover: hoverAtivo });
     } else if (message.type === 'set-mode') {
       if (payload.mode === 'preview') enterPreviewMode();
       else leavePreviewMode();
@@ -8845,6 +8906,33 @@ function nativeMotionRuntimeBridge() {
     on(document, 'submit', (event) => {
       if (mode === 'edit') event.preventDefault();
     }, true);
+    // Navegação inerte. `preventDefault` no clique cancela a ação padrão sem tocar no
+    // `href` — o atributo continua editável e seletores como `a[href^="https"]` seguem
+    // casando. Reescrever o href para `#` mudaria o documento e a aparência.
+    // `click` cobre também Enter num link focado e ctrl/cmd+clique; `auxclick` cobre o
+    // botão do meio. Âncora interna (`#algo`) não troca o documento e passa.
+    const alvoDeNavegacao = (event) => {
+      const no = event.target instanceof Element ? event.target : null;
+      const ancora = no ? no.closest('a[href],area[href]') : null;
+      if (!ancora) return null;
+      const href = ancora.getAttribute('href') || '';
+      if (!href || href.startsWith('#')) return null;
+      return ancora;
+    };
+    // ⚠️ VALE NOS DOIS MODOS, e essa é a correção que importa. Em EDIÇÃO o handler de
+    // seleção já consumia o clique (`preventDefault` + `stopImmediatePropagation`), então
+    // ali isto é reforço — cobre o clique que não resolve em elemento algum. Em
+    // VISUALIZAÇÃO o handler de seleção sai cedo, e foi lá que a medição mostrou o dano
+    // real: o clique navega, o destino não existe no pacote de página única, o Chrome
+    // entrega `chrome-error://chromewebdata/` e o clone desaparece com o runtime.
+    // Prender a guarda a `mode === 'edit'` deixava justamente o caso perigoso de fora.
+    const barrarNavegacao = (event) => {
+      if (linksNavegaveis) return;
+      if (!alvoDeNavegacao(event)) return;
+      event.preventDefault();
+    };
+    on(document, 'click', barrarNavegacao, true);
+    on(document, 'auxclick', barrarNavegacao, true);
     // Single live instance per document. Re-injecting the bridge (iframe reload,
     // double gateway injection) must REPLACE the previous one — two live bridges
     // handle every command twice: duplicated patches, duplicated playback.
