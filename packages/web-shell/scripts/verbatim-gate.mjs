@@ -805,7 +805,15 @@ async function main() {
 
   if (cmp > -1) { await compare(process.argv[cmp + 1], process.argv[cmp + 2]); return; }
 
-  const trajectory = trajPath && existsSync(trajPath) ? JSON.parse(await readFile(trajPath, 'utf8')) : null;
+  // ⚠️ `--trajectory` apontando para arquivo INEXISTENTE era lacuna silenciosa: o run
+  // seguia com a própria trajetória e os relatórios saíam INCOMPARÁVEIS sem ninguém
+  // avisar. Medido: a referência A estourou o timeout do site, e B, verbatim e native
+  // rodaram cada um com alvos próprios "herdados" de um arquivo que não existia.
+  if (trajPath && !existsSync(trajPath)) {
+    console.error(`trajetória não encontrada: ${trajPath} — o run de referência que a produziria falhou? abortando em vez de seguir incomparável`);
+    process.exit(3);
+  }
+  const trajectory = trajPath ? JSON.parse(await readFile(trajPath, 'utf8')) : null;
 
   if (reference) {
     const r = await measure({ label: `reference ${reference}`, outDir: out, url: reference, trajectory });
