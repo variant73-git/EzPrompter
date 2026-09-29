@@ -2894,3 +2894,69 @@
   margin: 4px 6px;
   background: rgba(255, 255, 255, 0.1);
 }
+
+/* ---- Chaves de interação do clone (barra de topo do modo de edição).
+   Ver o cabeçalho de InteractionSwitches.jsx para POR QUE elas vivem aqui e não no
+   inspetor. Tokens do design system; nenhum literal de cor ou raio. */
+.interactionWrap {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.historyButton[data-active] {
+  color: var(--accent) !important;
+}
+
+.interactionPopover {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  width: 268px;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-frosted);
+  border-radius: var(--radius-md);
+  background: var(--popup-bg, var(--bg-base));
+  box-shadow: var(--shadow-frost);
+}
+
+.interactionRow {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.interactionRow input {
+  width: 14px;
+  height: 14px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+}
+
+.interactionLabel {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.interactionTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.interactionHint {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  /* Nunca cortar nem rolar na horizontal — a dica quebra em linhas (regra fixa). */
+  overflow-wrap: anywhere;
+}

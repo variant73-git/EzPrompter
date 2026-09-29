@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import { ArrowLeft, Eye, Redo2, Undo2 } from 'lucide-react';
+import InteractionSwitches from './InteractionSwitches.jsx';
 import NativeEditSidebar from './NativeEditSidebar.jsx';
 import NativeMotionInspector from './NativeMotionInspector.jsx';
 import NativeMotionTimelineDock, { hasNativeMotionContext } from './NativeMotionTimelineDock.jsx';
@@ -257,6 +258,12 @@ export function NativeMotionEditTopbarControls() {
     || controller.saveState === 'saving';
   return (
     <div className={styles.historyControls} role="toolbar" aria-label="Edit history">
+      <InteractionSwitches
+        interaction={controller.interaction}
+        linksHold={controller.linksHold}
+        onChange={controller.commands.setInteraction}
+        disabled={controller.status !== 'ready'}
+      />
       <button
         type="button"
         className={styles.historyButton}

@@ -2014,6 +2014,48 @@ export function useNativeMotionController({
     lastResponsiveDeviceRef.current = deviceIdRef.current;
   }
 
+  const [interaction, setInteractionState] = useState({ links: false, hover: true });
+  const [linksHold, setLinksHold] = useState(false);
+
+  // Envia ao bridge quando a sessão está pronta. Duas mensagens separadas porque a
+  // tecla muda MUITO mais que as caixas e não deve reenviar o resto a cada toque.
+  useEffect(() => {
+    if (status === 'ready') send('set-interaction', { links: interaction.links, hover: interaction.hover });
+  }, [interaction.links, interaction.hover, send, status]);
+  useEffect(() => {
+    if (status === 'ready') send('set-interaction', { linksHold });
+  }, [linksHold, send, status]);
+
+  // A tecla de segurar também é escutada AQUI, no host: quando o foco está no painel
+  // de fora, o `keydown` nunca chega ao documento do clone (o bridge escuta o dele).
+  // Os dois lados juntos cobrem o foco em qualquer um. Solta em `blur` para um
+  // `keyup` perdido não travar a navegação ligada.
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const digitando = (alvo) => alvo instanceof Element
+      && (alvo.isContentEditable || /^(input|textarea|select)$/i.test(alvo.tagName));
+    const desce = (event) => {
+      if (event.metaKey || event.ctrlKey || event.altKey || digitando(event.target)) return;
+      if (String(event.key).toLowerCase() === 'l') setLinksHold(true);
+    };
+    const sobe = (event) => { if (String(event.key).toLowerCase() === 'l') setLinksHold(false); };
+    const solta = () => setLinksHold(false);
+    window.addEventListener('keydown', desce, true);
+    window.addEventListener('keyup', sobe, true);
+    window.addEventListener('blur', solta);
+    return () => {
+      window.removeEventListener('keydown', desce, true);
+      window.removeEventListener('keyup', sobe, true);
+      window.removeEventListener('blur', solta);
+    };
+  }, []);
+
+  // ⭐ CHAVES DE INTERAÇÃO DO CLONE (Adilson, 2026-09-29). São de SESSÃO, não do
+  // elemento selecionado — por isso vivem aqui e no topo do editor, não no inspetor.
+  //
+  // ⚠️ NADA É PERSISTIDO, de propósito: "resetar a sessão (sair do canvas e voltar)
+  // desabilita este estado". O padrão nasce aqui a cada montagem, e o bridge também
+  // nasce no padrão; guardar em `localStorage` quebraria exatamente o que foi pedido.
   const commands = {
     resetSession,
     changeMode: (nextMode) => {
@@ -2021,6 +2063,8 @@ export function useNativeMotionController({
       setMode(nextMode);
     },
     changeTool: (nextTool) => setTool(nextTool),
+    // Campo ausente não muda — o painel manda só a caixa que o usuário tocou.
+    setInteraction: (mudanca) => setInteractionState((atual) => ({ ...atual, ...mudanca })),
     changeDevice: (nextDevice) => setDeviceId(getMotionEditorDevice(nextDevice).id),
     markRuntimeLoaded: () => {
       setStatus((current) => current === 'ready' ? current : 'bridge');
@@ -2117,6 +2161,10 @@ export function useNativeMotionController({
     runtime,
     mode,
     tool,
+    interaction,
+    // `true` quando a tecla está segurada: a UI mostra a caixa como ativa
+    // temporariamente sem mentir sobre o valor dela.
+    linksHold,
     device,
     selected,
     selectedRowId,
