@@ -191,6 +191,15 @@ Solid warm charcoal, Inter, no serif accent.
 - In-world depth = outlines + overlap.
 
 ## Interaction patterns (standard — apply to every new widget)
+- **Shortcut display (STANDARD, 2026-09-29 — Adilson):** wherever a shortcut is
+  shown, the key goes inside a square with `--radius-2xs` (5px) corners. One
+  square per key, so a combination is `⌘` `Z`, never `⌘Z` in one box. Component:
+  `components/ShortcutKey.jsx` — use it, don't restyle a `<kbd>` locally. Single
+  characters render square (min-width equals the 18px height); longer labels
+  ("Esc", "⇧") grow horizontally only. Border `--border-frosted-strong`, fill
+  `--surface-strong`, text `--text-muted`, and the font is INHERITED — never a
+  named mono family (project rule). The explanation lives in the text beside the
+  badge; the badge itself carries no tooltip, so the two never compete.
 - **Toolbar widget hover (STANDARD, 2026-07-03):** chips inside a chrome bar
   fill the bar's full content height with a uniform 2px gap: stretch wrapper +
   `height:100%` + concentric radius + `--hover-bg` only (no outline change).

@@ -1,0 +1,29 @@
+/* Ver o cabeçalho de ShortcutKey.jsx: a convenção é a tecla num quadrado de
+   `--radius-2xs` (5px). Nada aqui usa literal de raio nem de cor. */
+.grupo {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  vertical-align: middle;
+}
+
+.tecla {
+  display: inline-grid;
+  /* QUADRADO: a largura mínima iguala a altura, então uma tecla de um caractere
+     fica quadrada e uma de várias ("Esc", "⇧") cresce só na horizontal. */
+  min-width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  place-items: center;
+  padding: 0 4px;
+  border: 1px solid var(--border-frosted-strong);
+  border-radius: var(--radius-2xs);
+  background: var(--surface-strong);
+  color: var(--text-muted);
+  font-family: inherit;   /* nunca uma fonte mono específica — regra fixa do projeto */
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
