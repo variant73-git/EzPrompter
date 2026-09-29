@@ -232,9 +232,42 @@ function htmlTokens(html) {
   return tokens;
 }
 
+// ⭐ URLs DENTRO DE CORPO JSON (2026-09-29). Medido no gsap.com: a página busca
+// dados em runtime e o JS põe `data.photo` em `img.src`. A URL absoluta vive na
+// resposta `application/json` CAPTURADA, e por isso três imagens ficavam externas e
+// não decodificavam mesmo com o asset presente no pacote.
+//
+// ⚠️ JSON ESCAPA BARRA: o corpo real traz `https:\/\/gsap.com\/community\/...`.
+// Um casamento literal contra a URL capturada NUNCA acharia — a comparação precisa
+// normalizar, e a substituição precisa devolver o mesmo estilo de escape, senão o
+// arquivo deixa de ser o JSON que o site espera ler.
+//
+// A invariante de segurança do módulo continua a mesma e é o que torna isto seguro:
+// só se troca uma URL absoluta COMPLETA que casa EXATAMENTE com uma resposta
+// capturada. Um texto que apenas se parece com URL fica intocado.
+function jsonTokens(text) {
+  const tokens = [];
+  const re = /https?:\\?\/\\?\/[^"\s]*/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const raw = m[0];
+    tokens.push({
+      start: m.index,
+      end: m.index + raw.length,
+      raw,
+      // Valor para RESOLVER: sem os escapes de barra do JSON.
+      normalizado: raw.replace(/\\\//g, '/'),
+      // Estilo de escape para DEVOLVER: se a fonte escapava, a saída escapa.
+      jsonEscaped: raw.includes('\\/'),
+    });
+  }
+  return tokens;
+}
+
 function tokensFor(text, kind) {
   if (kind === 'html') return htmlTokens(text);
   if (kind === 'css') return cssTokens(text);
+  if (kind === 'json') return jsonTokens(text);
   if (kind === 'svg') {
     const tokens = [];
     const re = /\s(?:href|xlink:href)\s*=\s*(["'])([^"']*)\1/gi;
@@ -252,7 +285,7 @@ function tokensFor(text, kind) {
 /**
  * @param {object} input
  * @param {string} input.text        the captured body, already decoded
- * @param {'html'|'css'|'svg'} input.kind
+ * @param {'html'|'css'|'svg'|'json'} input.kind
  * @param {string} input.resourceUrl absolute URL this body was served from —
  *   the base for its own relative references (a stylesheet resolves against
  *   ITSELF, not against the page)
@@ -301,7 +334,7 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
   const markup = kind === 'html' || kind === 'svg';
   const resolveBase = effectiveBase;
   for (const token of tokens) {
-    const decoded = markup ? decodeEntities(token.raw) : token.raw;
+    const decoded = token.normalizado ?? (markup ? decodeEntities(token.raw) : token.raw);
     const [withoutHash, hash] = splitFragment(decoded);
     if (!withoutHash || withoutHash.startsWith('data:') || withoutHash.startsWith('#')) continue;
     let absolute;
@@ -326,13 +359,24 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
       }
       continue;
     }
-    let relative = posix.relative(fromDir === '.' ? '' : fromDir, target);
+    // ⚠️ O JSON é DADO, não documento: quem resolve o caminho é quem CONSOME o dado
+    // (o script põe o valor em `img.src`), e essa resolução acontece contra o
+    // DOCUMENTO, nunca contra o arquivo JSON. Um caminho relativo à pasta do JSON
+    // apontaria para o lugar errado — medido: `community/index.php` produzia
+    // `./uploads/a.png`, que o documento na raiz resolve como `/uploads/a.png`, e o
+    // asset está em `community/uploads/a.png`. Para JSON o caminho é relativo à
+    // ENTRADA, que é a raiz do pacote.
+    let relative = kind === 'json'
+      ? target
+      : posix.relative(fromDir === '.' ? '' : fromDir, target);
     if (!relative.startsWith('.')) relative = `./${relative}`;
     const replacement = `${relative}${hash}`;
     // Inside a script body the text is not markup: entities are not decoded
     // there, so encoding one would write the escape sequence into the string.
     const encode = markup && !token.inScript;
-    edits.push({ start: token.start, end: token.end, value: encode ? encodeForMarkup(replacement) : replacement });
+    // JSON: devolve o MESMO estilo de escape de barra que a fonte usava.
+    const saida = token.jsonEscaped ? replacement.replace(/\//g, '\\/') : replacement;
+    edits.push({ start: token.start, end: token.end, value: encode ? encodeForMarkup(saida) : saida });
   }
   if (!edits.length) return body;
   // Back to front: an earlier replacement can never be re-scanned or shift
@@ -347,5 +391,10 @@ export function referenceKindFor(path, contentType = '') {
   if (/\.html?$/i.test(path) || /^text\/html/i.test(contentType)) return 'html';
   if (/\.css$/i.test(path) || /^text\/css/i.test(contentType)) return 'css';
   if (/\.svg$/i.test(path) || /^image\/svg/i.test(contentType)) return 'svg';
+  // JSON entra porque corpo de API carrega URL de asset que o site põe em runtime
+  // (ver jsonTokens). Só o tipo declarado vale: `.json` na extensão OU
+  // `application/json` no cabeçalho — a resposta do gsap.com chega como
+  // `community/index.<hash>.php` com content-type JSON, e é a segunda regra que a pega.
+  if (/\.json$/i.test(path) || /^application\/json/i.test(contentType)) return 'json';
   return null;
 }

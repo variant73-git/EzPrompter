@@ -164,3 +164,55 @@ describe('atributos data-* arbitrarios', () => {
     expect(roda2('<div data-animation-src="https://s.test/anim.json">')).toBe('<div data-animation-src="./anim.json">');
   });
 });
+
+describe('corpo JSON (dado consumido em runtime)', () => {
+  const mapa = () => new Map([
+    ['https://site.com/media/foto.png', 'media/foto.png'],
+    ['https://cdn.outro.com/x.js', '_ext/cdn.outro.com/x.js'],
+  ]);
+  const reescreve = (text) => rewriteDocumentReferences({
+    text, kind: 'json',
+    resourceUrl: 'https://site.com/api/perfil.php',
+    assetPath: 'api/perfil.php',
+    map: mapa(),
+  });
+
+  it('reconhece JSON pelo content-type, mesmo com extensao enganosa', () => {
+    // O caso real: a resposta da API do gsap.com chega como `.php` com JSON dentro.
+    expect(referenceKindFor('community/index.93580e97.php', 'application/json')).toBe('json');
+    expect(referenceKindFor('dados.json', '')).toBe('json');
+    expect(referenceKindFor('pagina.php', 'text/html')).toBe('html');
+  });
+
+  it('acha a URL apesar do escape de barra do JSON, e devolve o mesmo escape', () => {
+    const saida = reescreve('{"foto": "https:\\/\\/site.com\\/media\\/foto.png"}');
+    expect(saida).toContain('.\\/media\\/foto.png');
+    expect(JSON.parse(saida).foto).toBe('./media/foto.png');
+  });
+
+  it('tambem funciona sem escape (JSON nao obriga a escapar barra)', () => {
+    const saida = reescreve('{"foto": "https://site.com/media/foto.png"}');
+    expect(JSON.parse(saida).foto).toBe('./media/foto.png');
+    expect(saida).not.toContain('\\/');
+  });
+
+  it('o caminho e relativo a RAIZ, nao a pasta do JSON', () => {
+    // Quem resolve o caminho e quem CONSOME o dado (o script poe em img.src), e essa
+    // resolucao acontece contra o DOCUMENTO. Relativo a `api/` apontaria errado.
+    const saida = reescreve('{"foto": "https://site.com/media/foto.png"}');
+    expect(JSON.parse(saida).foto).toBe('./media/foto.png');
+    expect(JSON.parse(saida).foto).not.toBe('../media/foto.png');
+  });
+
+  it('nao toca texto que apenas se parece com URL nem URL nao capturada', () => {
+    const entrada = '{"texto": "visite https://site.com/pagina-que-nao-capturamos", "n": 1}';
+    expect(reescreve(entrada)).toBe(entrada);
+  });
+
+  it('mantem o JSON parseavel quando ha varias ocorrencias', () => {
+    const saida = reescreve('{"a": "https://site.com/media/foto.png", "b": "https://cdn.outro.com/x.js"}');
+    const o = JSON.parse(saida);
+    expect(o.a).toBe('./media/foto.png');
+    expect(o.b).toBe('./_ext/cdn.outro.com/x.js');
+  });
+});
