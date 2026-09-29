@@ -512,6 +512,62 @@ describe('timeline canvas layout', () => {
     rect.mockRestore();
   });
 
+  // Requisito do dono (2026-09-29): mover de lugar não é problema, mas tem que ser
+  // DEPOIS — quando a seleção troca, não no meio da edição. As linhas vêm do bridge
+  // ordenadas por `scrollStart`, então editar o início reordena a lista debaixo do
+  // cursor.
+  it('congela a ordem das linhas enquanto há seleção e libera quando ela muda', () => {
+    const page = { scrollY: 0, viewportHeight: 800, scrollHeight: 5000, maxScroll: 4200 };
+    const ordemInicial = [
+      { ...viewportRows[0], elementId: 'el-a', scrollStart: 400, scrollEnd: 900 },
+      { ...viewportRows[1], elementId: 'el-b', scrollStart: 2100, scrollEnd: 2600 },
+    ];
+    // O bridge devolve a MESMA dupla reordenada (o usuário empurrou el-a para depois).
+    const ordemReordenada = [ordemInicial[1], { ...ordemInicial[0], scrollStart: 3000, scrollEnd: 3500 }];
+    const lida = (container) => Array.from(container.querySelectorAll('[data-element-row]'))
+      .map((el) => el.getAttribute('data-element-row'));
+
+    const { container, rerender } = render(
+      <TimelineHarness rows={ordemInicial} selectedElementId="el-a" onSelectElement={vi.fn()} page={page} />,
+    );
+    expect(lida(container)).toEqual(['el-a', 'el-b']);
+
+    // Instantâneo novo, ordem trocada, MESMA seleção: a tela não se reordena.
+    rerender(<TimelineHarness rows={ordemReordenada} selectedElementId="el-a" onSelectElement={vi.fn()} page={page} />);
+    expect(lida(container)).toEqual(['el-a', 'el-b']);
+
+    // A seleção muda: agora a ordem verdadeira aparece.
+    rerender(<TimelineHarness rows={ordemReordenada} selectedElementId="el-b" onSelectElement={vi.fn()} page={page} />);
+    expect(lida(container)).toEqual(['el-b', 'el-a']);
+  });
+
+  // Requisito do dono (2026-09-29): "o importante é não perder a strip selecionada
+  // de vista NUNCA". As linhas são ordenadas pela chegada da animação, então editar
+  // o início reordena a lista e a lane selecionada podia sair da parte visível.
+  // ⚠️ Este teste exercita a ARITMÉTICA do reposicionamento com retângulos dublados
+  // (jsdom não faz layout); a prova no navegador é separada.
+  it('rola a timeline para manter a lane selecionada visível', () => {
+    const page = { scrollY: 0, viewportHeight: 800, scrollHeight: 5000, maxScroll: 4200 };
+    const muitasLinhas = [{ ...viewportRows[0], scrollStart: 400, scrollEnd: 900 }];
+    // Rolador visível de 0 a 100; régua de 20 no topo; a linha selecionada mora
+    // em 200..244, ou seja ABAIXO da vista por 144px.
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      const caixa = (top, bottom) => ({ x: 0, y: top, left: 0, top, right: 1000, bottom, width: 1000, height: bottom - top, toJSON: () => ({}) });
+      if (this.getAttribute?.('data-row-kind') === 'ruler') return caixa(0, 20);
+      if (this.getAttribute?.('data-row-kind') === 'layer') return caixa(200, 244);
+      if (this.className && String(this.className).includes('timelineScroller')) return caixa(0, 100);
+      return caixa(0, 200);
+    });
+    const { container } = render(
+      <TimelineHarness rows={muitasLinhas} selectedElementId="el-a" onSelectElement={vi.fn()} page={page} />,
+    );
+    const scroller = container.querySelector('[class*="timelineScroller"]');
+    expect(scroller).toBeTruthy();
+    // 244 (fim da linha) - 100 (fim da vista) = 144 de ajuste para baixo.
+    expect(scroller.scrollTop).toBe(144);
+    rect.mockRestore();
+  });
+
   // Bug relatado pelo Adilson (2026-09-28): ao soltar o handler, a strip "pisca"
   // — volta ao lugar de antes e só então vai para onde foi solta. Causa: a sessão
   // era encerrada (apagando o estado otimista) ANTES de a edição ser despachada,

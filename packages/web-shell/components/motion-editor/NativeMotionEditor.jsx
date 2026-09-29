@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ContextMenu, useContextMenu } from './ContextMenu.jsx';
 import RuntimeMask from './RuntimeMask.jsx';
 import Link from 'next/link';
@@ -1470,6 +1470,100 @@ export function TimelinePanel({
   // impede uma edição recusada de ficar como valor fantasma.
   useEffect(() => { setPendingStrip(null); }, [rows]);
 
+  // ⭐ A ORDEM NÃO MUDA SOB O SEU CURSOR (decisão do dono, 2026-09-29).
+  //
+  // Mover de lugar não é problema — mas tem que acontecer DEPOIS: quando a
+  // seleção troca, não no meio da edição. Então a ordem é CONGELADA no instante
+  // em que uma lane é selecionada e só é liberada quando a seleção muda.
+  //
+  // ⚠️ A dependência é só `selectedElementId`, de propósito: `rows` é LIDO nesse
+  // instante mas não observado, senão cada instantâneo novo recongelaria a ordem
+  // com os valores já reordenados e o congelamento seria inerte.
+  const [ordemCongelada, setOrdemCongelada] = useState(null);
+  useEffect(() => {
+    if (!selectedElementId) { setOrdemCongelada(null); return; }
+    setOrdemCongelada(rows.map((row) => row.elementId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedElementId]);
+
+  // Linhas na ordem que a tela mostra. Linhas NOVAS (que nasceram depois do
+  // congelamento) entram no fim, nunca desaparecem.
+  const linhasVisiveis = useMemo(() => {
+    if (!ordemCongelada) return rows;
+    const indice = new Map(ordemCongelada.map((id, i) => [id, i]));
+    const conhecidas = rows.filter((row) => indice.has(row.elementId))
+      .sort((a, b) => indice.get(a.elementId) - indice.get(b.elementId));
+    const novas = rows.filter((row) => !indice.has(row.elementId));
+    return [...conhecidas, ...novas];
+  }, [rows, ordemCongelada]);
+
+  // ⭐ A MUDANÇA DE ORDEM É VISÍVEL (decisão do dono): a lane desliza da posição
+  // antiga para a nova e acende, em vez de teleportar. Técnica padrão: mede-se
+  // onde a linha ESTAVA, aplica-se a diferença como deslocamento, e no quadro
+  // seguinte solta-se para a posição real com transição.
+  const posicoesDasLinhas = useRef(new Map());
+  const assinaturaDaOrdem = linhasVisiveis.map((row) => row.elementId).join('|');
+  useLayoutEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const anteriores = posicoesDasLinhas.current;
+    const atuais = new Map();
+    const reduzir = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    for (const linha of Array.from(scroller.querySelectorAll('[data-row-kind="layer"]'))) {
+      const pista = linha.querySelector('[data-element-row]');
+      const id = pista?.getAttribute('data-element-row');
+      if (!id) continue;
+      const topo = linha.offsetTop;
+      atuais.set(id, topo);
+      const antes = anteriores.get(id);
+      if (antes == null || antes === topo || reduzir) continue;
+      linha.style.transition = 'none';
+      linha.style.transform = `translateY(${antes - topo}px)`;
+      requestAnimationFrame(() => {
+        linha.style.transition = 'transform 260ms cubic-bezier(0.2, 0.7, 0.2, 1)';
+        linha.style.transform = '';
+        linha.setAttribute('data-reordenou', 'true');
+        setTimeout(() => {
+          linha.removeAttribute('data-reordenou');
+          linha.style.transition = '';
+        }, 540);
+      });
+    }
+    posicoesDasLinhas.current = atuais;
+  }, [assinaturaDaOrdem]);
+
+  // ⭐ A LANE SELECIONADA NUNCA SAI DE VISTA (decisão do dono, 2026-09-29).
+  //
+  // As linhas são ordenadas pela CHEGADA da animação na rolagem, então editar
+  // onde a animação começa muda o lugar dela na fila — e ela andava para outra
+  // altura da lista com o cursor ainda nela, às vezes para fora da parte
+  // visível ("parece que some"). A saída não é escolher se a linha se move: é
+  // garantir que a SELECIONADA está sempre visível, movendo-se ou não.
+  //
+  // Depende de `rows` também: é exatamente o instantâneo novo (o que reordena)
+  // que precisa reposicionar a vista.
+  //
+  // ⚠️ A régua é `position: sticky` no topo do rolador, então o topo ÚTIL começa
+  // abaixo dela — `scrollIntoView` deixaria a lane escondida sob a régua.
+  useEffect(() => {
+    if (!selectedElementId) return;
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const track = Array.from(scroller.querySelectorAll('[data-element-row]'))
+      .find((el) => el.getAttribute('data-element-row') === selectedElementId);
+    if (!track) return;
+    const row = track.closest('[data-row-kind]') || track;
+    const ruler = scroller.querySelector('[data-row-kind="ruler"]');
+    const alturaRegua = ruler ? ruler.getBoundingClientRect().height : 0;
+    const caixaRolador = scroller.getBoundingClientRect();
+    const caixaLinha = row.getBoundingClientRect();
+    const acima = caixaLinha.top - (caixaRolador.top + alturaRegua);
+    const abaixo = caixaLinha.bottom - caixaRolador.bottom;
+    if (acima < 0) scroller.scrollTop += acima;
+    else if (abaixo > 0) scroller.scrollTop += abaixo;
+  }, [selectedElementId, assinaturaDaOrdem]);
+
   function aplicaArrasteDeStrip(event, row) {
     if (!stripDragShouldApply(draggingStrip, event)) return;
     if (draggingStrip.kind === 'duration') {
@@ -2059,7 +2153,7 @@ export function TimelinePanel({
               </div>
             )}
 
-            {rows.map((row) => {
+            {linhasVisiveis.map((row) => {
               const Icon = KIND_ICON[row.kind] || Layers;
               const isActive = row.elementId === selectedElementId;
               // A chevron that expands NOTHING is noise: rows with a single
@@ -2105,7 +2199,7 @@ export function TimelinePanel({
                 && motion?.driver?.type === 'time' && Boolean(motion?.capabilities?.timing);
               return (
                 <Fragment key={row.elementId}>
-                  <div className={styles.timelineRow} data-row-kind="layer">
+                  <div className={styles.timelineRow} data-row-kind="layer" data-selected={isActive || undefined}>
                     <div className={styles.rowLabel} data-cell="layer" data-selected={isActive}>
                       {expandable ? (
                         <button

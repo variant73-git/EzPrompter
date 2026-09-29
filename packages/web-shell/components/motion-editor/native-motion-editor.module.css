@@ -729,6 +729,58 @@
   background-color: rgba(41, 102, 234, 0.08);
 }
 
+/* ---- Lane SELECIONADA: alta e generosa (decisão do dono, 2026-09-29).
+   A seleção acontece quase sempre clicando na animação NA TELA, não na lista —
+   então o que vale otimizar é a clareza e a área de manuseio DA LANE
+   SELECIONADA, não caber mais linhas. Cresce a linha inteira (rótulo e pista
+   juntos, senão as duas colunas desalinham), o clipe fica mais alto e centrado,
+   e os manípulos ganham área de pegada. */
+.timelineRow[data-selected] .rowLabel,
+.timelineRow[data-selected] .rowTrack {
+  height: 44px;
+}
+
+.timelineRow[data-selected] .timelineClip {
+  top: 12px;
+  height: 20px;
+  border-radius: 10px;
+}
+
+.timelineRow[data-selected] .timelineStripHandle {
+  width: 11px;
+  height: 26px;
+  border-radius: 5px;
+}
+
+/* A lane que acabou de trocar de lugar ACENDE por um instante — você vê para
+   onde ela foi, em vez de descobrir que ela sumiu (decisão do dono). */
+.timelineRow[data-reordenou] .rowLabel,
+.timelineRow[data-reordenou] .rowTrack {
+  animation: motionLaneReordenou 520ms ease-out;
+}
+
+@keyframes motionLaneReordenou {
+  0% { background-color: rgba(41, 102, 234, 0.34); }
+  100% { background-color: transparent; }
+}
+
+/* O crescimento é animado para ler como intenção, não como salto. */
+.timelineRow .rowLabel,
+.timelineRow .rowTrack,
+.timelineClip,
+.timelineStripHandle {
+  transition: height 140ms ease, top 140ms ease, width 140ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timelineRow .rowLabel,
+  .timelineRow .rowTrack,
+  .timelineClip,
+  .timelineStripHandle {
+    transition: none;
+  }
+}
+
 .layerChevron {
   display: grid;
   width: 16px;
