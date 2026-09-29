@@ -30,7 +30,7 @@ import { criarContabilidade } from './byte-ledger.js';
 import { parseContentRange } from './byte-range.js';
 import { referenceKindFor, rewriteDocumentReferences } from './rewrite-references.js';
 import { runtimeFetchMap, runtimeFetchShim } from './runtime-fetch-map.js';
-import { leadingDoctypeEnd } from '../motion-editor/native-clone-gateway.js';
+import { leadingDoctypeEnd } from './doctype-anchor.js';
 
 /**
  * SSRF — o produtor GRAVA o corpo de cada resposta num bundle que o usuário vê.
