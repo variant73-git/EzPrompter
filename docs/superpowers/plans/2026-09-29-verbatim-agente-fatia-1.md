@@ -90,3 +90,37 @@ Dois encaixes possíveis, e são medições distintas:
 Regras para o número valer: (1) confirmar o **id e o preço** do Sonnet 5.5 na doc oficial no dia do run — não usar a tabela de `lib/agent/cost.js`, que ainda só tem `claude-sonnet-4-6` ($3/$15); (2) custo = uso reportado da execução, por fase, no `WORKLOG.md`, como na execução 1; (3) qualidade pelo portão com autocontrole, nunca por opinião; (4) uma execução primeiro, variância depois.
 
 **Ordem:** (a) logo depois da execução 1, porque é a comparação mais limpa (tudo igual, só o modelo). (b) é outra frente (o clone por visão), quando o iter9 voltar à mesa.
+
+
+## 10. Execução 1 — resultado, auditado (Astra A) — 2026-09-29
+
+### O protocolo REAL (corrige o §6–7): farmminerals.com/promo, insumo = prompt do Adilson + 24 quadros por parada + URL viva. **Não** gsap.com, **não** pacote nativo. O piso 0,886 do gsap.com NÃO se transporta; o autocontrole do farmminerals está sendo medido agora.
+
+### Custo (o denominador)
+- **315.117 tokens** reportados pelo harness (entrada + saída; sem divisão, sem cache/imagem/raciocínio discriminados), 85 chamadas de ferramenta, fases do agente 17 min 07 s, envelope do harness ~18 min.
+- **"~US$ 4" RETIRADO**: não é derivável desses dados (preços de entrada e saída diferem 5×). Fica "0,3 M tokens"; dólares só com a divisão — a próxima execução tem que registrar entrada/saída/cache separados.
+
+### "O agente espelhou" — agora é número, não indício
+Sobreposição estrutural entre o `index.html` entregue e o HTML vivo capturado (native3):
+- sequência de tags: **99.76%** (1228 vs 1231 tags)
+- sequência de textos: **99.62%** (533 = 533)
+- scripts com o mesmo nome: **8/8 byte-idênticos**; diferença = os 2 schemas bloqueados por ORB (removidos) + jQuery sem o sufixo de hash.
+
+**Mas (Astra): isso é CUMPRIMENTO do prompt, não incapacidade.** "Keep the exact DOM and layout logic where observable" + URL viva torna o DOM observável → espelhar é obedecer. **Esta execução não testa a hipótese de homogeneização.**
+
+### O que o relatório do agente afirma e o que o portão pode confirmar
+Verificáveis pelo portão: altura, rolagem, texto/imagens, requisições na trajetória, console, SSIM, movimento, editabilidade, vestígios. **Auto-relato** (não provado): horários, 323 respostas, 369 downloads sem falha, 378+31 substituições, versões de bibliotecas, ffprobe, tablet/mobile/menu.
+SSIM do agente, os 24 (a lista tinha 7 dos 9 abaixo de 0,98 — os 2 que faltavam estão aqui): 000 0.61 · 001 0.93 · 002 0.98 · 003 0.96 · 004 0.99 · 005 1.00 · 006 0.98 · 007 0.97 · 008 0.90 · 009 1.00 · 010 0.83 · 011 0.69 · 012 1.00 · 013 1.00 · 014 1.00 · 015 0.99 · 016 0.99 · 017 1.00 · 018 0.99 · 019 1.00 · 020 1.00 · 021 1.00 · 022 1.00 · 023 1.00. Every frame below 0.95 was inspected: 000 = reference still shows the preloader (its load took 10.9 s; locally load fires at ~4 s so the intro had finished) — the intro choreography itself was compared against the reference video at 0.5 s steps and matches stage for stage; 001/008/010/011 = the reference caught SplitText char reveals mid-stagger (from:"random", capture delays up to 132 s in report.json) and looping videos at other playback moments; 003/007 side-by-side difference images show only the video frame / a reveal already completed. Tablet 768 and mobile 390 render with 0 errors / 0 broken images; MENU opens the side bar; CONTACT hover, grow-button click work.
+As justificativas (preloader 10,9 s vs ~4 s; SplitText aleatório; vídeo em outra fase) são **mecanismos plausíveis, não causas demonstradas** — exigem diff por região. E a diferença de timing do preloader **viola** "exact timing", não absolve.
+
+### O que discrimina de verdade (Astra)
+Native e espelho terem a mesma fidelidade não é inteiramente tautológico (o portão ainda pega falha de localização/asset/runtime), mas a comparação discrimina só **empacotamento, independência, custo e latência** — não homogeneização. A sonda de editabilidade detecta patologias (pe:none, split, obstrução), **não** conformidade a uma representação homogênea.
+
+**Métrica mínima proposta — Cobertura Canônica de Edição:** `unidades visíveis mapeadas 1:1 para um nó canônico e editáveis pela API padrão (sem HTML/JS opaco, sem adaptador específico) / unidades visíveis pré-selecionadas na referência`; a edição persiste após reload e não altera pixels fora do alvo além de tolerância. Denominador: texto, mídia e containers escolhidos ANTES na referência.
+
+**Menor mudança de prompt que testa a hipótese (execução 2):** trocar a cláusula do DOM por — *"Keep the exact rendered geometry and behavior, but express the page in Uncraft's canonical editor schema: one semantic editable node per visible unit, with no copied source DOM, page-specific selector graph, or executable page code. Original content, media and libraries may be reused."* As demais exigências (pixel, conteúdo, ordem, movimento, responsivo) impedem redesign. **Pré-requisito:** o schema canônico precisa existir por escrito; "clean, organized code" não é tratamento experimental.
+
+### Conclusão honesta HOJE
+- Evidência forte, agora estrutural, de que o agente produziu um **espelho localizado** — exatamente o que o prompt pediu.
+- Se o portão confirmar paridade, o **`native` é provisoriamente superior** para a tarefa "espelho local 1:1": mesmo resultado, 24 s, zero tokens.
+- **NÃO se pode concluir:** que o agente não consegue homogeneizar; que native e verbatim têm a mesma editabilidade (a medir); que a terceira via perde; que os SSIM baixos são inofensivos; quanto Sonnet custaria; que qualquer coisa generaliza para outros sites.
