@@ -77,3 +77,16 @@ Registrar, por execução: modelo; tokens de entrada/saída por etapa (investiga
 **Critério de aceite (sem ele é fé):** A/B pelo portão no MESMO site — prompt genérico × prompt adaptado — nas dimensões de fidelidade, movimento e vestígios. Se o adaptado não ganhar de forma clara, a adaptação não paga (mesmo custando ~US$ 0,0001 por site em JEV).
 
 **Ordem:** depois das execuções 1 e 2 (verbatim puro e terceira via), porque só faz sentido adaptar um prompt cujo resultado base já foi medido.
+
+## 9. Fila — Sonnet 5.5 na receita, medir custo (pedido do Adilson, 2026-09-29)
+
+Dois encaixes possíveis, e são medições distintas:
+
+| encaixe | o que troca | contra quem compara |
+|---|---|---|
+| **(a) o agente do verbatim puro** | a execução inteira roda em Sonnet 5.5 em vez de Fable 5.1 | execução 1 (Fable): mesmo prompt, mesmos quadros, mesma URL, mesmo portão |
+| **(b) a emissão por visão (iter9 / `extract-llm`)** | `STRONG_VISION_MODEL` = Sonnet 5.5 no lugar de `gpt-5.5` / `gpt-5.6-terra` | a tabela de abril (Gemini 3.1 Pro $0,525; Sonnet 4.6 "nada muito melhor", 2× o preço) |
+
+Regras para o número valer: (1) confirmar o **id e o preço** do Sonnet 5.5 na doc oficial no dia do run — não usar a tabela de `lib/agent/cost.js`, que ainda só tem `claude-sonnet-4-6` ($3/$15); (2) custo = uso reportado da execução, por fase, no `WORKLOG.md`, como na execução 1; (3) qualidade pelo portão com autocontrole, nunca por opinião; (4) uma execução primeiro, variância depois.
+
+**Ordem:** (a) logo depois da execução 1, porque é a comparação mais limpa (tudo igual, só o modelo). (b) é outra frente (o clone por visão), quando o iter9 voltar à mesa.
