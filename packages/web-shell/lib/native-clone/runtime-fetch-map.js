@@ -10,9 +10,11 @@
  * O DESENHO (o que o Astra prescreveu): manifesto indexado por IDENTIDADE de requisição
  * — método + URL + hash do corpo — guardando o ENVELOPE (status, cabeçalhos, corpo). O
  * envelope vira arquivo dentro do pacote (`_replay/<id>`), e o remendo faz um GET local
- * dele e reconstrói uma `Response` com o status e os cabeçalhos originais. Sem gateway,
- * sem lógica de servidor, e **nenhum POST chega a servidor algum** — o que fecha o
- * confused deputy por construção. Funciona no portão e no produto.
+ * dele e reconstrói uma `Response` com o status e os cabeçalhos originais. Sem gateway
+ * e sem lógica de servidor. ⚠️ A afirmação anterior "nenhum POST chega a servidor
+ * algum" era FALSA (Astra B2 #1): um miss passava ao `fetch` original, e CORS impede
+ * LER a resposta, não ENVIAR o pedido. Agora um método mutável a outra origem, sem
+ * envelope, FALHA como falharia offline; só GET/HEAD (ou mesma origem) passam.
  *
  * A identidade é calculada com a MESMA fórmula no Node (captura) e no navegador
  * (SubtleCrypto): qualquer divergência vira "não encontrado", nunca replay errado.
@@ -23,8 +25,12 @@
  *    originais; um site que os leia vê outra coisa. Status e cabeçalhos são fiéis.
  *  • Corpo `FormData`/multipart não replaya: o navegador gera outra fronteira a cada
  *    envio e o hash nunca bate. Passa intacto.
- *  • XHR: só GET/HEAD sem corpo (identidade resolvível de forma síncrona em `open`);
- *    XHR com corpo passa intacto — `send` não pode esperar um hash assíncrono.
+ *  • XHR: FORA. Trocar a URL em `open()` não é replay (status/cabeçalhos do servidor
+ *    estático, corpo cru). Um XHR sai e é bloqueado. Replay real exige proxy completo.
+ *  • Identidade inclui `content-type`, `authorization` e `x-*` do pedido; cabeçalhos que
+ *    o navegador acrescenta sozinho (accept, cookie, sec-*) ficam fora — o objeto
+ *    Request não os vê, então incluí-los daria falso miss. Resíduo: resposta que varia
+ *    por cookie de sessão não é distinguível e cai no mesmo id.
  *  • Não alcança `img.src`, CSS, worker, iframe, `sendBeacon`, `EventSource`,
  *    WebSocket, nem uma substituição de `fetch` posterior à nossa.
  *  • Sem SubtleCrypto (contexto não seguro — http fora de localhost) tudo passa
@@ -48,61 +54,62 @@ function jsonParaScript(valor) {
  * @param {Map<string, Array<{metodo,url,status,statusText,headers,contentType,bytes}>>} envelopes
  * @param {Map<string,string>} mapa URL original -> caminho no pacote (para reescrever JSON)
  */
-export function montarReplay(envelopes, mapa) {
+export function montarReplay(envelopes, mapa, { marcador = '__UNCRAFT_ORIGIN__' } = {}) {
   const manifesto = {};
-  const porUrlGet = {};
   const arquivos = [];
   for (const [id, lista] of envelopes || []) {
     const entradas = [];
     lista.forEach((env, n) => {
       const path = n === 0 ? `_replay/${id}` : `_replay/${id}.${n}`;
       let body = env.bytes;
+      let reescrito = false;
       // Corpo JSON leva a MESMA reescrita dos assets: é assim que a URL absoluta que o
-      // JS põe em `img.src` chega já local (caminho relativo à RAIZ, ver
-      // rewrite-references.js).
-      if (/^application\/json/i.test(env.contentType || '')) {
+      // JS põe em `img.src` chega já local. O marcador é por pacote e conferido AUSENTE
+      // do corpo antes (Astra B2 #7): se o corpo já o contiver, não se reescreve, para
+      // nunca corromper conteúdo legítimo na troca.
+      if (/^application\/json/i.test(env.contentType || '') && env.url && !Buffer.from(env.bytes).includes(marcador)) {
         try {
-          body = Buffer.from(rewriteDocumentReferences({
+          const texto = rewriteDocumentReferences({
             text: Buffer.from(env.bytes).toString('utf8'), kind: 'json',
-            resourceUrl: env.url, assetPath: path, map: mapa,
-          }), 'utf8');
-        } catch { body = env.bytes; }
+            resourceUrl: env.url, assetPath: path, map: mapa, marcadorDeOrigem: marcador,
+          });
+          reescrito = texto.includes(marcador);
+          body = reescrito ? Buffer.from(texto, 'utf8') : env.bytes;
+        } catch { body = env.bytes; reescrito = false; }
       }
+      const bytes = Buffer.byteLength(body);
       arquivos.push({ path, body: new Uint8Array(body), contentType: env.contentType || undefined });
-      // ⚠️ O marcador de origem so e resolvido no caminho do FETCH (o remendo reconstroi
-      // a Response e troca o marcador). Um XHR GET recebe o ARQUIVO CRU pelo indice
-      // sincrono — com o marcador nao resolvido, o site leria "__UNCRAFT_ORIGIN__/..."
-      // como URL e quebraria. Envelope reescrito fica FORA do indice do XHR: prefere-se
-      // "nao replaya por XHR" (a chamada sai e e bloqueada, como antes) a "replaya
-      // errado". Residual declarado; corrigir exige interceptar responseText.
-      const carregaMarcador = Buffer.from(body).includes('__UNCRAFT_ORIGIN__');
+      // ⚠️ SEM `metodo`/`url` no manifesto público (Astra B2 #6): query com token vazaria
+      // no HTML. SEM índice de XHR (Astra B2 #4): trocar a URL em `open()` não é replay
+      // — o XHR via status e cabeçalhos do servidor estático e o corpo cru. XHR fica
+      // declaradamente fora; a chamada sai e é bloqueada, como sem o remendo.
       entradas.push({
         status: env.status, statusText: env.statusText || '', headers: env.headers || {}, path: `./${path}`,
-        // Diagnosticável: o manifesto diz o que cada identidade era.
-        metodo: env.metodo, url: env.url,
-        // Só corpo de texto passa pela troca do marcador de origem.
-        texto: /^(application\/json|text\/|application\/(javascript|xml))/i.test(env.contentType || ''),
+        bytes,
+        // Só o envelope que FOI reescrito passa pela troca do marcador.
+        resolveMarcador: reescrito,
       });
-      // Índice síncrono para XHR: GET/HEAD sem corpo resolve pela URL.
-      const m = String(env.metodo || 'GET').toUpperCase();
-      if (n === 0 && (m === 'GET' || m === 'HEAD') && !carregaMarcador) porUrlGet[env.url] = `./${path}`;
     });
     manifesto[id] = entradas;
   }
-  return { manifesto, porUrlGet, arquivos };
+  return { manifesto, arquivos };
 }
 
 /**
  * Script do remendo. Vazio quando não há nada a replayar — um clone sem chamada de
  * runtime não carrega código que não precisa.
  */
-export function runtimeFetchShim(manifesto, porUrlGet = {}) {
+export function runtimeFetchShim(manifesto, { marcador = '__UNCRAFT_ORIGIN__' } = {}) {
   if (!manifesto || !Object.keys(manifesto).length) return '';
   return `<script data-uncraft-runtime-fetch-map>(function(){
   if (window.__uncraftFetchMapped) return;
   window.__uncraftFetchMapped = true;
   var M = ${jsonParaScript(manifesto)};
-  var G = ${jsonParaScript(porUrlGet || {})};
+  var MARCADOR = ${jsonParaScript(marcador)};
+  // Base FIXADA na injecao (Astra B2 #5): depois de pushState para /a/b, resolver
+  // './_replay' contra location.href procuraria /a/_replay. Este script esta logo
+  // apos o doctype, antes de qualquer codigo do site: location.href AQUI e a entrada.
+  var BASE = location.href;
   var vezes = {};
   var subtle = (window.crypto && window.crypto.subtle) || null;
   var enc = new TextEncoder();
@@ -111,14 +118,26 @@ export function runtimeFetchShim(manifesto, porUrlGet = {}) {
     for (var i = 0; i < b.length; i++) s += (b[i] < 16 ? '0' : '') + b[i].toString(16);
     return s;
   }
-  // MESMA formula da captura: sha256(METODO + LF + url + LF + sha256hex(corpo)).
-  function identidade(metodo, url, corpo) {
+  // MESMA formula da captura: sha256(METODO + LF + url + LF + sha256hex(corpo) + LF +
+  // cabecalhos de identidade ordenados). O metodo ja vem normalizado pela plataforma
+  // (so os seis que o Fetch normaliza vao a maiusculas; 'patch' fica 'patch').
+  function cabecalhosDeIdentidade(headers) {
+    var pares = [];
+    headers.forEach(function (valor, nome) {
+      var n = nome.toLowerCase();
+      if (n === 'content-type' || n === 'authorization' || n.indexOf('x-') === 0) pares.push(n + ':' + String(valor).trim());
+    });
+    return pares.sort().join('\\n');
+  }
+  function identidade(req, corpo) {
     return subtle.digest('SHA-256', corpo).then(function (h) {
-      var texto = String(metodo || 'GET').toUpperCase() + '\\n' + url + '\\n' + hex(h);
+      var texto = req.method + '\\n' + req.url + '\\n' + hex(h) + '\\n' + cabecalhosDeIdentidade(req.headers);
       return subtle.digest('SHA-256', enc.encode(texto));
     }).then(hex);
   }
-  function local(caminho) { return new URL(caminho, location.href).href; }
+  function local(caminho) { return new URL(caminho, BASE).href; }
+  function mesmaOrigem(url) { try { return new URL(url, BASE).origin === location.origin; } catch (e) { return false; } }
+  function falhaOffline() { return Promise.reject(new TypeError('Failed to fetch')); }
   var fOriginal = window.fetch;
   if (typeof fOriginal === 'function' && subtle) {
     window.fetch = function (entrada, init) {
@@ -140,38 +159,47 @@ export function runtimeFetchShim(manifesto, porUrlGet = {}) {
         var fonte = (typeof Request !== 'undefined' && entrada instanceof Request) ? entrada.clone() : entrada;
         req = new Request(fonte, init);
       } catch (e) { return passthrough(); }
-      // FormData/multipart nunca bate (fronteira aleatoria): passa intacto.
+      // FALHA FECHADA para metodo mutavel a OUTRA origem (Astra B2 #1): um miss NAO
+      // pode virar POST real no servidor original — CORS impede LER a resposta, nao
+      // ENVIAR o pedido. O clone e offline; a chamada falha como falharia sem rede.
+      var mutavel = !(req.method === 'GET' || req.method === 'HEAD');
+      var externa = !mesmaOrigem(req.url);
+      var semRede = function () { return (mutavel && externa) ? falhaOffline() : passthrough(); };
+      // FormData/multipart nunca bate (fronteira aleatoria): e um miss por construcao.
       var ct = req.headers.get('content-type') || '';
-      if (/multipart\\/form-data/i.test(ct)) return passthrough();
+      if (/multipart\\/form-data/i.test(ct)) return semRede();
       return req.arrayBuffer().then(function (corpo) {
-        return identidade(req.method, req.url, corpo);
+        return identidade(req, corpo);
       }).then(function (id) {
         var lista = M[id];
-        if (!lista || !lista.length) return passthrough();
+        if (!lista || !lista.length) return semRede();
         var n = vezes[id] || 0; vezes[id] = n + 1;
-        var env = lista[Math.min(n, lista.length - 1)];
+        // Ocorrencias ESGOTADAS = miss (Astra B2 #3): repetir a ultima resposta para
+        // sempre fabricava respostas para chamadas que nunca foram capturadas.
+        if (n >= lista.length) return semRede();
+        var env = lista[n];
         return fOriginal.call(window, local(env.path), { cache: 'no-store' }).then(function (r) {
-          return env.texto ? r.text() : r.arrayBuffer();
-        }).then(function (corpo) {
-          // O marcador de origem vira a origem REAL de onde o clone esta sendo servido:
-          // a URL continua absoluta http(s), que e o que o codigo do site testa.
-          var saida = env.texto ? corpo.split('__UNCRAFT_ORIGIN__').join(location.origin) : corpo;
-          return new Response(saida, { status: env.status, statusText: env.statusText || '', headers: env.headers || {} });
-        }, passthrough);   // so a falha ao ler o ENVELOPE local cai no passthrough
-      }, passthrough);     // so a falha na fase de IDENTIDADE cai no passthrough
+          // O arquivo local tem que ser o envelope — nao um 404, nem o index.html de
+          // fallback de uma SPA embrulhado como corpo (Astra B2 #5).
+          if (!r.ok) throw new TypeError('envelope ausente');
+          return r.arrayBuffer();
+        }).then(function (buf) {
+          if (typeof env.bytes === 'number' && buf.byteLength !== env.bytes) throw new TypeError('envelope com tamanho errado');
+          var corpo = buf;
+          if (env.resolveMarcador) {
+            // So o envelope que FOI reescrito: o marcador vira a origem REAL de onde o
+            // clone esta sendo servido, e a URL continua absoluta http(s).
+            corpo = new TextDecoder().decode(buf).split(MARCADOR).join(location.origin);
+          }
+          // Status sem corpo exigem body null, senao new Response lanca (Astra B2 #5).
+          var semCorpo = env.status === 204 || env.status === 205 || env.status === 304 || req.method === 'HEAD';
+          return new Response(semCorpo ? null : corpo, { status: env.status, statusText: env.statusText || '', headers: env.headers || {} });
+        }).then(null, semRede);   // QUALQUER falha do caminho de replay local = miss
+      }, semRede);                // falha na fase de IDENTIDADE: idem
     };
   }
-  var abrirOriginal = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function (metodo, url) {
-    var args = Array.prototype.slice.call(arguments);
-    try {
-      var m = String(metodo || 'GET').toUpperCase();
-      if (m === 'GET' || m === 'HEAD') {
-        var abs = new URL(url, document.baseURI).href;
-        if (Object.prototype.hasOwnProperty.call(G, abs)) args[1] = local(G[abs]);
-      }
-    } catch (e) { /* nunca quebrar a pagina por causa do remendo */ }
-    return abrirOriginal.apply(this, args);
-  };
+  // XHR: declaradamente FORA (Astra B2 #4). Trocar a URL em open() entregava status e
+  // cabecalhos do servidor estatico e o corpo cru — nao era replay. Um XHR sai e e
+  // bloqueado, como sem o remendo. Replay de XHR exige um proxy completo do objeto.
 })();</script>`;
 }

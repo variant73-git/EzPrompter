@@ -114,16 +114,51 @@ const hexSha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 // método + URL + hash do corpo, e a MESMA fórmula roda no navegador (SubtleCrypto)
 // — qualquer divergência entre os dois lados vira "não encontrado", nunca replay
 // errado. Cabeçalhos que carregam segredo ou são de transporte ficam de fora.
-export function identidadeDeRequisicao(metodo, url, corpo) {
-  const corpoHash = hexSha256(corpo && corpo.length ? corpo : Buffer.alloc(0));
-  return hexSha256(`${String(metodo || 'GET').toUpperCase()}\n${url}\n${corpoHash}`);
+// ⚠️ FALSO MATCH existia (Astra B2 #2): método + URL + corpo NÃO identificam uma
+// resposta HTTP — a mesma chamada com `Authorization`, `Content-Type` ou `X-Tenant`
+// diferentes recebe respostas diferentes e colidia no mesmo id. Entram na identidade
+// os cabeçalhos que o SCRIPT pode ter posto e que os dois lados enxergam igual:
+// `content-type`, `authorization` e todo `x-*`. (Os que o NAVEGADOR acrescenta —
+// accept, accept-language, cookie, sec-*, origin, referer — o Playwright vê e o
+// objeto Request não; incluí-los daria falso MISS, então ficam fora. Resíduo: resposta
+// que varia por cookie de sessão cai no mesmo id.)
+// E o método só é normalizado para maiúsculas nos que o próprio Fetch normaliza:
+// `patch` e `PATCH` são métodos DISTINTOS na plataforma e viravam o mesmo id.
+const METODOS_NORMALIZADOS = new Set(['DELETE', 'GET', 'HEAD', 'OPTIONS', 'POST', 'PUT']);
+export function metodoCanonico(metodo) {
+  const m = String(metodo || 'GET');
+  return METODOS_NORMALIZADOS.has(m.toUpperCase()) ? m.toUpperCase() : m;
 }
-const CABECALHO_PROIBIDO = /^(set-cookie|cookie|authorization|proxy-authorization|transfer-encoding|connection|content-length|content-encoding|keep-alive|strict-transport-security)$/i;
-export function cabecalhosDeReplay(headers) {
-  const saida = {};
+export function cabecalhosDeIdentidade(headers) {
+  const pares = [];
   for (const [nome, valor] of Object.entries(headers || {})) {
-    if (CABECALHO_PROIBIDO.test(nome)) continue;
-    saida[nome.toLowerCase()] = String(valor);
+    const n = nome.toLowerCase();
+    if (n === 'content-type' || n === 'authorization' || n.startsWith('x-')) pares.push(`${n}:${String(valor).trim()}`);
+  }
+  return pares.sort().join('\n');
+}
+export function identidadeDeRequisicao(metodo, url, corpo, headers = {}) {
+  const corpoHash = hexSha256(corpo && corpo.length ? corpo : Buffer.alloc(0));
+  return hexSha256(`${metodoCanonico(metodo)}\n${url}\n${corpoHash}\n${cabecalhosDeIdentidade(headers)}`);
+}
+// ⚠️ ALLOWLIST, não denylist (Astra B2 #6). Uma Response sintética torna legível o que
+// o CORS original ESCONDIA: o site real lia `null` em `X-Internal-Token` sem
+// `Access-Control-Expose-Headers`; o replay entregava o segredo. Resposta de OUTRA
+// origem expõe só os safelisted do CORS + os que a própria resposta expôs; resposta da
+// MESMA origem expõe o que o JavaScript já podia ler ao vivo. Fora sempre: transporte,
+// políticas, validadores que a reescrita invalida, e `location` (redirect não é
+// modelado).
+const CORS_SAFELISTED = new Set(['cache-control', 'content-language', 'content-length', 'content-type', 'expires', 'last-modified', 'pragma']);
+const NUNCA_NO_REPLAY = /^(set-cookie|cookie|authorization|proxy-authorization|transfer-encoding|connection|content-length|content-encoding|keep-alive|strict-transport-security|access-control-.*|content-security-policy.*|x-frame-options|cross-origin-.*|date|vary|server|location|etag|digest|content-range|alt-svc|report-to|nel)$/i;
+export function cabecalhosDeReplay(headers, { mesmaOrigem = true } = {}) {
+  const todos = {};
+  for (const [nome, valor] of Object.entries(headers || {})) todos[nome.toLowerCase()] = String(valor);
+  const expostos = new Set((todos['access-control-expose-headers'] || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
+  const saida = {};
+  for (const [nome, valor] of Object.entries(todos)) {
+    if (NUNCA_NO_REPLAY.test(nome)) continue;
+    if (!mesmaOrigem && !CORS_SAFELISTED.has(nome) && !expostos.has(nome) && !expostos.has('*')) continue;
+    saida[nome] = valor;
   }
   return saida;
 }
@@ -310,7 +345,35 @@ export async function captureNativeBundle(url, opts = {}) {
   // Envelopes de fetch/XHR por IDENTIDADE (método+URL+corpo). Lista por identidade:
   // a mesma chamada repetida pode receber respostas diferentes, e o replay entrega a
   // n-ésima na ordem em que foram vistas.
-  const envelopes = new Map();   // identidade -> [{ metodo, url, status, statusText, headers, contentType, bytes }]
+  const envelopes = new Map();   // identidade -> [{ url, status, statusText, headers, contentType, bytes, mesmaOrigem }]
+  // ORDEM DE EMISSÃO do pedido, não de conclusão: a ocorrência repetida percorre um
+  // caminho mais curto e terminava ANTES da primeira — o replay entregaria a 2ª
+  // resposta à 1ª chamada do site (medido no teste de integração).
+  const ordemDoPedido = new WeakMap();
+  let seqPedido = 0;
+  const registrarEnvelope = (req, res, u, bytes) => {
+    const corpoReq = typeof req.postDataBuffer === 'function' ? (req.postDataBuffer() || Buffer.alloc(0)) : Buffer.alloc(0);
+    let mesmaOrigem = false;
+    try { mesmaOrigem = new URL(u).origin === alvo.origin; } catch { mesmaOrigem = false; }
+    const id = identidadeDeRequisicao(req.method(), u, corpoReq, req.headers());
+    const lista = envelopes.get(id) || [];
+    // `url` fica aqui só para a reescrita de JSON resolver referências relativas; NÃO
+    // vai para o manifesto público (Astra B2 #6): query com token apareceria no HTML.
+    lista.push({
+      seq: ordemDoPedido.get(req) ?? Number.MAX_SAFE_INTEGER,
+      url: u, status: res.status(), statusText: res.statusText() || '',
+      headers: cabecalhosDeReplay(res.headers(), { mesmaOrigem }),
+      contentType: (res.headers()['content-type'] || '').split(';')[0].trim(),
+      bytes, mesmaOrigem,
+    });
+    envelopes.set(id, lista);
+  };
+  // Ocorrência REPETIDA (mesma URL já reservada): o dedup de assets a descartaria e o
+  // replay fabricaria a última resposta para sempre (Astra B2 #3). Lê-se o corpo com
+  // a MESMA guarda de tamanho (declarado antes de materializar) e um teto de tempo —
+  // uma resposta que nunca termina não pode segurar a captura, e vira NOMEADA.
+  const ENVELOPE_REPETIDO_TETO_MS = 8_000;
+  const envelopesRepetidosPerdidos = [];
   // ⚠️ O `Promise.race` de fora rejeita, mas nada cancelava a captura — o
   // navegador seguia rolando por horas numa página gigante. Achado P0 do Sol.
   let cancelado = false;
@@ -325,6 +388,7 @@ export async function captureNativeBundle(url, opts = {}) {
     const page = emprestada ? session.page : await context.newPage();
     if (emprestada) await page.setViewportSize(viewport).catch(() => {});
 
+    page.on('request', (req) => { ordemDoPedido.set(req, ++seqPedido); });
     page.on('requestfailed', (req) => {
       const u = req.url();
       if (!/^https?:/i.test(u)) return;
@@ -350,7 +414,24 @@ export async function captureNativeBundle(url, opts = {}) {
           // conservadora, nunca fura o teto.
           const req = res.request();
           const documentoPrincipal = req.resourceType() === 'document' && req.isNavigationRequest() && req.frame() === page.mainFrame();
-          if (recursos.has(u) && !documentoPrincipal) return;
+          if (recursos.has(u) && !documentoPrincipal) {
+            const tipoRep = req.resourceType();
+            if ((tipoRep === 'fetch' || tipoRep === 'xhr') && !cancelado) {
+              const declarado = Number(res.headers()['content-length'] || 0);
+              if (!(declarado > ENVELOPE_MAX_BYTES)) {
+                let temporizador = null;
+                try {
+                  const corpoRep = await Promise.race([
+                    res.body(),
+                    new Promise((_, rej) => { temporizador = setTimeout(() => rej(new Error('teto')), ENVELOPE_REPETIDO_TETO_MS); }),
+                  ]);
+                  if (corpoRep && corpoRep.byteLength <= ENVELOPE_MAX_BYTES) registrarEnvelope(req, res, u, corpoRep);
+                } catch (_) { envelopesRepetidosPerdidos.push(u); }
+                finally { if (temporizador) clearTimeout(temporizador); }
+              }
+            }
+            return;
+          }
           // GERAÇÃO por URL: o recarregamento pode chegar enquanto o handler da
           // interstitial ainda lê o corpo (vaga ainda nula) — substituir "só
           // vaga preenchida" descartava o documento real por timing (oscilou
@@ -500,16 +581,7 @@ export async function captureNativeBundle(url, opts = {}) {
           // então estender é só registrar antes do dedup — com as mesmas guardas.
           const tipoDoRecurso = req.resourceType();
           if ((tipoDoRecurso === 'fetch' || tipoDoRecurso === 'xhr') && bytes.byteLength <= ENVELOPE_MAX_BYTES) {
-            const corpoReq = typeof req.postDataBuffer === 'function' ? (req.postDataBuffer() || Buffer.alloc(0)) : Buffer.alloc(0);
-            const id = identidadeDeRequisicao(req.method(), u, corpoReq);
-            const lista = envelopes.get(id) || [];
-            lista.push({
-              metodo: req.method(), url: u, status: res.status(), statusText: res.statusText() || '',
-              headers: cabecalhosDeReplay(res.headers()),
-              contentType: (res.headers()['content-type'] || '').split(';')[0].trim(),
-              bytes,
-            });
-            envelopes.set(id, lista);
+            registrarEnvelope(req, res, u, bytes);
           }
         } catch (_) { /* resposta sem corpo (redirect, 204, 304) não é falha */ }
         finally {
@@ -982,8 +1054,13 @@ export async function captureNativeBundle(url, opts = {}) {
 
     // Mapa das respostas que só existem em tempo de execução (fetch/XHR) e o script
     // que as redireciona para o pacote. Vazio => nada é injetado.
-    const { manifesto: manifestoDeReplay, porUrlGet, arquivos: arquivosDeReplay } = montarReplay(envelopes, mapa);
-    const remendoDeFetch = runtimeFetchShim(manifestoDeReplay, porUrlGet);
+    // Marcador de origem ALEATÓRIO por pacote (Astra B2 #7): um marcador fixo trocado
+    // por split/join corrompia conteúdo legítimo que o contivesse. `montarReplay` ainda
+    // confere que o corpo não o contém antes de reescrever.
+    for (const lista of envelopes.values()) lista.sort((a, b) => a.seq - b.seq);
+    const marcador = `__UNCRAFT_ORIGIN_${createHash('sha1').update(String(Date.now()) + Math.random()).digest('hex').slice(0, 12)}__`;
+    const { manifesto: manifestoDeReplay, arquivos: arquivosDeReplay } = montarReplay(envelopes, mapa, { marcador });
+    const remendoDeFetch = runtimeFetchShim(manifestoDeReplay, { marcador });
 
     const assets = [];
     for (const [u, valor] of congelados) {
@@ -1117,6 +1194,8 @@ export async function captureNativeBundle(url, opts = {}) {
         // pacote, e quantos envelopes ao todo (a mesma chamada pode ter várias).
         chamadasDeRuntimeMapeadas: Object.keys(manifestoDeReplay).length,
         envelopesDeReplay: arquivosDeReplay.length,
+        // Ocorrências repetidas de fetch/XHR cujo corpo não chegou no teto: NOMEADAS.
+        envelopesRepetidosPerdidos: envelopesRepetidosPerdidos.slice(0, 20),
         pedidosQueFalharam: (() => {
           const lista = [...recusados].map(([u, info]) => ({ u, erro: info.erro, tipo: info.tipo }));
           const nossa = lista.filter((x) => geracao.has(x.u));

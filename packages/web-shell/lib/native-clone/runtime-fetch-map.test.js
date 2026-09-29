@@ -2,25 +2,31 @@ import { webcrypto } from 'node:crypto';
 import vm from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { montarReplay, runtimeFetchShim } from './runtime-fetch-map.js';
-import { cabecalhosDeReplay, identidadeDeRequisicao } from './capture-bundle.js';
+import { cabecalhosDeReplay, identidadeDeRequisicao, metodoCanonico } from './capture-bundle.js';
 
 // A formula do NAVEGADOR, transcrita do remendo, rodando sobre o SubtleCrypto do Node.
-async function identidadeNoNavegador(metodo, url, corpo) {
+// `metodo` chega como a plataforma o entrega em `req.method` (ja normalizado).
+async function identidadeNoNavegador(metodo, url, corpo, headers = {}) {
   const subtle = webcrypto.subtle;
   const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
   const h = await subtle.digest('SHA-256', corpo);
-  const texto = `${String(metodo || 'GET').toUpperCase()}\n${url}\n${hex(h)}`;
+  const pares = [];
+  new Headers(headers).forEach((valor, nome) => {
+    const n = nome.toLowerCase();
+    if (n === 'content-type' || n === 'authorization' || n.startsWith('x-')) pares.push(`${n}:${String(valor).trim()}`);
+  });
+  const texto = `${metodo}\n${url}\n${hex(h)}\n${pares.sort().join('\n')}`;
   return hex(await subtle.digest('SHA-256', new TextEncoder().encode(texto)));
 }
 
 describe('identidade de requisição', () => {
-  it('a formula do Node e a do navegador dao o MESMO id (paridade)', async () => {
+  it('a formula do Node e a do navegador dao o MESMO id (paridade), com cabecalhos', async () => {
     const corpo = Buffer.from('{"query":"{core{me{photo}}}"}', 'utf8');
     const url = 'https://site/community/index.php?app=x&controller=api';
-    const node = identidadeDeRequisicao('post', url, corpo);
-    const pagina = await identidadeNoNavegador('POST', url, new Uint8Array(corpo));
+    const h = { 'Content-Type': 'application/json', Accept: '*/*', 'X-Csrf': 'abc' };
+    const node = identidadeDeRequisicao('post', url, corpo, h);
+    const pagina = await identidadeNoNavegador('POST', url, new Uint8Array(corpo), h);
     expect(node).toBe(pagina);
-    // GET sem corpo tambem.
     expect(identidadeDeRequisicao('GET', url, Buffer.alloc(0))).toBe(await identidadeNoNavegador('GET', url, new Uint8Array(0)));
   });
 
@@ -30,8 +36,41 @@ describe('identidade de requisição', () => {
     expect(identidadeDeRequisicao('POST', url, Buffer.from('a'))).not.toBe(identidadeDeRequisicao('GET', url, Buffer.from('a')));
   });
 
-  it('cabeçalhos de segredo e de transporte ficam fora; os de conteudo entram', () => {
-    const h = cabecalhosDeReplay({ 'Content-Type': 'application/json', 'Set-Cookie': 'a=b', 'X-Csrf-Token': 't', 'Content-Length': '9', 'Content-Encoding': 'br' });
+  // Astra B2 #2: metodo+URL+corpo colidiam com Authorization/Content-Type diferentes.
+  it('Authorization, Content-Type e x-* distinguem; Accept/Cookie (do navegador) nao', () => {
+    const url = 'https://site/api'; const c = Buffer.from('q');
+    const base = identidadeDeRequisicao('POST', url, c, { 'content-type': 'application/json' });
+    expect(identidadeDeRequisicao('POST', url, c, { 'content-type': 'application/json', authorization: 'Bearer a' })).not.toBe(base);
+    expect(identidadeDeRequisicao('POST', url, c, { 'content-type': 'text/plain' })).not.toBe(base);
+    expect(identidadeDeRequisicao('POST', url, c, { 'content-type': 'application/json', 'x-tenant': 't2' })).not.toBe(base);
+    // O que o navegador acrescenta sozinho nao entra (o objeto Request nao o ve).
+    expect(identidadeDeRequisicao('POST', url, c, { 'Content-Type': 'application/json', accept: '*/*', cookie: 'a=b', 'sec-fetch-mode': 'cors' })).toBe(base);
+  });
+
+  it('so os seis metodos que o Fetch normaliza vao a maiusculas: patch != PATCH', () => {
+    expect(metodoCanonico('post')).toBe('POST');
+    expect(metodoCanonico('delete')).toBe('DELETE');
+    expect(metodoCanonico('patch')).toBe('patch');
+    expect(metodoCanonico('PATCH')).toBe('PATCH');
+    expect(identidadeDeRequisicao('patch', 'https://s/a', Buffer.alloc(0))).not.toBe(identidadeDeRequisicao('PATCH', 'https://s/a', Buffer.alloc(0)));
+  });
+
+  // Astra B2 #6: allowlist. Uma Response sintetica torna legivel o que o CORS escondia.
+  it('replay de OUTRA origem expoe so safelisted + Access-Control-Expose-Headers', () => {
+    const h = cabecalhosDeReplay({
+      'Content-Type': 'application/json', 'X-Internal-Token': 'segredo', 'X-Public': 'p',
+      'Access-Control-Expose-Headers': 'X-Public', 'Access-Control-Allow-Origin': '*',
+      'Set-Cookie': 'a=b', ETag: '"1"', Vary: 'Origin', 'Cache-Control': 'no-store', Location: '/x',
+    }, { mesmaOrigem: false });
+    expect(h).toEqual({ 'content-type': 'application/json', 'x-public': 'p', 'cache-control': 'no-store' });
+  });
+
+  it('replay da MESMA origem expoe o que o JS ja lia ao vivo, nunca transporte/politica/validador', () => {
+    const h = cabecalhosDeReplay({
+      'Content-Type': 'application/json', 'X-Csrf-Token': 't', 'Set-Cookie': 'a=b', 'Content-Length': '9',
+      'Content-Encoding': 'br', 'Access-Control-Allow-Origin': '*', 'Content-Security-Policy': "default-src 'self'",
+      ETag: '"1"', Digest: 'sha-256=x', 'Content-Range': 'bytes 0-1/2', Location: '/x', Vary: 'Accept', Date: 'x',
+    });
     expect(h).toEqual({ 'content-type': 'application/json', 'x-csrf-token': 't' });
   });
 });
@@ -39,10 +78,10 @@ describe('identidade de requisição', () => {
 describe('montarReplay + remendo', () => {
   const envelopes = () => new Map([
     ['id1', [
-      { metodo: 'POST', url: 'https://site/api', status: 200, statusText: 'OK', headers: { 'content-type': 'application/json' }, contentType: 'application/json', bytes: Buffer.from('{"foto":"https://site/media/f.png"}') },
-      { metodo: 'POST', url: 'https://site/api', status: 201, statusText: 'Created', headers: {}, contentType: 'application/json', bytes: Buffer.from('{"n":2}') },
+      { url: 'https://site/api', status: 200, statusText: 'OK', headers: { 'content-type': 'application/json' }, contentType: 'application/json', bytes: Buffer.from('{"foto":"https://site/media/f.png"}') },
+      { url: 'https://site/api', status: 201, statusText: 'Created', headers: {}, contentType: 'application/json', bytes: Buffer.from('{"n":2}') },
     ]],
-    ['id2', [{ metodo: 'GET', url: 'https://site/dados', status: 200, statusText: '', headers: {}, contentType: 'text/plain', bytes: Buffer.from('ola') }]],
+    ['id2', [{ url: 'https://site/dados', status: 200, statusText: '', headers: {}, contentType: 'text/plain', bytes: Buffer.from('ola') }]],
   ]);
   const mapa = new Map([['https://site/media/f.png', 'media/f.png']]);
 
@@ -53,24 +92,31 @@ describe('montarReplay + remendo', () => {
     expect(manifesto.id1[1].path).toBe('./_replay/id1.1');
   });
 
-  it('corpo JSON do envelope sai REESCRITO (e o que faz img.src ficar local)', () => {
-    const { arquivos } = montarReplay(envelopes(), mapa);
-    expect(JSON.parse(Buffer.from(arquivos[0].body).toString('utf8')).foto).toBe('__UNCRAFT_ORIGIN__/media/f.png');
+  it('corpo JSON do envelope sai REESCRITO com o marcador do pacote, e so ele resolve o marcador', () => {
+    const { arquivos, manifesto } = montarReplay(envelopes(), mapa, { marcador: '__M_ab12__' });
+    expect(JSON.parse(Buffer.from(arquivos[0].body).toString('utf8')).foto).toBe('__M_ab12__/media/f.png');
+    expect(manifesto.id1[0].resolveMarcador).toBe(true);
+    expect(manifesto.id1[0].bytes).toBe(arquivos[0].body.byteLength);
+    expect(manifesto.id1[1].resolveMarcador).toBe(false);   // JSON sem referencia: intacto
     expect(Buffer.from(arquivos[2].body).toString('utf8')).toBe('ola');   // texto nao-JSON intacto
+    expect(manifesto.id2[0].resolveMarcador).toBe(false);
   });
 
-  it('GET sem corpo entra no indice sincrono do XHR; POST nao', () => {
-    const { porUrlGet } = montarReplay(envelopes(), mapa);
-    expect(porUrlGet).toEqual({ 'https://site/dados': './_replay/id2' });
+  // Astra B2 #7: um marcador fixo trocado por split/join corrompia conteudo legitimo.
+  it('corpo que JA contem o marcador nao e reescrito (nunca corrompe conteudo legitimo)', () => {
+    const env = new Map([['idg', [{ url: 'https://site/api.json', status: 200, statusText: '', headers: {}, contentType: 'application/json', bytes: Buffer.from('{"t":"__M__ texto","foto":"https://site/media/f.png"}') }]]]);
+    const { arquivos, manifesto } = montarReplay(env, mapa, { marcador: '__M__' });
+    expect(Buffer.from(arquivos[0].body).toString('utf8')).toBe('{"t":"__M__ texto","foto":"https://site/media/f.png"}');
+    expect(manifesto.idg[0].resolveMarcador).toBe(false);
   });
 
-  // O XHR recebe o arquivo CRU; um envelope JSON reescrito carrega o marcador de
-  // origem que so o caminho do fetch resolve. Servir isso por XHR seria replay ERRADO.
-  it('envelope JSON com marcador de origem fica FORA do indice do XHR', () => {
-    const env = new Map([['idg', [{ metodo: 'GET', url: 'https://site/api.json', status: 200, statusText: '', headers: {}, contentType: 'application/json', bytes: Buffer.from('{"foto":"https://site/media/f.png"}') }]]]);
-    const { porUrlGet, arquivos } = montarReplay(env, mapa);
-    expect(Buffer.from(arquivos[0].body).toString('utf8')).toContain('__UNCRAFT_ORIGIN__');
-    expect(porUrlGet).toEqual({});
+  // Astra B2 #6: query com token apareceria literalmente no HTML.
+  it('o manifesto publico NAO carrega url nem metodo', () => {
+    const { manifesto } = montarReplay(envelopes(), mapa);
+    for (const lista of Object.values(manifesto)) for (const e of lista) {
+      expect(e).not.toHaveProperty('url'); expect(e).not.toHaveProperty('metodo');
+    }
+    expect(runtimeFetchShim(manifesto)).not.toContain('https://site/api');
   });
 
   it('sem envelope nao injeta nada', () => {
@@ -78,59 +124,121 @@ describe('montarReplay + remendo', () => {
     expect(runtimeFetchShim(null)).toBe('');
   });
 
-  it('o script nao fecha a propria tag e reconstroi a Response com status e cabecalhos', () => {
-    const { manifesto } = montarReplay(new Map([['x', [{ metodo: 'POST', url: 'https://s/a</script><b>', status: 418, statusText: 'teapot', headers: { 'x-k': 'v' }, contentType: 'text/plain', bytes: Buffer.from('') }]]]), new Map());
-    const shim = runtimeFetchShim(manifesto);
+  it('o script nao fecha a propria tag, nao mexe em XHR e nao repete a ultima ocorrencia', () => {
+    const { manifesto } = montarReplay(new Map([['x', [{ url: 'https://s/a', status: 418, statusText: 'te</script><b>apot', headers: { 'x-k': 'v' }, contentType: 'text/plain', bytes: Buffer.from('') }]]]), new Map());
+    const shim = runtimeFetchShim(manifesto, { marcador: '__M__' });
     expect(shim.slice(shim.indexOf('>') + 1)).not.toContain('</script><b>');
-    expect(shim).toContain("split('__UNCRAFT_ORIGIN__').join(location.origin)");
-    expect(shim).toContain('new Response(saida, { status: env.status');
-    expect(shim).toContain('multipart');                 // FormData passa intacto
-    expect(shim).toContain("m === 'GET' || m === 'HEAD'"); // XHR so sem corpo
+    expect(shim).not.toContain('XMLHttpRequest.prototype');
+    expect(shim).not.toContain('Math.min(n, lista.length - 1)');
   });
 });
 
-// ⚠️ A sonda do Astra, reproduzida: o remendo rodando numa sandbox com um fetch
-// original que FALHA na rede. A 1a versao chamava o original DUAS vezes (o catch
-// envolvia o proprio passthrough) — para um POST real, envio duplo.
+// O remendo rodando numa sandbox: fetch original controlado, identidade calculada
+// dos DOIS lados (Node pela captura, navegador pelo remendo) para a mesma chamada.
 describe('o remendo rodando de verdade (sandbox)', () => {
-  function sandbox(manifesto, fetchOriginal) {
-    const shim = runtimeFetchShim(manifesto);
+  const ORIGEM = 'https://clone';
+  function sandbox(manifesto, fetchOriginal, { marcador } = {}) {
+    const shim = runtimeFetchShim(manifesto, { marcador });
     const js = shim.slice(shim.indexOf('>') + 1, shim.lastIndexOf('</script>'));
-    function XHR() {} XHR.prototype.open = function () {};
+    const location = { href: `${ORIGEM}/`, origin: ORIGEM };
     const ctx = {
-      window: { crypto: webcrypto, fetch: fetchOriginal }, Request, Response, TextEncoder, Uint8Array, URL,
-      document: { baseURI: 'https://clone/' }, location: { href: 'https://clone/', origin: 'https://clone' }, XMLHttpRequest: XHR,
+      window: { crypto: webcrypto, fetch: fetchOriginal }, Request, Response, Headers, TextEncoder, TextDecoder, Uint8Array, URL,
+      document: { baseURI: `${ORIGEM}/` }, location,
     };
-    ctx.window.window = ctx.window; ctx.window.document = ctx.document; ctx.window.location = ctx.location; ctx.window.XMLHttpRequest = XHR;
+    ctx.window.window = ctx.window; ctx.window.document = ctx.document; ctx.window.location = location;
     vm.runInNewContext(js, ctx);
-    return ctx.window;
+    return { w: ctx.window, location };
   }
-  const manifesto = { x: [{ path: './x', status: 200, statusText: 'OK', headers: {}, texto: false }] };
+  const CT = 'text/plain;charset=UTF-8';   // o que Request poe num body string, nos dois lados
+  const envelopeDe = (corpo, extra = {}) => ({ url: 'https://origin/api', status: 200, statusText: 'OK', headers: {}, contentType: 'text/plain', bytes: Buffer.from(corpo), ...extra });
+  const manifestoVazio = { x: [{ path: './x', status: 200, statusText: 'OK', headers: {}, resolveMarcador: false }] };
 
-  it('chamada NAO mapeada que falha na rede: o original e chamado UMA vez e a falha chega ao site', async () => {
+  // Astra B2 #1: "nenhum POST chega a servidor algum" era falso — o miss passava.
+  it('POST a OUTRA origem sem envelope FALHA como offline: o original NUNCA e chamado', async () => {
     let n = 0;
-    const w = sandbox(manifesto, async () => { n += 1; throw new TypeError('network down'); });
-    await expect(w.fetch('https://origin/api', { method: 'POST', body: 'x' })).rejects.toThrow('network down');
+    const { w } = sandbox(manifestoVazio, async () => { n += 1; return new Response('ok'); });
+    await expect(w.fetch('https://origin/api', { method: 'POST', body: 'x' })).rejects.toThrow('Failed to fetch');
+    await expect(w.fetch('https://origin/api', { method: 'PUT', body: 'x' })).rejects.toThrow('Failed to fetch');
+    await expect(w.fetch('https://origin/api', { method: 'DELETE' })).rejects.toThrow('Failed to fetch');
+    const fd = new FormData(); fd.append('a', 'b');
+    await expect(w.fetch('https://origin/api', { method: 'POST', body: fd })).rejects.toThrow('Failed to fetch');
+    expect(n).toBe(0);
+  });
+
+  it('GET a outra origem sem envelope passa UMA vez e a falha de rede chega ao site', async () => {
+    let n = 0;
+    const { w } = sandbox(manifestoVazio, async () => { n += 1; throw new TypeError('network down'); });
+    await expect(w.fetch('https://origin/outra')).rejects.toThrow('network down');
     expect(n).toBe(1);
   });
 
-  it('Request COM corpo nao mapeado passa intacto, com o corpo ainda utilizavel', async () => {
+  it('POST a MESMA origem (o servidor do clone) passa intacto, corpo ainda utilizavel', async () => {
     let recebido = null;
-    const w = sandbox(manifesto, async (entrada) => { recebido = entrada; return new Response('ok'); });
-    const req = new Request('https://origin/api', { method: 'POST', body: 'abc' });
+    const { w } = sandbox(manifestoVazio, async (entrada) => { recebido = entrada; return new Response('ok'); });
+    const req = new Request(`${ORIGEM}/api`, { method: 'POST', body: 'abc' });
     const r = await w.fetch(req);
     expect(await r.text()).toBe('ok');
-    expect(recebido).toBe(req);            // o MESMO objeto, nao uma copia
-    expect(req.bodyUsed).toBe(false);      // e o corpo nao foi consumido pelo remendo
+    expect(recebido).toBe(req);
+    expect(req.bodyUsed).toBe(false);
   });
 
-  it('chamada MAPEADA: o original e chamado so para o envelope LOCAL, uma vez', async () => {
+  it('chamada MAPEADA: identidade bate dos dois lados, o envelope local e servido com status e cabecalhos', async () => {
+    const id = identidadeDeRequisicao('POST', 'https://origin/api', Buffer.from('abc'), { 'content-type': CT });
+    const { manifesto, arquivos } = montarReplay(new Map([[id, [envelopeDe('resposta', { status: 201, statusText: 'Created', headers: { 'x-k': 'v' } })]]]), new Map());
     const chamadas = [];
-    const w = sandbox(manifesto, async (u) => { chamadas.push(String(u instanceof Request ? u.url : u)); return new Response(new Uint8Array([1, 2, 3])); });
-    // identidade 'x' e falsa de proposito; o que se testa aqui e que uma identidade
-    // NAO encontrada nao gera duas chamadas — a mapeada de verdade e testada no
-    // navegador (gsap.com), onde o hash e calculado dos dois lados.
-    await w.fetch('https://origin/outra');
-    expect(chamadas).toEqual(['https://origin/outra']);
+    const { w } = sandbox(manifesto, async (u) => { chamadas.push(String(u)); return new Response(arquivos[0].body); });
+    const r = await w.fetch('https://origin/api', { method: 'POST', body: 'abc' });
+    expect(r.status).toBe(201); expect(r.statusText).toBe('Created'); expect(r.headers.get('x-k')).toBe('v');
+    expect(await r.text()).toBe('resposta');
+    expect(chamadas).toEqual([`${ORIGEM}/_replay/${id}`]);
+  });
+
+  // Astra B2 #3: repetir a ultima resposta para sempre fabricava respostas.
+  it('ocorrencias esgotadas = miss: a 3a chamada de um par capturado 2x falha fechada', async () => {
+    const id = identidadeDeRequisicao('POST', 'https://origin/api', Buffer.from('abc'), { 'content-type': CT });
+    const { manifesto, arquivos } = montarReplay(new Map([[id, [envelopeDe('um'), envelopeDe('dois')]]]), new Map());
+    let n = 0;
+    const { w } = sandbox(manifesto, async (u) => { n += 1; const i = String(u).endsWith('.1') ? 1 : 0; return new Response(arquivos[i].body); });
+    expect(await (await w.fetch('https://origin/api', { method: 'POST', body: 'abc' })).text()).toBe('um');
+    expect(await (await w.fetch('https://origin/api', { method: 'POST', body: 'abc' })).text()).toBe('dois');
+    await expect(w.fetch('https://origin/api', { method: 'POST', body: 'abc' })).rejects.toThrow('Failed to fetch');
+    expect(n).toBe(2);
+  });
+
+  // Astra B2 #5: 204 lancava em new Response; 404/SPA fallback virava corpo.
+  it('204 reconstroi sem corpo; envelope local ausente (404) ou com tamanho errado NAO vira resposta', async () => {
+    const id = identidadeDeRequisicao('POST', 'https://origin/api', Buffer.from('abc'), { 'content-type': CT });
+    const { manifesto } = montarReplay(new Map([[id, [envelopeDe('', { status: 204, statusText: 'No Content' })]]]), new Map());
+    const { w } = sandbox(manifesto, async () => new Response(''));
+    const r = await w.fetch('https://origin/api', { method: 'POST', body: 'abc' });
+    expect(r.status).toBe(204); expect(r.body).toBe(null);
+
+    const id2 = identidadeDeRequisicao('POST', 'https://origin/api', Buffer.from('zz'), { 'content-type': CT });
+    const m2 = montarReplay(new Map([[id2, [envelopeDe('esperado')]]]), new Map()).manifesto;
+    const { w: w404 } = sandbox(m2, async () => new Response('<html>index</html>', { status: 404 }));
+    await expect(w404.fetch('https://origin/api', { method: 'POST', body: 'zz' })).rejects.toThrow('Failed to fetch');
+    const { w: wSpa } = sandbox(m2, async () => new Response('<html>fallback da SPA</html>', { status: 200 }));
+    await expect(wSpa.fetch('https://origin/api', { method: 'POST', body: 'zz' })).rejects.toThrow('Failed to fetch');
+  });
+
+  // Astra B2 #5: `local()` resolvia contra o location.href NAVEGADO.
+  it('o envelope local resolve contra a base da INJECAO, nao contra a URL apos pushState', async () => {
+    const id = identidadeDeRequisicao('GET', 'https://origin/dados', Buffer.alloc(0));
+    const { manifesto, arquivos } = montarReplay(new Map([[id, [envelopeDe('d')]]]), new Map());
+    const chamadas = [];
+    const { w, location } = sandbox(manifesto, async (u) => { chamadas.push(String(u)); return new Response(arquivos[0].body); });
+    location.href = `${ORIGEM}/a/b/c`;   // o site navegou
+    expect(await (await w.fetch('https://origin/dados')).text()).toBe('d');
+    expect(chamadas).toEqual([`${ORIGEM}/_replay/${id}`]);
+  });
+
+  it('o marcador do pacote vira a origem real so no envelope reescrito', async () => {
+    const id = identidadeDeRequisicao('GET', 'https://origin/api.json', Buffer.alloc(0));
+    const mapa = new Map([['https://origin/m/f.png', 'm/f.png']]);
+    const env = { url: 'https://origin/api.json', status: 200, statusText: 'OK', headers: { 'content-type': 'application/json' }, contentType: 'application/json', bytes: Buffer.from('{"foto":"https://origin/m/f.png"}') };
+    const { manifesto, arquivos } = montarReplay(new Map([[id, [env]]]), mapa, { marcador: '__M_x1__' });
+    const { w } = sandbox(manifesto, async () => new Response(arquivos[0].body), { marcador: '__M_x1__' });
+    const r = await w.fetch('https://origin/api.json');
+    expect((await r.json()).foto).toBe(`${ORIGEM}/m/f.png`);
   });
 });

@@ -293,7 +293,7 @@ function tokensFor(text, kind) {
  * @param {Map<string,string>} input.map captured absolute URL → bundle path
  * @returns {string}
  */
-export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, map }) {
+export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, map, marcadorDeOrigem = '__UNCRAFT_ORIGIN__' }) {
   // A document's references resolve against its <base href>, not against the
   // file's own URL — resolving with the wrong base means the lookup misses and
   // the reference is left pointing at the live site. The tag itself is dropped
@@ -374,7 +374,7 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
     // trocado por `location.origin` por quem SERVE o envelope (o remendo de replay),
     // então o site recebe uma URL absoluta http da origem local.
     let relative = kind === 'json'
-      ? `__UNCRAFT_ORIGIN__/${target}`
+      ? `${marcadorDeOrigem}/${target}`
       : posix.relative(fromDir === '.' ? '' : fromDir, target);
     if (kind !== 'json' && !relative.startsWith('.')) relative = `./${relative}`;
     const replacement = `${relative}${hash}`;
