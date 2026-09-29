@@ -56,3 +56,11 @@ Registrar, por execução: modelo; tokens de entrada/saída por etapa (investiga
 - **Site: gsap.com**, não farmminerals — menor (188 mil vs 429 mil tokens sem Lottie), stack diferente (Vite/SPA vs Webflow), e é a cobaia que expôs o `fetch` de runtime. A cobaia de sempre esconde a classe.
 - **Uma execução, não três** — primeiro o denominador; variância vem depois, se o número justificar.
 - **Falta o OK para gastar** e a escolha do modelo do agente. Estimativa honesta: leitura de ~190 mil tokens + escrita de uma página de 10 mil px + 2–4 iterações contra o portão. Ordem de grandeza de **1–3 milhões de tokens** por execução; o preço depende do modelo escolhido.
+
+## 7. Execução 1 — verbatim PURO (iniciada 2026-09-29 ~16:46 BRT)
+
+- **Alvo:** `https://www.farmminerals.com/promo` — a cobaia onde existe a régua manual de 17/jul, para comparar o método automatizado com o que o Adilson fez à mão. (gsap.com fica para a execução 2 / terceira via.)
+- **Insumo do agente, e só ele:** o prompt do Adilson (`PROMPT_VERBATIM_PURO.template.md` renderizado), a gravação na forma de 24 quadros por parada (`_verbatim/ref3`, 1440×1200) + `reference.meta.json`, e a URL viva. Sem inventário de máquina, sem pacote nativo — é o braço 2 da comparação de três.
+- **Modelo:** Fable 5.1 via `Agent` desta sessão. **Custo** sai do uso reportado ao fim + `WORKLOG.md` com carimbo por fase.
+- **Saída:** `_verbatim/verbatim-farm/assets/index.html`.
+- **Julgamento (depois, máquina livre):** referência dupla nova sob o portão atual → autocontrole; candidato verbatim; candidato native (`_verbatim/native3`) na mesma trajetória; `verbatim-traces --dom` nos dois.
