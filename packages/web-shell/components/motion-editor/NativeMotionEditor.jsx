@@ -1074,6 +1074,10 @@ export function TimelinePanel({
 }) {
   const [draggingKeyframe, setDraggingKeyframe] = useState(null);
   const [draggingStrip, setDraggingStrip] = useState(null);
+  // Valor commitado de uma strip que ainda espera a resposta do runtime. Existe
+  // só para cobrir a janela entre o soltar e o instantâneo novo — ver o comentário
+  // em `finishStripDrag`. É descartado no próximo instantâneo, seja ele qual for.
+  const [pendingStrip, setPendingStrip] = useState(null);
   const [curveOpen, setCurveOpen] = useState(false);
   const [scrubbing, setScrubbing] = useState(null);
   const [resizingHeight, setResizingHeight] = useState(null);
@@ -1461,6 +1465,11 @@ export function TimelinePanel({
 
   useEffect(() => () => { if (quadroDoArraste.current) cancelAnimationFrame(quadroDoArraste.current); }, []);
 
+  // Chegou instantâneo novo: a resposta autoritativa já está na tela, o retido
+  // não tem mais função. Descartar SEMPRE (e não só quando o valor bate) é o que
+  // impede uma edição recusada de ficar como valor fantasma.
+  useEffect(() => { setPendingStrip(null); }, [rows]);
+
   function aplicaArrasteDeStrip(event, row) {
     if (!stripDragShouldApply(draggingStrip, event)) return;
     if (draggingStrip.kind === 'duration') {
@@ -1482,13 +1491,29 @@ export function TimelinePanel({
   function finishStripDrag(event, row) {
     if (!draggingStrip || event.pointerId !== draggingStrip.pointerId) return;
     const finished = draggingStrip;
+    if (!finished.moved) { endStripSession(event); return; }
+    // ⭐ O "PISCA" (relatado 2026-09-28). A ordem anterior era: encerrar a sessão
+    // — o que apaga o estado otimista — e SÓ DEPOIS despachar a edição. Entre os
+    // dois momentos a strip voltava a desenhar a partir de `row.scrollStart/End`,
+    // isto é, dos valores ANTIGOS, até a resposta do runtime chegar. O usuário vê
+    // a strip voltar ao lugar de antes e depois pular para onde soltou.
+    //
+    // Agora o valor commitado fica RETIDO (`pendingStrip`) e a strip continua
+    // desenhando por ele até o runtime responder. O retido é descartado no
+    // PRÓXIMO instantâneo de linhas que chegar, qualquer que seja ele — inclusive
+    // uma recusa. Segurar até "bater" faria uma edição recusada virar valor
+    // fantasma na tela, e recusar não pode ser o mesmo que esquecer.
+    setPendingStrip({
+      elementId: row.elementId,
+      kind: finished.kind,
+      edge: finished.edge,
+      start: finished.start,
+      end: finished.end,
+      durationMs: finished.durationMs,
+    });
     endStripSession(event);
-    if (!finished.moved) return;
-    if (finished.kind === 'duration') {
-      onStripEdit?.(row, { durationMs: finished.durationMs });
-      return;
-    }
-    onStripEdit?.(row, finished.edge === 'start' ? { start: finished.start } : { end: finished.end });
+    if (finished.kind === 'duration') onStripEdit?.(row, { durationMs: finished.durationMs });
+    else onStripEdit?.(row, finished.edge === 'start' ? { start: finished.start } : { end: finished.end });
   }
 
   // ---- Scrub: the playhead is DRAGGED OVER fixed strips. Clicking or dragging
@@ -2053,15 +2078,19 @@ export function TimelinePanel({
               // siblings): show the chain and let the user break it.
               const sharedLinks = (row.links || []).filter((linkId) => (linkRowCount[linkId] || 0) > 1);
               const isStripDragging = draggingStrip?.elementId === row.elementId;
-              const geometry = isStripDragging
-                ? (draggingStrip.kind === 'duration'
+              // Sem arrasto ativo, um valor ainda EM VOO manda — é o que impede
+              // o quadro intermediário com o valor antigo (o "pisca").
+              const emVoo = !isStripDragging && pendingStrip?.elementId === row.elementId ? pendingStrip : null;
+              const fonte = isStripDragging ? draggingStrip : emVoo;
+              const geometry = fonte
+                ? (fonte.kind === 'duration'
                   ? {
                     left: stripGeometry(row).left,
-                    width: Math.max(NOMINAL_TIME_STRIP, ((draggingStrip.durationMs * TIME_PX_PER_MS * zoom) / Math.max(1, timelineWidth - TRACK_INSET)) * 100),
+                    width: Math.max(NOMINAL_TIME_STRIP, ((fonte.durationMs * TIME_PX_PER_MS * zoom) / Math.max(1, timelineWidth - TRACK_INSET)) * 100),
                   }
                   : {
-                    left: introPct + (Math.max(0, draggingStrip.start) / axisMax) * scrollSpanPct,
-                    width: Math.max(0.8, ((draggingStrip.end - draggingStrip.start) / axisMax) * scrollSpanPct),
+                    left: introPct + (Math.max(0, fonte.start) / axisMax) * scrollSpanPct,
+                    width: Math.max(0.8, ((fonte.end - fonte.start) / axisMax) * scrollSpanPct),
                   })
                 : stripGeometry(row);
               const { left, width } = geometry;

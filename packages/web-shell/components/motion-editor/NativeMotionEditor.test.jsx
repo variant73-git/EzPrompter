@@ -512,6 +512,62 @@ describe('timeline canvas layout', () => {
     rect.mockRestore();
   });
 
+  // Bug relatado pelo Adilson (2026-09-28): ao soltar o handler, a strip "pisca"
+  // — volta ao lugar de antes e só então vai para onde foi solta. Causa: a sessão
+  // era encerrada (apagando o estado otimista) ANTES de a edição ser despachada,
+  // então havia um quadro desenhado com os valores ANTIGOS da linha enquanto a
+  // resposta do runtime não chegava. O valor commitado tem que ficar na tela até
+  // o próximo instantâneo de linhas.
+  it('nao volta ao valor antigo entre soltar o handler e a resposta do runtime', () => {
+    const onStripEdit = vi.fn();
+    const page = { scrollY: 0, viewportHeight: 800, scrollHeight: 5000, maxScroll: 4200 };
+    const scrollRows = [{ ...viewportRows[0], scrollStart: 400, scrollEnd: 900 }];
+    const scrollMotion = { ...motion, driver: { type: 'scroll' }, scroll: { start: '400', end: '900', scrub: true } };
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      x: 0, y: 0, left: 0, top: 0, right: 1000, bottom: 200, width: 1000, height: 200,
+      toJSON: () => ({}),
+    });
+    const { container, rerender } = render(
+      <TimelineHarness
+        rows={scrollRows}
+        selectedElementId="el-a"
+        onSelectElement={vi.fn()}
+        page={page}
+        motion={scrollMotion}
+        onStripEdit={onStripEdit}
+      />,
+    );
+    const clip = () => container.querySelector('[data-layer-strip]');
+    const larguraAntes = clip().style.width;
+
+    const endHandle = screen.getByRole('button', { name: 'Adjust scroll end' });
+    fireEvent.pointerDown(endHandle, { pointerId: 9, button: 0, clientX: 214 });
+    fireEvent.pointerMove(endHandle, { pointerId: 9, clientX: 314, buttons: 1 });
+    const larguraArrastando = clip().style.width;
+    expect(larguraArrastando).not.toBe(larguraAntes);          // controle positivo: o arraste MEXEU
+    fireEvent.pointerUp(endHandle, { pointerId: 9, clientX: 314 });
+
+    // O runtime ainda NÃO respondeu (as props seguem as antigas). A strip tem que
+    // continuar no valor solto, nunca voltar ao de antes.
+    expect(clip().style.width).toBe(larguraArrastando);
+    expect(onStripEdit).toHaveBeenCalledOnce();
+
+    // Chegou instantâneo novo: o retido é descartado e a autoridade é a prop —
+    // inclusive se o runtime tiver RECUSADO (aqui devolve o valor antigo).
+    rerender(
+      <TimelineHarness
+        rows={[{ ...viewportRows[0], scrollStart: 400, scrollEnd: 900 }]}
+        selectedElementId="el-a"
+        onSelectElement={vi.fn()}
+        page={page}
+        motion={scrollMotion}
+        onStripEdit={onStripEdit}
+      />,
+    );
+    expect(clip().style.width).toBe(larguraAntes);
+    rect.mockRestore();
+  });
+
   // Bug 2026-09-22 (Astra): apos manusear uma strip, passar o mouse por cima
   // (HOVER, sem botao) movia a strip sem intencao — a sessao de arrasto ficava
   // orfa e todo pointermove a reaplicava. Um move sem o botao primario segurado
