@@ -49,8 +49,9 @@
 
 import { createServer } from 'node:http';
 import { readFile, mkdir, writeFile, stat } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { computeSsimRgb } from '../lib/clone-similarity.js';
 
@@ -234,6 +235,88 @@ const PISO_MORTO = 0.0001;
 const RAZAO_FRACA = 0.25;
 // Pontos conclusivos necessários para a trilha de movimento emitir veredito.
 const MINIMO_CONCLUSIVOS = 3;
+// ENERGIA POR REGIAO (Astra B1 #1). O piso de ruido do caminho de medicao e ZERO (acima),
+// entao qualquer pixel com diferenca >= 1 mudou de verdade. Abaixo de AREA_MIN_PX pixels
+// (no mapa de 240 px de largura) a referencia nao se moveu o bastante para a pergunta de
+// paridade fazer sentido — um botao de 200x50 deslocando 8 px na tela de 1440 cobre dezenas.
+const AREA_MIN_PX = 4;
+function decodificarMapa(m) {
+  if (!m || typeof m.dados !== 'string' || !m.w || !m.h) return null;
+  const b = Buffer.from(m.dados, 'base64');
+  return b.length === m.w * m.h ? b : null;
+}
+// Energia media DENTRO da mascara da referencia, nos dois lados. null quando algum lado
+// nao tem mapa (relatorio antigo) ou as dimensoes diferem: o chamador cai no quadro inteiro.
+// POR COMPONENTE, em CAIXA AMPLIADA (revisao Claude 2026-10-01, sobre a 1a versao): a
+// mascara de um objeto solido em movimento sao so as BORDAS — medir o candidato pixel a
+// pixel nela punia POSICAO e FASE (um clone deslocado 12 px, ou flagrado noutro instante,
+// dava "congelado" vivo); e uma mascara unica juntava video e botao, e o video escondia o
+// botao congelado (a diluicao voltava). Agora: a mascara da referencia (dilatada 1 px contra
+// o serrilhado do JPEG e agrupada por proximidade, ver RAIO_GRUPO) vira COMPONENTES conexos; cada um com area >= AREA_MIN_PX e medido
+// numa caixa envolvente AMPLIADA (metade do maior lado, minimo MARGEM_MIN_PX) — a mesma caixa
+// nos dois lados, energia media por pixel. O ponto vale o PIOR componente.
+const MARGEM_MIN_PX = 4;
+// Agrupamento por PROXIMIDADE: as duas bordas de um mesmo objeto solido em movimento ficam
+// separadas pela largura dele; dilatar RAIO_GRUPO px de mapa (~36 px de tela) antes de rotular
+// as junta num componente cuja caixa cobre o objeto inteiro — e a fase/posicao do candidato
+// dentro dele deixa de importar.
+const RAIO_GRUPO = 6;
+// Um componente so DECIDE o ponto se carregar energia media >= ENERGIA_MIN_COMPONENTE nos
+// proprios pixels mudados (2a revisao Claude): um cursor de texto ou um decode tardio de
+// imagem nao pode, sozinho, virar "congelado".
+const ENERGIA_MIN_COMPONENTE = 2;
+function componentes(a, w, h) {
+  const m = new Uint8Array(a.length);
+  for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
+    if (a[y * w + x] < 1) continue;
+    for (let dy = -RAIO_GRUPO; dy <= RAIO_GRUPO; dy += 1) for (let dx = -RAIO_GRUPO; dx <= RAIO_GRUPO; dx += 1) {
+      const yy = y + dy; const xx = x + dx;
+      if (yy >= 0 && yy < h && xx >= 0 && xx < w) m[yy * w + xx] = 1;
+    }
+  }
+  const vis = new Uint8Array(a.length); const out = [];
+  for (let k = 0; k < m.length; k += 1) {
+    if (!m[k] || vis[k]) continue;
+    const fila = [k]; vis[k] = 1; let area = 0; let soma = 0; let x0 = w; let y0 = h; let x1 = 0; let y1 = 0;
+    while (fila.length) {
+      const q = fila.pop(); const x = q % w; const y = (q - x) / w;
+      if (a[q] >= 1) { area += 1; soma += a[q]; }
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      for (const n of [q - 1, q + 1, q - w, q + w]) {
+        if (n < 0 || n >= m.length || vis[n] || !m[n]) continue;
+        if ((n === q - 1 && x === 0) || (n === q + 1 && x === w - 1)) continue;
+        vis[n] = 1; fila.push(n);
+      }
+    }
+    out.push({ area, media: area ? soma / area : 0, x0, y0, x1, y1 });
+  }
+  return out;
+}
+function mediaNaCaixa(b, w, h, c) {
+  const mg = Math.max(MARGEM_MIN_PX, Math.ceil(Math.max(c.x1 - c.x0 + 1, c.y1 - c.y0 + 1) / 2));
+  const x0 = Math.max(0, c.x0 - mg); const x1 = Math.min(w - 1, c.x1 + mg);
+  const y0 = Math.max(0, c.y0 - mg); const y1 = Math.min(h - 1, c.y1 + mg);
+  let s = 0; let n = 0;
+  for (let y = y0; y <= y1; y += 1) for (let x = x0; x <= x1; x += 1) { s += b[y * w + x]; n += 1; }
+  return n ? s / n : 0;
+}
+// null quando algum lado nao tem mapa (relatorio antigo) ou as dimensoes diferem: o
+// chamador cai no quadro inteiro.
+function energiaPorRegiao(mapaRef, mapaCand) {
+  const a = decodificarMapa(mapaRef); const b = decodificarMapa(mapaCand);
+  if (!a || !b || mapaRef.w !== mapaCand.w || mapaRef.h !== mapaCand.h) return null;
+  const w = mapaRef.w; const h = mapaRef.h;
+  let areaTotal = 0; for (let k = 0; k < a.length; k += 1) if (a[k] >= 1) areaTotal += 1;
+  const comps = componentes(a, w, h).filter((c) => c.area >= AREA_MIN_PX && c.media >= ENERGIA_MIN_COMPONENTE).map((c) => {
+    const ref = mediaNaCaixa(a, w, h, c); const cand = mediaNaCaixa(b, w, h, c);
+    // Caixa que cobre >= metade do quadro: a regiao virou quadro inteiro e a diluicao volta —
+    // declarado no ponto, nunca escondido sob metodo 'regiao' (2a revisao Claude, P2).
+    const quaseQuadro = ((c.x1 - c.x0 + 1) * (c.y1 - c.y0 + 1)) >= 0.5 * w * h;
+    return { area: c.area, caixa: [c.x0, c.y0, c.x1, c.y1], ref: Number(ref.toFixed(3)), cand: Number(cand.toFixed(3)), razao: ref ? Number((cand / ref).toFixed(3)) : null, ...(quaseQuadro ? { quaseQuadroInteiro: true } : {}) };
+  }).sort((p, q) => (p.razao ?? 0) - (q.razao ?? 0));
+  return { areaPx: areaTotal, areaFracao: Number((areaTotal / a.length).toFixed(5)), componentes: comps, pior: comps[0] || null };
+}
+export { energiaPorRegiao, decodificarMapa, AREA_MIN_PX };
 // ⚠️ DUAS, não três. Medido em gsap.com: com três tentativas o candidato re-fazia a
 // rajada em 8 de 13 paradas e o custo médio do instrumento subiu para 6,1 s contra
 // 3,5 s da referência — a cadência então atuou só num lado e o portão de regime
@@ -280,7 +363,8 @@ async function capturaRapida(page, cdp) {
     const r = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 60 });
     return r.data;
   }
-  return (await page.screenshot({ type: 'jpeg', quality: 60, caret: 'hide' })).toString('base64');
+  // Com teto (revisao Claude 2026-10-01): sem ele a rajada esperava a mesma fonte travada.
+  return (await page.screenshot({ type: 'jpeg', quality: 60, caret: 'hide', timeout: 30000 })).toString('base64');
 }
 
 async function motionEnergy(page, probe, cdp) {
@@ -304,7 +388,7 @@ async function motionEnergy(page, probe, cdp) {
     }
     const gaps = stamps.slice(1).map((t, i) => t - stamps[i]);
     const gapMaxMs = Math.max(...gaps);
-    const porPar = await probe.evaluate(async (frames) => {
+    const medida = await probe.evaluate(async (frames) => {
       const SMALL = 240;
       const draw = (img) => {
         const c = document.createElement('canvas');
@@ -316,19 +400,32 @@ async function motionEnergy(page, probe, cdp) {
       const load = (b64) => new Promise((res, rej) => {
         const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = `data:image/jpeg;base64,${b64}`;
       });
-      const data = (await Promise.all(frames.map(load))).map(draw);
+      const imgs = await Promise.all(frames.map(load));
+      const data = imgs.map(draw);
       const out = [];
+      // MAPA POR PIXEL (Astra B1 #1): energia media por pixel ao longo dos pares, na
+      // mesma resolucao do escalar. Guardado para a comparacao medir o candidato SO
+      // onde a referencia se move — o escalar de quadro inteiro diluia um botao pequeno
+      // e deixava um video alheio dar energia a uma animacao congelada.
+      const W = SMALL; const H = Math.max(1, Math.round(SMALL * imgs[0].naturalHeight / imgs[0].naturalWidth));
+      const acc = new Float32Array(W * H);
       for (let k = 1; k < data.length; k += 1) {
         const a = data[k - 1]; const b = data[k];
         let sum = 0; let n = 0;
         for (let q = 0; q < a.length; q += 4) {
-          sum += Math.abs(a[q] - b[q]) + Math.abs(a[q + 1] - b[q + 1]) + Math.abs(a[q + 2] - b[q + 2]);
-          n += 3;
+          const d = Math.abs(a[q] - b[q]) + Math.abs(a[q + 1] - b[q + 1]) + Math.abs(a[q + 2] - b[q + 2]);
+          sum += d; n += 3;
+          if (a.length === W * H * 4) acc[q / 4] += d / 3;
         }
         out.push(sum / n);
       }
-      return out;
+      const pares = Math.max(1, data.length - 1);
+      const bytes = new Uint8Array(W * H);
+      for (let k = 0; k < bytes.length; k += 1) bytes[k] = Math.min(255, Math.round(acc[k] / pares));
+      let bin = ''; for (let k = 0; k < bytes.length; k += 1) bin += String.fromCharCode(bytes[k]);
+      return { porPar: out, mapa: { w: W, h: H, dados: btoa(bin) } };
     }, shots);
+    const porPar = medida.porPar;
     ultima = {
       // Diferença média por canal de pixel entre quadros CONSECUTIVOS, sem
       // normalização temporal — só vale comparada a outra medida de intervalo
@@ -339,6 +436,7 @@ async function motionEnergy(page, probe, cdp) {
       comparavel: gapMaxMs <= GAP_ALVO_MS,
       tentativas: tentativa,
       captureMode: backend,
+      mapa: medida.mapa,
       viewport: { width: VIEWPORT.width, height: VIEWPORT.height, dpr: 1 },
     };
     if (ultima.comparavel) return ultima;
@@ -389,8 +487,20 @@ async function runTrajectory(page, { targets, outDir, allowNetwork, probe, cdp }
     // entre referência e candidato. O bloco de deriva existe para dizer "o piso
     // do SSIM mede dessincronia"; calculá-la sobre um instante que não é o do
     // PNG comparado media outra coisa. O custo fica em campo próprio.
-    const captureAtMs = Date.now() - t0;
-    await page.screenshot({ path: file, type: 'png' });
+    let captureAtMs = Date.now() - t0;
+    // Um web font que nunca termina de carregar segura `page.screenshot` ("waiting
+    // for fonts to load") até o timeout e derrubava a execução INTEIRA — medido na
+    // referência viva do farmminerals, transitório (as 7 fontes carregam em ~1 s numa
+    // sondagem seguinte). Uma parada perdida vira quadro NOMEADO, não abandono de
+    // 10 minutos de percurso; o compare o conta como ausente.
+    // O carimbo e o da tentativa que VALEU (revisao Claude 2026-10-01): a 2a tentativa mostra
+    // a pagina ate 30 s depois do carimbo da 1a, e a deriva seria medida do instante errado.
+    let capturaFalhou = null; let tentativas = 0;
+    for (let tentativa = 0; tentativa < 2; tentativa += 1) {
+      tentativas += 1; captureAtMs = Date.now() - t0;
+      try { await page.screenshot({ path: file, type: 'png', timeout: 30000 }); capturaFalhou = null; break; }
+      catch (e) { capturaFalhou = String(e && e.message ? e.message : e).split('\n')[0]; }
+    }
     await accumulate();
     const motion = probe ? await motionEnergy(page, probe, cdp).catch(() => null) : null;
     frames.push({
@@ -400,7 +510,8 @@ async function runTrajectory(page, { targets, outDir, allowNetwork, probe, cdp }
       custoInstrumentoMs: Date.now() - t0 - captureAtMs,
       atrasoAcumuladoMs: atrasoMs,
       esperou,
-      file: path.basename(file), motion,
+      tentativas, file: capturaFalhou ? null : path.basename(file), motion,
+      ...(capturaFalhou ? { capturaFalhou } : {}),
     });
   };
 
@@ -632,9 +743,10 @@ async function compare(refDir, candDir) {
   const perFrame = [];
   for (const rf of ref.frames) {
     const cf = cand.frames.find((f) => f.index === rf.index);
-    const a = path.join(refDir, rf.file);
-    const b = cf ? path.join(candDir, cf.file) : null;
-    if (!b || !existsSync(b)) { perFrame.push({ index: rf.index, target: rf.target, ssim: null, note: 'quadro ausente no candidato' }); continue; }
+    const a = rf.file ? path.join(refDir, rf.file) : null;
+    const b = cf && cf.file ? path.join(candDir, cf.file) : null;
+    if (!a || !existsSync(a)) { perFrame.push({ index: rf.index, target: rf.target, ssim: null, note: `quadro ausente na referencia${rf.capturaFalhou ? ` (${rf.capturaFalhou})` : ''}` }); continue; }
+    if (!b || !existsSync(b)) { perFrame.push({ index: rf.index, target: rf.target, ssim: null, note: `quadro ausente no candidato${cf && cf.capturaFalhou ? ` (${cf.capturaFalhou})` : ''}` }); continue; }
     const [da, db] = await Promise.all([readFile(a), readFile(b)]);
     const ssim = await page.evaluate(async ([aB64, bB64]) => {
       const load = (b64) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = `data:image/png;base64,${b64}`; });
@@ -761,16 +873,30 @@ async function compare(refDir, candDir) {
           // animam) são justamente os que atrasam, e excluí-los deixa só as cenas
           // fáceis (Astra B1 #2). Ele fica marcado como ponto móvel perdido, e a
           // trilha inteira vira inconclusiva se houver algum.
-          const movelPerdido = r.bruto >= PISO_REFERENCIA;
+          // Movel pela REGIAO quando ha mapa (revisao Claude 2026-10-01): pelo quadro inteiro, um
+          // ponto em que so um botao pequeno se move (~0,05) saia do denominador ao desalinhar —
+          // a censura seletiva do B1 #2 exatamente no caso que a regiao veio cobrir.
+          const regRef = energiaPorRegiao(r.mapa, r.mapa);
+          const movelPerdido = regRef ? Boolean(regRef.pior) : r.bruto >= PISO_REFERENCIA;
           return { ...base, faixa: movelPerdido ? 'inconclusivo-deriva-em-ponto-movel' : 'inconclusivo-deriva', derivaMs: derivaDoQuadro.get(rf.index) };
         }
         if (!r.comparavel || !c.comparavel) return { ...base, faixa: 'inconclusivo-intervalo-longo' };
         const maior = Math.max(r.gapMaxMs, c.gapMaxMs); const menor = Math.max(1, Math.min(r.gapMaxMs, c.gapMaxMs));
         if (maior / menor > FATOR_GAP) return { ...base, faixa: 'inconclusivo-intervalos-desiguais', fatorGap: Number((maior / menor).toFixed(2)) };
-        if (r.bruto < PISO_REFERENCIA) return { ...base, faixa: 'referencia-parada' };
+        // POR REGIAO quando os dois lados trazem o mapa (Astra B1 #1): a mascara sao os
+        // pixels onde a REFERENCIA mudou; o candidato e medido so dentro dela.
+        const reg = energiaPorRegiao(r.mapa, c.mapa);
+        if (reg) {
+          const comReg = { ...base, metodo: 'regiao', areaPx: reg.areaPx, areaFracao: reg.areaFracao, componentes: reg.componentes.slice(0, 6) };
+          if (!reg.pior) return { ...comReg, faixa: 'referencia-parada' };
+          const p = reg.pior;
+          const faixa = p.cand <= PISO_MORTO ? 'congelado' : (p.razao < RAZAO_FRACA ? 'fraco' : 'vivo');
+          return { ...comReg, razao: p.razao, referenciaRegiao: p.ref, candidatoRegiao: p.cand, ...(reg.componentes.some((q) => q.quaseQuadroInteiro) ? { regiaoQuaseQuadroInteiro: true } : {}), faixa };
+        }
+        if (r.bruto < PISO_REFERENCIA) return { ...base, metodo: 'quadro-inteiro', faixa: 'referencia-parada' };
         const razao = Number((c.bruto / r.bruto).toFixed(3));
         const faixa = c.bruto <= PISO_MORTO ? 'congelado' : (razao < RAZAO_FRACA ? 'fraco' : 'vivo');
-        return { ...base, razao, faixa };
+        return { ...base, metodo: 'quadro-inteiro', razao, faixa };
       });
 
       const conta = (f) => pontos.filter((p) => p.faixa === f).length;
@@ -787,7 +913,10 @@ async function compare(refDir, candDir) {
       // a esse ponto, não um "inconclusivo" eterno (Astra B1 #5).
       const pontosMoveisNaReferencia = conclusivos + pontosMoveisPerdidos;
       return {
-        unidade: 'diferenca media por canal de pixel entre quadros consecutivos, em intervalos VERIFICADOS como comparaveis (sem normalizacao temporal)',
+        unidade: 'diferenca media por canal de pixel entre quadros consecutivos, em intervalos VERIFICADOS como comparaveis (sem normalizacao temporal); por REGIAO (mascara da referencia) quando os dois lados trazem mapa, senao do quadro inteiro',
+        metodos: { regiao: pontos.filter((p) => p.metodo === 'regiao').length, quadroInteiro: pontos.filter((p) => p.metodo === 'quadro-inteiro').length },
+        // Mistura de metodos na mesma comparacao (mapa faltando num lado) fica DECLARADA.
+        metodoMisto: pontos.some((p) => p.metodo === 'regiao') && pontos.some((p) => p.metodo === 'quadro-inteiro'),
         limiares: { pisoReferencia: PISO_REFERENCIA, pisoMorto: PISO_MORTO, razaoFraca: RAZAO_FRACA, gapAlvoMs: GAP_ALVO_MS, fatorGap: FATOR_GAP },
         origemDosLimiares: PISO_CALIBRADO
           ? 'piso de ruido MEDIDO em 0 (24 rajadas sobre quadros reais servidos como imagem estatica, sem script); escala medida deslocando o quadro inteiro por N pixels: 1px=0,52 2px=1,00 8px=3,35 32px=7,04'
@@ -823,7 +952,11 @@ async function compare(refDir, candDir) {
             : conta('fraco') > 0 ? `MOVIMENTO MAIS FRACO QUE A REFERENCIA (escopo LIMITADO a ${conclusivos} ponto(s) movel(is))`
             : `MOVIMENTO PRESENTE (escopo LIMITADO a ${conclusivos} ponto(s) movel(is) — a pagina nao tem mais; veredito em poucos pontos e instavel entre execucoes)`)
           : conclusivos < MINIMO_CONCLUSIVOS ? `INCONCLUSIVO — so ${conclusivos} de ${pontosMoveisNaReferencia} ponto(s) movel(is) conclusivo(s); o minimo e ${MINIMO_CONCLUSIVOS}. Muitas paradas fora de sincronia`
-          : conta('congelado') > 0 ? 'CONGELAMENTO DETECTADO'
+          // CORROBORACAO (2a revisao Claude): um ponto congelado ISOLADO pode ser um componente
+          // espurio da referencia (cursor, decode tardio, video que nao comecou); o veredito
+          // de congelamento exige >= 2 pontos.
+          : conta('congelado') >= 2 ? 'CONGELAMENTO DETECTADO'
+          : conta('congelado') === 1 ? 'INCONCLUSIVO — 1 ponto congelado ISOLADO (pode ser componente espurio da referencia); exige corroboracao em outro ponto'
           : conta('fraco') > 0 ? 'MOVIMENTO MAIS FRACO QUE A REFERENCIA'
           : 'MOVIMENTO PRESENTE nos pontos conclusivos',
         congelados: pontos.filter((p) => p.faixa === 'congelado').map((p) => ({ target: p.target, referencia: p.referencia, candidato: p.candidato })).slice(0, 8),
@@ -836,9 +969,14 @@ async function compare(refDir, candDir) {
   // referência perdido — maioria global sozinha deixa passar a censura seletiva dos
   // quadros que animam (Astra B1 #2).
   const moveisPerdidosSsim = out.motion?.detalheInconclusivos?.derivaEmPontoMovel || 0;
-  out.comparacaoCruzadaValida = excluidosPorDeriva * 2 < perFrame.length && moveisPerdidosSsim === 0;
+  // Quadro AUSENTE tambem invalida (revisao Claude 2026-10-01): ele sai do minimo e o
+  // denominador encolhe — a mesma censura seletiva da deriva (a parada que trava e
+  // justamente a que renderiza pior).
+  out.comparacaoCruzadaValida = excluidosPorDeriva * 2 < perFrame.length && moveisPerdidosSsim === 0 && missing === 0;
   if (!out.comparacaoCruzadaValida) {
-    const motivo = moveisPerdidosSsim > 0
+    const motivo = missing > 0
+      ? `INCONCLUSIVO — ${missing} quadro(s) ausente(s) (captura falhou); o SSIM minimo sobre os restantes seria seletivo`
+      : moveisPerdidosSsim > 0
       ? `INCONCLUSIVO — ${moveisPerdidosSsim} ponto(s) MOVEL(is) da referencia fora de sincronia; o SSIM minimo sobre os restantes seria seletivo. Repetir sem outra carga na maquina`
       : `INCONCLUSIVO — ${excluidosPorDeriva} de ${perFrame.length} quadros fora de sincronia (> ${DERIVA_MAX_MS} ms); repetir sem outra carga na maquina`;
     out.ssim = { ...out.ssim, veredito: motivo };
@@ -895,4 +1033,9 @@ async function main() {
   console.log('Use --reference <url> | --candidate bundle:<dir>|file:<html> | --compare <refDir> <candDir>');
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+// So roda como CLI; importado (testes da energia por regiao) nao dispara o portao.
+let ehCli = false;
+try { ehCli = Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); } catch { ehCli = false; }
+if (ehCli) {
+  main().catch((e) => { console.error(e); process.exit(1); });
+}

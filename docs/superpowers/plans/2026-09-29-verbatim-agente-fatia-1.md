@@ -856,3 +856,29 @@ A rodada 149 do Astra não rodou: o Codex bateu o limite de uso (volta em 2026-1
 - O pior quadro do Sonnet é o 0 (preloader): o pacote dele abre em 0,6 s contra 30 s do site vivo, então o loader está em outro instante — latência, não fidelidade. O movimento saiu conclusivo no Sonnet e inconclusivo no Fable por SINCRONIA (deriva menor), não por prova de melhor animação.
 - Diferença a investigar, sem conclusão: **781 nós alcançáveis para edição** no Sonnet contra 960 no Fable e 930 no site — pode ser estado da página no instante da sonda (obstruídos: 420 vs 414).
 - **NÃO se pode concluir:** variância (uma execução cada); que o Sonnet vence em sites mais difíceis; nada sobre homogeneização; o harness diferiu (headless grava cache de 1 h, o `Agent` de 5 min).
+
+## 163. Portão: energia de movimento por REGIÃO (Astra B1 #1) + quadro ausente + a pergunta da editabilidade — 2026-10-01
+
+Feito sem o Astra (sem cota até 3/10), com **duas revisões Claude independentes**; a 2ª rodada voltou ao mesmo tema e, pela regra de teto (memória `feedback_loop_cap_5`), o desenho PAROU ali, com proteções baratas e resíduos declarados.
+
+**1. Quadro ausente (a mudança do `verbatim-gate.mjs` que estava fora do commit).** Uma fonte que nunca carrega segurava `page.screenshot` e derrubava a execução inteira; agora o quadro fica NOMEADO (`capturaFalhou`). A revisão pegou que o quadro ausente saía do SSIM mínimo sem invalidar nada (a mesma censura seletiva da deriva) e que a 2ª tentativa ficava com o carimbo da 1ª (até 30 s errado). Corrigido: **qualquer quadro ausente torna a comparação INCONCLUSIVA (exit 2)**, o carimbo é o da tentativa que valeu (`tentativas` registrado), e a captura rápida da rajada ganhou teto. Simulação num relatório copiado: **o código anterior aceitava como válido (exit 0)**; agora inconclusivo, com o quadro nomeado.
+
+**2. Energia por REGIÃO (o achado crítico pendente desde o Astra B1).** A energia do quadro inteiro diluía um botão pequeno abaixo do piso (falso "referência parada") e deixava um vídeo alheio dar energia a uma animação congelada (falso verde). Agora cada rajada grava um MAPA de diferença por pixel (240 px de largura); na comparação, a máscara da referência é agrupada por proximidade em COMPONENTES, cada componente é medido numa caixa ampliada (a mesma nos dois lados) e o ponto vale o PIOR componente. Relatório antigo sem mapa cai no método de quadro inteiro, declarado (`metodo`, `metodoMisto`).
+- 1ª revisão derrubou a 1ª versão (pixel a pixel na máscara): punia POSIÇÃO e FASE, a diluição só mudava de lugar, a regra de deriva voltava a censurar pontos pequenos, e o `main()` não rodava sob caminho com link simbólico (saía 0 sem fazer nada). Os quatro corrigidos.
+- 2ª revisão: deriva e link simbólico FECHADOS; ainda erram casos-limite → **proteções**: componente só decide com energia média ≥ 2 nos próprios pixels (cursor/decode tênue não decide); **"CONGELAMENTO DETECTADO" exige ≥ 2 pontos** (1 isolado = inconclusivo); região que cobre ≥ metade do quadro fica marcada (`regiaoQuaseQuadroInteiro`).
+- **Resíduos declarados:** objeto mais largo que ~80 px de tela flagrado com deslocamento/fase maior que ~120 px pode ler congelado; um ícone congelado a menos de ~70 px de um vídeo vivo se dilui nele; região quase do tamanho do quadro volta ao comportamento antigo (marcada).
+- Provas: 8 unitários (deslocamento, fase, vídeo + botão congelado, componente tênue, mapa ausente) e páginas sintéticas em Chromium — botão de 200×50 oscilando 8 px (energia de quadro inteiro 0,05: o método antigo dizia "referência parada"): cópia fiel **vivo**, botão congelado com bloco animado no canto **congelado**, cópia com o botão deslocado 12 px **vivo**.
+
+**Recaptura do farmminerals com o método novo** (máquina ociosa, passo 20 s) — **primeiro veredito de movimento conclusivo num site real**:
+
+| braço | SSIM mín | deriva média | movimento (por região, 24 pontos) |
+|---|---|---|---|
+| site × site (R1×R2) | 0,7523 | 20 ms | 13 vivos · 1 fraco · 1 congelado ISOLADO → inconclusivo pela regra de corroboração |
+| Fable 5.1 | 0,8683 | 11 ms | **presente** — 15 vivos, 0 fracos, 0 congelados |
+| Sonnet 5.5 | 0,8679 | 10 ms | **presente** — 15 vivos, 0 fracos, 0 congelados |
+
+O ponto "congelado" do site contra si mesmo é exatamente o caso que a corroboração existe para conter (vídeo/laço noutra fase entre duas visitas reais); sem a regra, o próprio site seria acusado. Os dois clones saem MAIS estáveis que o site vivo (servidos localmente, sem rede variável).
+
+**3. Editabilidade 781 (Sonnet) × 960 (Fable) — explicada, não é defeito.** A 2ª amostra do portão deu 777 (estável, não ruído). Medidos com o MESMO tempo de espera, os dois clones mostram **exatamente os mesmos 1.506 textos visíveis** em 24 paradas, e a estrutura é 99,9% igual. A diferença vem da CARGA: o clone do Sonnet abre em 0,6 s e o do Fable em 30 s (um recurso segura o `load`); o portão começa a rolar o do Sonnet ainda durante a animação de abertura, e as primeiras paradas têm menos texto visível. Artefato do instrumento (o portão não alinha a abertura), registrado.
+
+**4. Esquema canônico do editor — RASCUNHO** em `docs/superpowers/specs/2026-10-01-esquema-canonico-do-editor-rascunho.md` (pré-requisito da execução 2), tirado do inventário do código do editor; quatro perguntas de PRODUTO abertas. Execução 2 e JEV aguardam a validação do Adilson.
