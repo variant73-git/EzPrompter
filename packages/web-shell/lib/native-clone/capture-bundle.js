@@ -129,17 +129,139 @@ export function metodoCanonico(metodo) {
   const m = String(metodo || 'GET');
   return METODOS_NORMALIZADOS.has(m.toUpperCase()) ? m.toUpperCase() : m;
 }
+// `accept` entra SÓ quando não é o default do navegador (`*/*`): o script que fixa
+// `Accept: text/csv` recebe outra resposta (Astra B3 #7), mas o `*/*` que o navegador
+// acrescenta sozinho é invisível ao objeto Request e daria falso miss em tudo.
+// REGRA INVERTIDA (Astra B52): TODO cabeçalho que o script pôs entra na identidade —
+// um `api-key` diferente é OUTRO pedido. Ficam fora só os que o NAVEGADOR acrescenta
+// sozinho (o objeto Request não os vê; incluí-los daria falso miss em tudo) e os que
+// o Fetch proíbe ao script (idem). `accept` é o caso especial: entra só quando não é o
+// default `*/*`. Resíduo declarado: script que fixa um cabeçalho desta lista
+// (accept-language, cache-control…) colide com o default do navegador.
+const CABECALHOS_DO_NAVEGADOR = new Set([
+  'accept-charset', 'accept-encoding', 'accept-language', 'access-control-request-headers', 'access-control-request-method',
+  'cache-control', 'connection', 'content-length', 'cookie', 'cookie2', 'date', 'dnt', 'expect', 'host', 'keep-alive',
+  'origin', 'pragma', 'priority', 'purpose', 'referer', 'set-cookie', 'te', 'trailer', 'transfer-encoding', 'upgrade',
+  'upgrade-insecure-requests', 'user-agent', 'via',
+]);
+// So ESPACO HTTP (tab, LF, CR, espaco) e aparado, como o Fetch normaliza (Astra B90):
+// `String.prototype.trim` tira tambem NBSP e outros brancos Unicode, e 'A' e 'A\u00a0'
+// viravam a MESMA identidade — o servidor pode autentica-los diferente; falso hit.
+const APARAR_HTTP = /^[\t\n\r ]+|[\t\n\r ]+$/g;
+export function apararHttp(valor) { return String(valor).replace(APARAR_HTTP, ''); }
+// TODO cabecalho entra (Astra B128): a identidade vem dos cabecalhos do Request CONSTRUIDO
+// (anunciados na captura, `req.headers` no remendo) — so o que o script pos; os defaults do
+// navegador nunca aparecem ali. A lista de exclusao descartava cabecalhos EXPLICITOS do
+// script (Accept-Language: en e fr colidiam). Os proibidos ao script nem chegam a existir.
+// EXCETO os de RASTREIO (revisao Claude, 2026-09-30): Sentry, Datadog, OpenTelemetry e B3
+// poem em TODO fetch um id ALEATORIO novo a cada pedido — com eles na identidade nenhum replay
+// casava num site com rastreio (e os dados de movimento carregados por fetch sumiam). Nao
+// mudam a resposta: so correlacionam o pedido. Lista explicita, espelhada no remendo.
+export const CABECALHOS_DE_RASTREIO = new Set(['sentry-trace', 'baggage', 'traceparent', 'tracestate', 'b3', 'x-b3-traceid', 'x-b3-spanid', 'x-b3-parentspanid', 'x-b3-sampled', 'x-b3-flags', 'x-datadog-trace-id', 'x-datadog-parent-id', 'x-datadog-origin', 'x-datadog-sampling-priority', 'x-datadog-tags']);
+export function cabecalhoEntraNaIdentidade(nome) { return !CABECALHOS_DE_RASTREIO.has(String(nome || '').toLowerCase()); }
+// PREFLIGHT (Astra B93): metodo fora de GET/HEAD/POST ou cabecalho de script fora do
+// safelist CORS (accept, accept-language, content-language, content-type com os 3 tipos
+// simples) obriga um OPTIONS que o Playwright NAO reporta (medido). A autorizacao de
+// CREDENCIAIS do preflight e portanto inobservavel: um envelope capturado em `omit` com
+// preflight nao pode servir `include` — so se a propria captura foi `include` (o
+// navegador ja fez o preflight credenciado) ou se nao houve preflight.
+const SAFELIST_CORS = new Set(['accept', 'accept-language', 'content-language', 'content-type', 'range']);
+// `range` e safelisted quando e UM intervalo simples de bytes, sem espaco (Astra B104):
+// bytes=N- ou bytes=N-M, com N obrigatorio e M >= N.
+const RANGE_SIMPLES = /^bytes=(\d+)-(\d*)$/;
+// Comparacao EXATA como decimais normalizados (Astra B110): Number() arredonda acima de 2^53.
+function decimalMaiorOuIgual(a, b) { const x = a.replace(/^0+(?=\d)/, ''); const y = b.replace(/^0+(?=\d)/, ''); return x.length !== y.length ? x.length > y.length : x >= y; }
+// Chromium recusa do safelist extremos >= INT64_MAX (Astra B114).
+const INT64_MAX = '9223372036854775807';
+function abaixoDoInt64(s) { return !decimalMaiorOuIgual(s, INT64_MAX); }
+function rangeSimples(v) { const m = RANGE_SIMPLES.exec(String(v)); if (!m) return false; if (!abaixoDoInt64(m[1]) || (m[2] !== '' && !abaixoDoInt64(m[2]))) return false; return m[2] === '' || decimalMaiorOuIgual(m[2], m[1]); }
+// Restricoes de VALOR do safelist (Fetch, "CORS-safelisted request-header"; Astra B94): mais
+// de 128 bytes, ou um byte CORS-inseguro (qualquer byte < 0x20 exceto TAB, " ( ) : < > ? @ [ \ ] { } DEL),
+// ou, em accept-language/content-language, qualquer byte fora de [0-9A-Za-z *,-.;=], obriga
+// preflight — e o preflight decide as credenciais (B93).
+const BYTE_CORS_INSEGURO = /[\x00-\x08\x0A-\x1F"():<>?@[\\\]{}\x7F]/;   // todo byte < 0x20 exceto TAB (Astra B96: 0x0B/0x0C/0x0E/0x0F sobrevivem ao Request)
+const LINGUA_OK = /^[0-9A-Za-z *,\-.;=]*$/;
+export function valorSafelisted(nome, valor) {
+  const n = String(nome).toLowerCase();
+  const v = String(valor);
+  if (Buffer.byteLength(v, 'latin1') > 128) return false;
+  if (n === 'accept') return !BYTE_CORS_INSEGURO.test(v);
+  if (n === 'accept-language' || n === 'content-language') return LINGUA_OK.test(v);
+  if (n === 'range') return rangeSimples(v);
+  if (n === 'content-type') {
+    if (BYTE_CORS_INSEGURO.test(v)) return false;
+    const mime = apararHttp(v.split(';')[0]).toLowerCase();   // essencia MIME aparada DEPOIS do corte (Astra B105: 'text/plain ;x' e simples)
+    return ['application/x-www-form-urlencoded', 'multipart/form-data', 'text/plain'].includes(mime);
+  }
+  return false;
+}
+// `headers` sao os cabecalhos que o SCRIPT pos (os do Request construido pelo embrulho,
+// anunciados na captura) — sem exclusao por identidade (Astra B95): `cache-control` fica
+// fora da identidade porque o navegador tambem o poe sozinho, mas posto pelo script obriga
+// preflight. Todo cabecalho aqui conta; os safelisted pelo valor, os demais sempre.
+// Nomes de cabecalho do script que NAO sao safelisted (pelo nome ou pelo valor) — o que o
+// preflight autorizou (Astra B108). Minusculos, ordenados, sem repeticao.
+export function nomesInseguros(headers) {
+  const s = new Set();
+  for (const [nome, valor] of Object.entries(headers || {})) {
+    const n = String(nome).toLowerCase();
+    if (SAFELIST_CORS.has(n) && valorSafelisted(n, valor)) continue;
+    s.add(n);
+  }
+  return [...s].sort();
+}
+export function precisaPreflight(metodo, headers) {
+  const m = metodoCanonico(metodo);
+  if (m !== 'GET' && m !== 'HEAD' && m !== 'POST') return true;
+  for (const [nome, valor] of Object.entries(headers || {})) {
+    const n = String(nome).toLowerCase();
+    if (SAFELIST_CORS.has(n)) { if (!valorSafelisted(n, valor)) return true; continue; }
+    return true;
+  }
+  return false;
+}
 export function cabecalhosDeIdentidade(headers) {
   const pares = [];
   for (const [nome, valor] of Object.entries(headers || {})) {
-    const n = nome.toLowerCase();
-    if (n === 'content-type' || n === 'authorization' || n.startsWith('x-')) pares.push(`${n}:${String(valor).trim()}`);
+    if (cabecalhoEntraNaIdentidade(nome, valor)) pares.push(`${nome.toLowerCase()}:${apararHttp(valor)}`);
   }
   return pares.sort().join('\n');
 }
-export function identidadeDeRequisicao(metodo, url, corpo, headers = {}) {
+// ATRIBUTOS DO PEDIDO entram na identidade (Astra B129 credenciais; B131 generalizado): o
+// navegador envia coisas diferentes conforme o modo (Sec-Fetch-Mode), as credenciais (cookie),
+// o cache (Cache-Control/Pragma, condicionais), o referrer e a politica dele (Referer) — o
+// servidor pode responder diferente a cada um. Identidade mais estrita so produz miss, nunca
+// resposta errada. So o que difere do default e acrescentado (identidades do default
+// intactas), em ordem fixa, separado por NUL (Astra B130: nenhum cabecalho contem \0).
+// ⚠️ Espelhado LITERALMENTE no remendo (runtime-fetch-map.js, marcaDeAtributos).
+// A linha: entra o que muda o PEDIDO QUE O SERVIDOR RECEBE. `redirect`, `integrity` e
+// `keepalive` nao chegam ao servidor (so mudam o que o navegador faz com a resposta) e ja
+// tem guarda propria no remendo — la a guarda e mais fiel que um miss.
+export const ATRIBUTOS_DE_IDENTIDADE = [
+  ['cache', 'default'], ['credentials', 'same-origin'], ['mode', 'cors'],
+  ['referrer', 'about:client'], ['referrerPolicy', ''],
+];
+export function marcaDeAtributos(atributos) {
+  const at = typeof atributos === 'string' ? { credentials: atributos } : (atributos || {});
+  let s = '';
+  for (const [k, padrao] of ATRIBUTOS_DE_IDENTIDADE) {
+    const v = at[k];
+    if (v === undefined || v === null || v === padrao) continue;
+    s += `\n\0${k}:${String(v)}`;
+  }
+  return s;
+}
+// CORPO PRESENTE E VAZIO (Astra B134): fora de POST/PUT, corpo ausente nao manda Content-Length
+// e corpo vazio manda `Content-Length: 0` — o servidor ve pedidos diferentes com os mesmos bytes.
+// Em POST/PUT o navegador manda 0 nos dois casos (Fetch, http-network-or-cache fetch): iguais.
+export function marcaDeCorpoVazio(metodo, corpo, atributos) {
+  const presente = atributos && typeof atributos === 'object' && atributos.corpoPresente === true;
+  const m = metodoCanonico(metodo);
+  return presente && !(corpo && corpo.length) && m !== 'POST' && m !== 'PUT' ? '\n\0corpo:vazio' : '';
+}
+export function identidadeDeRequisicao(metodo, url, corpo, headers = {}, atributos = 'same-origin') {
   const corpoHash = hexSha256(corpo && corpo.length ? corpo : Buffer.alloc(0));
-  return hexSha256(`${metodoCanonico(metodo)}\n${url}\n${corpoHash}\n${cabecalhosDeIdentidade(headers)}`);
+  return hexSha256(`${metodoCanonico(metodo)}\n${url}\n${corpoHash}\n${cabecalhosDeIdentidade(headers)}${marcaDeAtributos(atributos)}${marcaDeCorpoVazio(metodo, corpo, atributos)}`);
 }
 // ⚠️ ALLOWLIST, não denylist (Astra B2 #6). Uma Response sintética torna legível o que
 // o CORS original ESCONDIA: o site real lia `null` em `X-Internal-Token` sem
@@ -150,14 +272,180 @@ export function identidadeDeRequisicao(metodo, url, corpo, headers = {}) {
 // modelado).
 const CORS_SAFELISTED = new Set(['cache-control', 'content-language', 'content-length', 'content-type', 'expires', 'last-modified', 'pragma']);
 const NUNCA_NO_REPLAY = /^(set-cookie|cookie|authorization|proxy-authorization|transfer-encoding|connection|content-length|content-encoding|keep-alive|strict-transport-security|access-control-.*|content-security-policy.*|x-frame-options|cross-origin-.*|date|vary|server|location|etag|digest|content-range|alt-svc|report-to|nel)$/i;
+// Elegibilidade a CORS CREDENCIADO (Astra B38/B39): comparação EXATA, sem dobra de
+// caixa — o Fetch exige `Access-Control-Allow-Credentials` byte a byte igual a `true`
+// (`True` NÃO vale) e ACAO igual à serialização da origem da página.
+// LEGIBILIDADE não credenciada (Astra B40): ACAO `*` ou EXATAMENTE a origem da página —
+// sem dobra de caixa; `https://SITE.example` NÃO libera `https://site.example`.
+// ACAO/ACAC comparados apos aparar SO espaco HTTP (Astra B92): `trim()` Unicode fazia
+// `*\u00a0` valer `*` e `true\u00a0` valer `true`; o nativo nao aceita nenhum dos dois.
+export function acaoLiberaLeitura(headers, origemDaPagina) {
+  const h = {};
+  for (const [nome, valor] of Object.entries(headers || {})) h[nome.toLowerCase()] = String(valor);
+  const acao = apararHttp(h['access-control-allow-origin'] || '');
+  return acao === '*' || acao === String(origemDaPagina);
+}
+// CADEIA DE REDIRECT sob CORS (Astra B83): o nativo faz uma checagem CORS em CADA resposta
+// que nao e same-origin (ou depois de a resposta ja estar "tainted" como cors), comparando
+// ACAO com a origem SERIALIZADA do pedido — que vira `null` (tainted origin flag, pegajoso)
+// no salto cuja URL de ORIGEM difere tanto do destino quanto da origem do documento
+// (Fetch, HTTP-redirect fetch; Astra B84: A -> B ainda serializa A em B; e o B -> A que
+// tinge). Assim, A -> B -> A com ACAO `A` no terminal FALHA em modo cors (la a origem
+// serializada ja e `null`); em B, ACAO `A` passa e `null` NAO.
+// Entrada: origem do documento e as respostas NA ORDEM (saltos, depois o terminal), cada
+// uma { url, headers }. Saida: { legivel, credenciado } para a cadeia inteira.
+export function avaliarCadeiaCors(origemDoDocumento, respostas) {
+  let serializada = String(origemDoDocumento);
+  let tingidaCors = false;
+  let legivel = true;
+  let credenciado = true;
+  const lista = Array.isArray(respostas) ? respostas : [];
+  for (let i = 0; i < lista.length; i += 1) {
+    const atual = lista[i];
+    let origemAtual = null;
+    try { origemAtual = new URL(atual.url).origin; } catch { origemAtual = null; }
+    const mesmaOrigem = origemAtual !== null && origemAtual === String(origemDoDocumento);
+    if (!mesmaOrigem) tingidaCors = true;
+    if (tingidaCors) {
+      const h = {};
+      for (const [nome, valor] of Object.entries(atual.headers || {})) h[nome.toLowerCase()] = String(valor);
+      const acao = apararHttp(h['access-control-allow-origin'] || '');
+      const acac = apararHttp(h['access-control-allow-credentials'] || '');
+      if (!(acao === '*' || acao === serializada)) legivel = false;
+      if (!(acao === serializada && acac === 'true')) credenciado = false;
+    }
+    const proximo = lista[i + 1];
+    if (proximo) {
+      let origemProxima = null;
+      try { origemProxima = new URL(proximo.url).origin; } catch { origemProxima = null; }
+      if (origemAtual === null || origemProxima === null) serializada = 'null';
+      else if (origemAtual !== origemProxima && origemAtual !== String(origemDoDocumento)) serializada = 'null';
+    }
+  }
+  return { legivel, credenciado: legivel && credenciado };
+}
+export function elegivelCorsCredenciado(headers, origemDaPagina) {
+  const h = {};
+  for (const [nome, valor] of Object.entries(headers || {})) h[nome.toLowerCase()] = String(valor);
+  const acao = apararHttp(h['access-control-allow-origin'] || '');
+  const acac = apararHttp(h['access-control-allow-credentials'] || '');
+  return acao === String(origemDaPagina) && acac === 'true';
+}
+// MAPA DE PROVENIÊNCIA (Astra B44/B48): caminho de asset EMITIDO → identidade exata do
+// GET simples à URL ORIGINAL. Entram todos os assets de OUTRA origem (`_ext/`) e todo
+// asset da própria origem cujo caminho emitido difere do caminho natural da URL
+// (query em hash, caracteres sanitizados, diretório → index.html): para esses, a
+// URL reconstruída do caminho é OUTRA URL e podia selecionar o envelope de outro
+// pedido. Sem URL no HTML — só o hash.
+export function mapaDeProveniencias(mapa, origemDaEntrada = '') {
+  // Sem protótipo (Astra B54): `saida['__proto__'] = hash` num objeto comum invoca o
+  // setter herdado e a entrada some.
+  const saida = Object.create(null);
+  for (const [urlOriginal, caminhoAsset] of mapa || []) {
+    if (typeof caminhoAsset !== 'string') continue;
+    let natural = null;
+    try {
+      const u = new URL(urlOriginal);
+      // Caminho NATURAL = o pathname CRU (sem decodificar — Astra B49: `items/a%2Fb`
+      // decodificado coincidia com o caminho emitido e ficava fora do mapa; sem a regra
+      // do index.html: um diretório vira `dir/index.html` no pacote e a reconstrução
+      // daria OUTRA URL).
+      // Exatamente UMA barra inicial (Astra B50): `//items/a` emitido como `items/a`
+      // parecia natural e ficava fora do mapa; barras extras fazem parte da identidade.
+      natural = u.pathname.replace(/^\//, '');
+    } catch { natural = null; }
+    // Um '?' na URL original (mesmo vazio) faz o caminho emitido ser OUTRA URL (Astra B51).
+    let temQuery = false;
+    try { temQuery = new URL(urlOriginal).href.split('#')[0].indexOf('?') !== -1; } catch { temQuery = false; }
+    // ORIGEM completa, com esquema (Astra B78): o caminho do pacote compara só o HOST, então
+    // `https://host/a.png` numa página `http://host` vira o natural `a.png` — sem proveniência,
+    // o remendo reconstruía `http://host/a.png`, OUTRA identidade (a de um pedido real).
+    let origemDiferente = false;
+    try { origemDiferente = Boolean(origemDaEntrada) && new URL(urlOriginal).origin !== origemDaEntrada; } catch { origemDiferente = true; }
+    const transformado = caminhoAsset.startsWith('_ext/') || natural === null || caminhoAsset !== natural || temQuery || origemDiferente;
+    if (transformado) saida[caminhoAsset] = identidadeDeRequisicao('GET', urlOriginal, Buffer.alloc(0), {});
+  }
+  return saida;
+}
+// GRUPO CANONICO de cada caminho localizado (Astra B126): hash de "GET <URL original sem
+// fragmento>" — a mesma chave que o remendo calcula para o pedido feito pela URL original, para
+// que o desalinhamento de um grupo valha para o alias e para a original. So o hash vai ao HTML.
+export function gruposDeProveniencia(mapa) {
+  const saida = Object.create(null);
+  for (const [urlOriginal, caminhoAsset] of mapa || []) {
+    if (typeof caminhoAsset !== 'string') continue;
+    saida[caminhoAsset] = createHash('sha256').update(`GET ${String(urlOriginal).split('#')[0]}`).digest('hex');
+  }
+  return saida;
+}
+// ORIGENS ALHEIAS com caminho natural (Astra B79): asset de OUTRA origem (esquema/host/porta)
+// que nao foi para `_ext/` (o caminho do pacote compara so o host) — o remendo precisa de
+// uma marca explicita para classifica-lo como externo (nunca servir a copia local num miss;
+// `same-origin` rejeita; a rede vai a URL ORIGINAL). caminho -> URL original.
+export function origensAlheias(mapa, origemDaEntrada = '') {
+  const saida = Object.create(null);
+  if (!origemDaEntrada) return saida;
+  for (const [urlOriginal, caminhoAsset] of mapa || []) {
+    // `_ext/` TAMBEM (Astra B144): o nome no pacote tem hash e perde a query — reconstruir a
+    // URL dele (sprite.64e8aa27.svg) mandava o fetch de hover a um endereco inventado (404).
+    if (typeof caminhoAsset !== 'string') continue;
+    if (caminhoAsset.startsWith('_ext/')) { saida[caminhoAsset] = String(urlOriginal).split('#')[0]; continue; }
+    let alheia = false;
+    try { alheia = new URL(urlOriginal).origin !== origemDaEntrada; } catch { alheia = false; }
+    if (alheia) saida[caminhoAsset] = String(urlOriginal).split('#')[0];
+  }
+  return saida;
+}
+// CAMINHOS PROTEGIDOS contra o fallback estático (Astra B55/B57): todo asset cuja URL
+// foi vista em QUALQUER pedido de fetch (raiz ou terminal), mais todo asset iniciado por
+// script (`fetch` OU `xhr` — ambos carregam identidade por cabeçalho). Independe de
+// qual pedido povoou primeiro o asset estático: XHR primeiro + fetch depois deixava o
+// asset como `xhr` e a cópia estática respondia a um miss de identidade.
+// VARY por cabecalho de PEDIDO (Astra B145): a resposta capturada pelo markup e UMA
+// representacao — o <img> manda um Accept de imagem, o fetch simples manda */*. Com `Vary`
+// num cabecalho de pedido (qualquer um alem de Accept-Encoding, que e transporte), o fetch
+// podia receber OUTRA representacao na fonte: o asset vira protegido contra o fallback.
+export function variaPorPedido(vary) {
+  if (typeof vary !== 'string' || !vary.trim()) return false;
+  return vary.split(',').map((t) => apararHttp(t).toLowerCase()).some((t) => t && t !== 'accept-encoding');
+}
+// Validade de cache NAO entra (revisao Claude, 2026-09-30, revertendo B147/B148): na Vercel e na
+// Netlify o padrao e `max-age=0, must-revalidate` — todo asset proprio ficaria protegido e o hover
+// quebraria. Sem `Vary`, o servidor nao pode escolher outra representacao pelo pedido (o 304 da
+// revalidacao devolve os mesmos bytes). Residual declarado: servidor que negocia SEM declarar
+// `Vary` (viola o HTTP) pode responder outra coisa ao fetch.
+export function caminhosProtegidos(congelados, mapa, urlsDeFetch = new Set(), origemDaEntrada = '') {
+  const saida = new Set();
+  for (const [u, v] of congelados || []) {
+    const caminho = mapa.get(u);
+    if (typeof caminho !== 'string') continue;
+    // A protecao por cache (Astra B145/B147) so vale para asset da PROPRIA origem: o miss de um
+    // asset de outra origem vai a URL original (proveniencia), nunca a copia local.
+    let propria = false; try { propria = Boolean(origemDaEntrada) && new URL(u).origin === origemDaEntrada; } catch { propria = false; }
+    if ((v && (v.tipo === 'fetch' || v.tipo === 'xhr' || (v.varia === true && propria))) || urlsDeFetch.has(u)) saida.add(caminho);
+  }
+  for (const u of urlsDeFetch) { const c = mapa.get(u); if (typeof c === 'string') saida.add(c); }
+  return [...saida];
+}
+const TOKEN_HTTP = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 export function cabecalhosDeReplay(headers, { mesmaOrigem = true } = {}) {
   const todos = {};
   for (const [nome, valor] of Object.entries(headers || {})) todos[nome.toLowerCase()] = String(valor);
-  const expostos = new Set((todos['access-control-expose-headers'] || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean));
+  // `*` NÃO expande (Astra B3 #2): com `credentials: 'include'` o `*` é nome literal e
+  // a página real não lia nada além do safelisted. O modo de credenciais não chega
+  // aqui, então a leitura conservadora vale sempre — perde-se um cabeçalho legítimo
+  // em modo omit, nunca se publica um escondido.
+  // Lista de exposicao como o Chromium a le (Astra B91): elementos separados por virgula,
+  // so espaco HTTP aparado, cada nome um TOKEN HTTP; um elemento malformado (ex.: NBSP no
+  // fim) invalida a lista INTEIRA — nada alem do safelisted e exposto. `trim()` Unicode
+  // apagava o NBSP e publicava um cabecalho que o nativo escondia.
+  const brutos = (todos['access-control-expose-headers'] || '').split(',').map((s) => apararHttp(s));
+  const malformado = brutos.some((s) => s !== '' && !TOKEN_HTTP.test(s));
+  const expostos = new Set(malformado ? [] : brutos.map((s) => s.toLowerCase()).filter((n) => n && n !== '*'));
   const saida = {};
   for (const [nome, valor] of Object.entries(todos)) {
     if (NUNCA_NO_REPLAY.test(nome)) continue;
-    if (!mesmaOrigem && !CORS_SAFELISTED.has(nome) && !expostos.has(nome) && !expostos.has('*')) continue;
+    if (!mesmaOrigem && !CORS_SAFELISTED.has(nome) && !expostos.has(nome)) continue;
     saida[nome] = valor;
   }
   return saida;
@@ -351,29 +639,334 @@ export async function captureNativeBundle(url, opts = {}) {
   // resposta à 1ª chamada do site (medido no teste de integração).
   const ordemDoPedido = new WeakMap();
   let seqPedido = 0;
-  const registrarEnvelope = (req, res, u, bytes) => {
-    const corpoReq = typeof req.postDataBuffer === 'function' ? (req.postDataBuffer() || Buffer.alloc(0)) : Buffer.alloc(0);
-    let mesmaOrigem = false;
-    try { mesmaOrigem = new URL(u).origin === alvo.origin; } catch { mesmaOrigem = false; }
-    const id = identidadeDeRequisicao(req.method(), u, corpoReq, req.headers());
+  // A CHAMADA do site é o pedido RAIZ da cadeia de redirects (Astra B3 #4): cada salto
+  // é outro Request para o Playwright, com URL e sequência próprias — a identidade que
+  // o remendo calcula é a da URL que o script chamou, e a ordem é a da chamada.
+  const pedidoRaiz = (req) => { let r = req; while (typeof r.redirectedFrom === 'function' && r.redirectedFrom()) r = r.redirectedFrom(); return r; };
+  // Só `fetch` (Astra B3 #4): o remendo consome só chamadas de fetch; um XHR de mesma
+  // identidade misturado na lista entregaria a resposta do XHR à 1ª chamada de fetch.
+  const ehChamadaDeFetch = (req) => req.resourceType() === 'fetch';
+  // So o DOCUMENTO DE ENTRADA reserva ocorrencias (Astra B67): a identidade nao carrega
+  // documento e o remendo so e injetado na entrada — a chamada identica de um iframe,
+  // se entrasse na lista, nunca seria consumida no replay e o principal receberia a
+  // resposta do filho. Pedidos de outros frames seguem contando para os assets.
+  // Replay dentro de iframes: limite declarado (sem interceptor la).
+  const doDocumentoDeEntrada = (req) => {
+    try { const f = typeof req.frame === 'function' ? req.frame() : null; return !f || f === f.page().mainFrame(); } catch { return false; }
+  };
+  const temVaga = (req) => vagaPorRaiz.has(pedidoRaiz(req));
+  // Cabecalhos da identidade: os ANUNCIADOS pelo embrulho (pares sem perda, objeto sem
+  // prototipo) quando existem — `req.headers()` do Playwright monta um `{}` comum e um
+  // cabecalho valido chamado `__proto__` some no setter herdado (Astra B115), fundindo a
+  // identidade com a do pedido sem cabecalho.
+  const identidadeDoPedido = (req, cabecalhosAnunciados = null, atributos = 'same-origin') => {
+    const raiz = pedidoRaiz(req);
+    const corpoReq = typeof raiz.postDataBuffer === 'function' ? (raiz.postDataBuffer() || Buffer.alloc(0)) : Buffer.alloc(0);
+    return { id: identidadeDeRequisicao(raiz.method(), raiz.url(), corpoReq, cabecalhosAnunciados || raiz.headers(), atributos || 'same-origin'), seq: ordemDoPedido.get(raiz) ?? Number.MAX_SAFE_INTEGER };
+  };
+  // ⭐ UMA VAGA POR PEDIDO RAIZ, reservada no evento `request` e finalizada UMA vez
+  // (Astra B4 #1). Antes, a posição nascia na resposta: um redirect no meio virava
+  // buraco E o destino virava outra posição (`[primeira, null, segunda, terceira]` —
+  // a 3ª chamada recebia a 2ª resposta), e uma recusa antecipada (41 MiB declarados)
+  // não deixava buraco nenhum. Agora a vaga nasce como BURACO; a resposta TERMINAL a
+  // preenche; salto de redirect não toca nela; recusa a deixa como está.
+  const vagaPorRaiz = new WeakMap();
+  const vagas = [];   // todas, para nomear no fim as que ficaram sem desfecho
+  const gruposEnvenenados = new Set();   // (metodo URL) com uma chamada de corpo nao provado (Astra B118)
+  // PREFLIGHTS OBSERVADOS (Astra B111): a evidencia de preflight vem do que o navegador FEZ,
+  // nao de um classificador — o Chromium safelista cabecalhos a mais (DPR, ...) e cada
+  // divergencia fabricava certificacao. Via CDP (o Playwright nao emite o OPTIONS): URL ->
+  // quantos preflights bem-sucedidos ainda nao consumidos. Sem observacao (cache de preflight,
+  // CDP indisponivel), nada e certificado — o erro so pode custar um replay, nunca inventa-lo.
+  // Associacao EXATA preflight -> pedido (Astra B112): o OPTIONS traz initiator.requestId do
+  // pedido real; so pedidos do tipo Fetch do frame principal entram (XHR, worker e iframe
+  // nao). Consumo em ordem por (metodo, URL); havendo mais de um candidato nao consumido
+  // (concorrencia), a associacao e ambigua e nada e certificado.
+  const pedidosCdp = new Map();       // requestId -> { metodo, url, preflightOk, consumido }
+  const preflightDe = new Map();      // requestId do OPTIONS -> requestId do pedido real
+  const consumirPreflight = (url, metodo) => {
+    const k = String(url).split('#')[0];
+    const candidatos = [...pedidosCdp.values()].filter((p) => !p.consumido && p.url === k && p.metodo === String(metodo).toUpperCase());
+    // 'sim' (preflight provado para ESTE pedido), 'nao' (registro inequivoco sem preflight),
+    // 'ambiguo' (pode ter havido — nunca certifica, mas conta como "houve" para recusar:
+    // Astra B114) ou 'desconhecido' (sem registro CDP).
+    if (!candidatos.length) return 'desconhecido';
+    // Ambiguidade envenena TODOS os participantes, para sempre (Astra B113).
+    if (candidatos.length > 1) for (const c of candidatos) c.ambiguo = true;
+    candidatos[0].consumido = true;
+    if (candidatos.length > 1 || candidatos[0].ambiguo) return 'ambiguo';
+    return candidatos[0].preflightOk === true ? 'sim' : 'nao';
+  };
+  // GERACAO DO DOCUMENTO de entrada (Astra B68): o frame principal persiste entre
+  // navegacoes, mas o documento nao — uma recarga na mesma URL cria outro documento, e
+  // as ocorrencias do anterior nao podem entrar na lista do que virou a entrada
+  // (`[OLD, MAIN]` faria o replay servir OLD). Cada vaga nasce com a geracao corrente;
+  // a geracao avanca a cada resposta de documento do frame principal (nao em mudanca
+  // de historico same-document, que nao pede documento); no fim so a geracao final e
+  // emitida, e respostas tardias de documentos substituidos ficam de fora.
+  // O sinal de COMMIT e o frame principal navegar de fato (`framenavigated`) DEPOIS de
+  // uma resposta de documento que pode virar documento (Astra B69): 204/205 e download
+  // (Content-Disposition: attachment) deixam o documento atual vivo, por norma HTML, e
+  // nao avancam; mudanca de historico same-document navega sem resposta pendente e
+  // tambem nao avanca.
+  let geracaoDoc = 0;
+  let navegacaoPendente = false;
+  const respostaQueViraDocumento = (res) => {
+    const st = res.status();
+    if (st === 204 || st === 205) return false;
+    return !/^\s*attachment\b/i.test(String(res.headers()['content-disposition'] || ''));
+  };
+  const urlsDeFetch = new Set();   // toda URL vista num pedido de fetch (raiz e terminal)
+  // HOP = o navegador seguiu (`redirectedTo`) OU status de redirect COM `Location`
+  // (Astra B5 #2). 300 é terminal; 302 sem Location termina o fetch — e eram
+  // descartados como "salto". O Fetch só redireciona em 301/302/303/307/308.
+  const ehHop = (res) => Boolean(res.request().redirectedTo())
+    || ([301, 302, 303, 307, 308].includes(res.status()) && Boolean(res.headers().location));
+  const reservarVaga = (req, credenciais = '', cabecalhosDoScript = null, modo = '', atributos = null, documento = null, politica = null) => {
+    urlsDeFetch.add(req.url());
+    const { id, seq } = identidadeDoPedido(req, cabecalhosDoScript, atributos || credenciais || 'same-origin');
     const lista = envelopes.get(id) || [];
+    const vaga = { seq, perdido: true, u: req.url(), metodo: metodoCanonico(req.method()), geracao: geracaoDoc, credenciais, cabecalhosDoScript, modo };
+    // DOCUMENTO de onde a chamada partiu (Astra B132): com referrer default o navegador deriva
+    // o Referer da URL ATUAL do documento — pushState muda o que o servidor recebe sem mudar a
+    // identidade. Guardado como hash ('' = a URL de entrada do documento): o remendo so serve a
+    // ocorrencia a uma chamada feita do MESMO documento; outro = miss sem consumir.
+    if (typeof documento === 'string') vaga.documento = hexSha256(documento);
+    // POLITICA de referrer do documento na chamada (Astra B135/B136), SEPARADA do documento: ela
+    // decide tambem o referrer EXPLICITO quando o pedido nao traz politica propria. Valor do
+    // padrao (nao sensivel), '' = nenhuma meta aplicada.
+    if (typeof politica === 'string') vaga.politica = politica;
+    vagas.push(vaga);
+    lista.push(vaga);
+    envelopes.set(id, lista);
+    vagaPorRaiz.set(req, vaga);
+  };
+  // RESPOSTA OPACA (Astra B16): fetch cross-origin cuja resposta não traz
+  // `Access-Control-Allow-Origin` só pôde chegar à página como OPACA (`no-cors`:
+  // status 0, sem cabeçalhos, corpo nulo) — em modo cors o navegador a bloqueia e
+  // nem emite `response`. Guardá-la como asset e reescrever o literal do script para
+  // o arquivo local tornava LEGÍVEL no clone o que a página nunca leu. Fica FORA do
+  // pacote e o envelope vira marcador opaco (replay = miss, ocorrência consumida).
+  // Resíduo declarado: dedup por URL — uma URL vista primeiro por fetch opaco não
+  // entra no pacote mesmo que um <img> também a referencie.
+  // (Astra B17) A PRESENÇA de ACAO não prova legibilidade: um ACAO de origem alheia
+  // não libera nada, e sob `no-cors` a resposta é opaca mesmo com ACAO certo. Regra
+  // sem exceções: resposta de fetch CROSS-ORIGIN nunca vira asset (o literal fica
+  // absoluto e o pedido segue cross-origin no clone, onde o modo decide); o envelope
+  // só é LEGÍVEL se o ACAO nomeia a origem da página ou é `*`; senão é marcador opaco.
+  // ORIGEM DO DOCUMENTO que iniciou o pedido (Astra B66), nao a da navegacao INICIAL: a
+  // navegacao pode redirecionar de origem (example.com -> www.example.com) e o documento
+  // final faz `fetch('/api')` same-origin — comparar com `alvo.origin` classificava-o
+  // como cross-origin e, sem ACAO (que uma resposta same-origin nao precisa), descartava
+  // o corpo como opaco: o replay perdia a API que funcionava. O frame do pedido e o
+  // documento que o fez; frame de origem opaca (srcdoc/about:blank) herda o topo; sem
+  // frame (destacado) cai na origem inicial.
+  const origemDoDocumento = (req) => {
+    const origemDe = (u) => { try { const o = new URL(u).origin; return o === 'null' ? null : o; } catch { return null; } };
+    try {
+      const frame = typeof req.frame === 'function' ? req.frame() : null;
+      if (frame) {
+        const propria = origemDe(frame.url());
+        if (propria) return propria;
+        const topo = origemDe(frame.page().mainFrame().url());
+        if (topo) return topo;
+      }
+    } catch { /* frame destacado: origem inicial */ }
+    return alvo.origin;
+  };
+  // Cross-origin se o TERMINAL e de outra origem OU se QUALQUER pedido da cadeia cruzou
+  // origem (Astra B82): A -> B -> A volta ao terminal same-origin, mas o nativo ja fez a
+  // checagem CORS em B (e a resposta final segue "tainted"); sem isto o corpo entrava
+  // como asset/envelope comum e o replay o servia a `cors`/`omit`.
+  const fetchCrossOrigin = (req, u) => {
+    if (!ehChamadaDeFetch(req)) return false;
+    let mesma = false; try { mesma = new URL(u).origin === origemDoDocumento(req); } catch { mesma = false; }
+    return !mesma || cadeiaCruzouOrigem(req, u);
+  };
+  const acaoLibera = (res) => acaoLiberaLeitura(res.headers(), origemDoDocumento(res.request()));
+  // LEGIBILIDADE em TODA a cadeia (Astra B81): o nativo faz a checagem CORS em cada
+  // resposta antes de segui-la — um 302 sem ACAO ja rejeita em modo `cors`, mesmo que o
+  // terminal traga `*`. Sob `no-cors` os saltos chegam (opacos) e a captura via so o
+  // terminal: emitia envelope legivel que o replay servia a `cors`/`omit`.
+  // ... com a origem SERIALIZADA e o tainting do Fetch (Astra B83): ver avaliarCadeiaCors.
+  const respostasDaCadeia = (req, res) => {
+    const vaga = vagaPorRaiz.get(pedidoRaiz(req));
+    return [...((vaga && vaga.saltos) || []), { url: res.url(), headers: res.headers() }];
+  };
+  // Cadeia INCOMPLETA (um salto que a captura nao registrou) = conservador: nem legivel nem
+  // credenciada (Astra B85) — o terminal sozinho passaria na validacao.
+  const cadeiaCompleta = (req) => {
+    const vaga = vagaPorRaiz.get(pedidoRaiz(req));
+    let esperados = 0;
+    for (let r = req; typeof r.redirectedFrom === 'function' && r.redirectedFrom(); r = r.redirectedFrom()) esperados += 1;
+    return ((vaga && vaga.saltos) || []).length >= esperados;
+  };
+  const avaliarCadeia = (req, res) => (cadeiaCompleta(req) ? avaliarCadeiaCors(origemDoDocumento(req), respostasDaCadeia(req, res)) : { legivel: false, credenciado: false });
+  const cadeiaLegivel = (req, res) => avaliarCadeia(req, res).legivel;
+  const respostaOpaca = (req, res, u) => fetchCrossOrigin(req, u) && !cadeiaLegivel(req, res);
+  // TAINT DE REDIRECT (Astra B18): se QUALQUER salto da cadeia (ou o terminal) saiu da
+  // origem da página, o fetch nativo trata a resposta como cross-origin — sob
+  // `no-cors` fica OPACA mesmo que o terminal traga ACAO `*`. Um `/relay` same-origin
+  // que redireciona para fora expunha o corpo no clone porque a raiz era same-origin.
+  const cadeiaCruzouOrigem = (req, u) => {
+    const origem = origemDoDocumento(req);
+    const urls = [u];
+    for (let r = req; r; r = (typeof r.redirectedFrom === 'function' ? r.redirectedFrom() : null)) urls.push(r.url());
+    return urls.some((x) => { try { return new URL(x).origin !== origem; } catch { return true; } });
+  };
+  const registrarEnvelope = (req, res, u, bytes, extra = {}) => {
+    const vaga = vagaPorRaiz.get(pedidoRaiz(req));
+    if (!vaga || !vaga.perdido) return;   // sem vaga (não é raiz de fetch) ou já finalizada
+    urlsDeFetch.add(u);
+    const origem = origemDoDocumento(req);
+    let mesmaOrigem = false;
+    try { mesmaOrigem = new URL(u).origin === origem; } catch { mesmaOrigem = false; }
+    const cruzouOrigem = cadeiaCruzouOrigem(req, u);
+    // Houve REDIRECT na cadeia (mesmo same-origin) — Astra B37: a politica `redirect`
+    // do pedido ('error' rejeita, 'manual' e opaco) so se aplica a envelopes que
+    // vieram de um redirect seguido; sem esta marca o remendo os servia a qualquer
+    // politica.
+    const redirecionou = pedidoRaiz(req) !== req;
+    // CORS CREDENCIADO (Astra B38): um envelope cross-origin legível em modo `omit`
+    // (ACAO `*`) NÃO pode servir a `credentials:'include'` — o nativo exige origem
+    // explícita E `Access-Control-Allow-Credentials: true`. Marca-se a elegibilidade.
+    const externo = !mesmaOrigem || cruzouOrigem;
+    // ... em TODA a cadeia (Astra B80): cada salto cross-origin passa pela checagem CORS
+    // antes de ser seguido; basta um 302 com ACAO `*` para o nativo rejeitar `include`.
+    // ... e, se o pedido exigiu preflight, so quando a propria captura foi `include`
+    // (Astra B93): o OPTIONS nao e observavel, e um `omit` capturado nao prova que o
+    // preflight autorizaria credenciais.
+    // Cabecalhos do SCRIPT (anunciados) decidem o preflight (Astra B95); sem anuncio (nao
+    // deveria acontecer: so anunciado reserva) = preflight presumido.
+    const raiz = pedidoRaiz(req);
+    let raizAlheia = false;
+    try { raizAlheia = new URL(raiz.url()).origin !== origem; } catch { raizAlheia = false; }
+    // Um preflight OBSERVADO (CDP) para a raiz conta sempre; o classificador so pode ACRESCENTAR
+    // "houve preflight" (lado que recusa), nunca tira-lo (Astra B111).
+    const observacao = raizAlheia ? consumirPreflight(raiz.url(), raiz.method()) : 'desconhecido';
+    const preflightObservado = observacao === 'sim';
+    const houvePreflight = observacao === 'sim' || observacao === 'ambiguo' || (vaga.cabecalhosDoScript ? precisaPreflight(raiz.method(), vaga.cabecalhosDoScript) : true);
+    const preflightNaoVerificado = houvePreflight && vaga.credenciais !== 'include';
+    const corsCredenciado = externo && !preflightNaoVerificado && avaliarCadeia(req, res).credenciado;
+    // Preflight CREDENCIADO VERIFICADO (Astra B97): a captura foi `include` E houve preflight
+    // — o navegador ja aceitou o OPTIONS com credenciais. Separado da permissao do
+    // terminal: no replay, um pedido que EXIGE preflight (corpo em fluxo, cabecalho novo)
+    // so pode ser servido com `include` se isto for verdade.
+    // Evidencia de preflight so vale para o PROPRIO pedido raiz, cross-origin, SEM redirect
+    // (Astra B107): num A -> 303 -> B a raiz e same-origin (nao faz preflight) e o 303 tira
+    // corpo e cabecalhos antes de B — o OPTIONS nunca aconteceu. Conservador: cadeia
+    // redirecionada nunca certifica preflight (residual declarado: um replay que exige
+    // preflight de uma cadeia assim e recusado mesmo que o nativo passasse).
+    const preflightObservavel = preflightObservado && !redirecionou;
+    const preflightCredenciado = corsCredenciado && preflightObservavel && vaga.credenciais === 'include';
+    // Preflight VERIFICADO em geral (Astra B103): houve preflight, a captura foi em modo cors
+    // e a resposta chegou — o navegador aceitou o OPTIONS. Sem isto, um replay que exige
+    // preflight (fluxo, cabecalho novo) nao pode ser servido em NENHUM modo de credenciais.
+    const preflightVerificado = externo && preflightObservavel && vaga.modo === 'cors';
+    // O que o preflight AUTORIZOU (Astra B108): um replay com cabecalho inseguro fora deste
+    // conjunto exigiria outra autorizacao, que a captura nunca viu.
+    const preflightCabecalhos = (preflightVerificado || preflightCredenciado) ? nomesInseguros(vaga.cabecalhosDoScript || {}) : null;
+    // Corpo em FLUXO e redirect (Astra B106; Fetch, HTTP-redirect fetch passo 11): um salto
+    // que nao e 303 com corpo presente de fonte nula e erro de rede — e esse passo vem antes
+    // da reescrita POST->GET do 301/302. So o 1o salto importa: depois de um 303 o corpo e nulo.
+    const redirectRejeitaFluxo = Boolean(vaga.saltos && vaga.saltos.length && vaga.saltos[0].status !== 303);
+    if (extra.opaco) { delete vaga.perdido; Object.assign(vaga, { opaco: true, url: u, status: res.status(), statusText: '', headers: {}, contentType: '', bytes: Buffer.alloc(0), mesmaOrigem, cruzouOrigem }); return; }
     // `url` fica aqui só para a reescrita de JSON resolver referências relativas; NÃO
     // vai para o manifesto público (Astra B2 #6): query com token apareceria no HTML.
-    lista.push({
-      seq: ordemDoPedido.get(req) ?? Number.MAX_SAFE_INTEGER,
+    delete vaga.perdido;
+    Object.assign(vaga, {
       url: u, status: res.status(), statusText: res.statusText() || '',
-      headers: cabecalhosDeReplay(res.headers(), { mesmaOrigem }),
+      headers: cabecalhosDeReplay(res.headers(), { mesmaOrigem: mesmaOrigem && !cruzouOrigem }),
       contentType: (res.headers()['content-type'] || '').split(';')[0].trim(),
-      bytes, mesmaOrigem,
+      bytes, mesmaOrigem, cruzouOrigem, redirecionou, externo, corsCredenciado, preflightCredenciado, preflightVerificado, redirectRejeitaFluxo, preflightCabecalhos,
     });
-    envelopes.set(id, lista);
+  };
+  // Ocorrência PERDIDA = a vaga fica BURACO (Astra B3 #4); o remendo trata como miss.
+  // Só se NOMEIA uma vez por vaga.
+  const registrarPerda = (req, u, motivo) => {
+    const vaga = vagaPorRaiz.get(pedidoRaiz(req));
+    if (!vaga || !vaga.perdido || vaga.nomeada) return;
+    vaga.nomeada = true;
+    envelopesRepetidosPerdidos.push({ u, motivo, geracao: vaga.geracao });
   };
   // Ocorrência REPETIDA (mesma URL já reservada): o dedup de assets a descartaria e o
   // replay fabricaria a última resposta para sempre (Astra B2 #3). Lê-se o corpo com
   // a MESMA guarda de tamanho (declarado antes de materializar) e um teto de tempo —
   // uma resposta que nunca termina não pode segurar a captura, e vira NOMEADA.
   const ENVELOPE_REPETIDO_TETO_MS = 8_000;
+  const MAX_ENVELOPES_REPETIDOS = 60;
+  let envelopesRepetidos = 0;
   const envelopesRepetidosPerdidos = [];
+  // As MESMAS guardas do caminho principal (Astra B3 #3): rejeição pelo declarado,
+  // medida pelo recebido ANTES de materializar, teto agregado pelo livro-razão
+  // (`conta`), teto de contagem e teto de tempo. Sem isto sessenta repetições de 4 MiB
+  // passavam por cima do orçamento inteiro da captura. O que não entra é NOMEADO e
+  // deixa BURACO na lista. Resíduo: o `Promise.race` não cancela a leitura pendente
+  // (a API do Playwright não oferece), só deixa de esperá-la.
+  // Hop visto numa vaga: se NUNCA vier sucessor (redirect: 'manual' → o site recebe um
+  // opaqueredirect, que não é construível em JS), a varredura nomeia isso de forma
+  // específica (Astra B6 #3). Resíduo declarado: esse caso é miss no replay.
+  // Cada SALTO da cadeia fica registrado na vaga (Astra B80): a elegibilidade a CORS
+  // credenciado (e qualquer checagem CORS) vale para TODA resposta da cadeia, nao so a
+  // terminal — um 302 com ACAO `*` ja faz o nativo rejeitar `credentials:'include'`.
+  const marcarHop = (req, res) => {
+    const vaga = vagaPorRaiz.get(pedidoRaiz(req));
+    if (!vaga || !vaga.perdido) return;
+    vaga.hopVisto = true;
+    vaga.ultimoSalto = req;   // o pedido que recebeu o 3xx: `redirectedTo()` diz se o navegador SEGUIU
+    if (res) {
+      // Idempotente por resposta (Astra B85): o salto e registrado no INICIO do handler,
+      // antes de qualquer guarda; as chamadas posteriores nao duplicam.
+      vaga.saltosVistos = vaga.saltosVistos || new Set();
+      if (vaga.saltosVistos.has(res)) return;
+      vaga.saltosVistos.add(res);
+      (vaga.saltos = vaga.saltos || []).push({ url: res.url(), headers: res.headers(), status: res.status() });
+    }
+  };
+  const envelopeRepetido = async (req, res, u) => {
+    if (!temVaga(req)) return;   // iframe ou vaga impossivel: sem lista, sem orcamento, sem contagem (Astra B67)
+    // Salto de redirect NÃO finaliza a vaga: quem a preenche é a resposta terminal
+    // da cadeia, sob a identidade do pedido raiz (Astra B4 #1).
+    // ⚠️ No evento `response` do 3xx o pedido seguinte pode ainda não existir
+    // (`redirectedTo()` nulo) — o 3xx era então NOMEADO como perda e o destino
+    // preenchia a vaga em seguida: replay certo, relatório errado. Um 3xx que não é
+    // 304 nunca é a resposta terminal de um fetch seguido; se o navegador não seguir,
+    // a vaga fica buraco (miss), sem nome — raro e declarado.
+    if (ehHop(res)) { marcarHop(req, res); return; }
+    if (respostaOpaca(req, res, u)) { registrarEnvelope(req, res, u, null, { opaco: true }); return; }
+    const status = res.status();
+    if (status === 204 || status === 304) { registrarEnvelope(req, res, u, Buffer.alloc(0)); return; }
+    // ⚠️ MEDIDO: o Playwright não entrega corpo de NENHUM 3xx ("Response body is
+    // unavailable for redirect responses"), mesmo de um 300 terminal que o site lê.
+    // Fabricar envelope vazio replayaria um 300 sem corpo como se fosse a resposta —
+    // é perda NOMEADA, e o replay é miss.
+    if (status >= 300 && status < 400) { registrarPerda(req, u, 'corpo de 3xx indisponivel na captura'); return; }
+    // A vaga de CONTAGEM é tomada ANTES do 1º await (Astra B4 #4): checar antes e
+    // incrementar depois deixava 61 repetições concorrentes passarem todas.
+    if (envelopesRepetidos >= MAX_ENVELOPES_REPETIDOS) { registrarPerda(req, u, 'limite de envelopes repetidos'); return; }
+    envelopesRepetidos += 1;
+    let entrou = false;
+    const declarado = Number(res.headers()['content-length'] || 0);
+    let temporizador = null;
+    const teto = new Promise((_, rej) => { temporizador = setTimeout(() => rej(new Error('teto de tempo')), ENVELOPE_REPETIDO_TETO_MS); });
+    try {
+      if (declarado > ENVELOPE_MAX_BYTES || (declarado && declarado > conta.restante())) { registrarPerda(req, u, 'grande demais (declarado)'); return; }
+      await Promise.race([res.finished().catch(() => {}), teto]);
+      const medidos = await Promise.race([res.request().sizes().then((t) => t.responseBodySize, () => null), teto]);
+      if (Number.isFinite(medidos) && (medidos > ENVELOPE_MAX_BYTES || medidos > conta.restante())) { registrarPerda(req, u, 'grande demais (recebido)'); return; }
+      const corpo = await Promise.race([res.body().catch(() => null), teto]);
+      // Sem corpo legível = perda NOMEADA, nunca envelope vazio fabricado: não há como
+      // distinguir "sem corpo por natureza" de "corpo que a captura não alcançou".
+      if (!corpo) { registrarPerda(req, u, 'corpo nao obtido'); return; }
+      if (corpo.byteLength > ENVELOPE_MAX_BYTES) { registrarPerda(req, u, 'grande demais'); return; }
+      const bilhete = conta.reservar(corpo.byteLength);
+      if (bilhete === null) { registrarPerda(req, u, conta.estaFechada() ? 'chegou apos a montagem' : 'orcamento esgotado'); return; }
+      conta.confirmar(bilhete);
+      entrou = true;
+      registrarEnvelope(req, res, u, corpo);
+    } catch (e) { registrarPerda(req, u, String(e && e.message || e)); }
+    finally { if (temporizador) clearTimeout(temporizador); if (!entrou) envelopesRepetidos -= 1; }
+  };
   // ⚠️ O `Promise.race` de fora rejeita, mas nada cancelava a captura — o
   // navegador seguia rolando por horas numa página gigante. Achado P0 do Sol.
   let cancelado = false;
@@ -388,7 +981,281 @@ export async function captureNativeBundle(url, opts = {}) {
     const page = emprestada ? session.page : await context.newPage();
     if (emprestada) await page.setViewportSize(viewport).catch(() => {});
 
-    page.on('request', (req) => { ordemDoPedido.set(req, ++seqPedido); });
+    // ANUNCIO das chamadas de `window.fetch` do DOCUMENTO DE ENTRADA (Astra B71). O
+    // contrato honesto: ocorrencia = chamada que o REMENDO da entrada vai interceptar —
+    // e o remendo embrulha `window.fetch` do documento. Frame nao distingue: o Playwright
+    // atribui ao frame dono os pedidos de um worker dedicado, que nao tem interceptor,
+    // e a lista ficava [WORKER, MAIN]. Um script de inicializacao embrulha `fetch` no
+    // MESMO ponto e anuncia (metodo, url) por binding ANTES de despachar; so a chamada
+    // anunciada reserva vaga. Worker, iframe e XHR seguem contando para os assets.
+    // Ordem: o anuncio e emitido pelo renderer ANTES de despachar o pedido, na mesma
+    // sessao CDP, e o binding e entregue antes do evento `request` (medido pelas
+    // testemunhas: sem nenhuma pendencia de fallback, toda chamada anunciada casa).
+    // Um pedido raiz da entrada que chega SEM anuncio (worker, referencia a `fetch`
+    // obtida de outra janela) nao reserva vaga — nunca se casa um anuncio com um
+    // pedido anterior (a 1a versao fazia isso e o pedido do WORKER, ja respondido,
+    // roubava o anuncio da janela). Anuncios zeram a cada documento novo.
+    // Residual declarado: worker e janela chamando a MESMA identidade no mesmo instante
+    // podem trocar de lugar.
+    // Anuncio SO de chamada que vai despachar (Astra B72): o embrulho constroi o Request
+    // efetivo UMA vez (e o 1o passo do proprio fetch), nao anuncia se o sinal ja esta
+    // abortado (rejeita sem pedido algum) nem se a construcao falha (o fetch rejeitaria
+    // igual), e entrega ESSE Request ao original — nada e consumido duas vezes. Um anuncio
+    // que ainda assim nao encontrar pedido em ANUNCIO_TTL_MS e aposentado (o pedido segue
+    // o anuncio no mesmo turno do renderer; um caso de nao-despacho desconhecido nao pode
+    // ficar a espera de um pedido alheio com a mesma chave).
+    const ANUNCIO_TTL_MS = 10_000;
+    const anuncios = new Map();      // "METODO\nurl" -> [instantes das chamadas anunciadas ainda sem pedido]
+    const chaveDeAnuncio = (m, u) => `${metodoCanonico(m)}\n${String(u).split('#')[0]}`;
+    const anunciosVivos = (k) => { const agora = Date.now(); const l = (anuncios.get(k) || []).filter((a) => agora - a.t < ANUNCIO_TTL_MS); if (l.length) anuncios.set(k, l); else anuncios.delete(k); return l; };
+    const NOME_DO_ANUNCIO = `__uncraftAnuncioDeFetch_${Math.random().toString(36).slice(2, 10)}`;
+    const reservarSePossivel = (req, credenciais, cabecalhos, modo, atributos, documento, politica) => { try { reservarVaga(req, credenciais, cabecalhos, modo, atributos, documento, politica); } catch (_) { /* vaga impossível = sem replay para esta chamada */ } };
+    // RETIRADA (Astra B74): uma chamada que rejeita SEM ter despachado pedido (Chromium
+    // recusa antes de criar o loader: `same-origin` para outra origem, e o que mais houver)
+    // deixaria o anuncio pendente para um worker herdar. O embrulho observa a promessa
+    // devolvida: rejeicao => retira UM anuncio pendente da mesma chave (os anuncios de uma
+    // chave sao intercambiaveis; se o pedido desta chamada JA consumiu um, so ha pendente
+    // se houver um orfao de verdade — o pedido de um irmao anunciado depois precede a
+    // rejeicao no renderer). O caso conhecido nem chega a anunciar.
+    await page.exposeBinding(NOME_DO_ANUNCIO, (source, evento, metodo, url, credenciais, cabecalhos, modo, tamanhoCorpo, atributos, documento, politica) => {
+      if (source.frame !== page.mainFrame()) return;
+      const k = chaveDeAnuncio(metodo, url);
+      const vivos = anunciosVivos(k);
+      if (evento === 'retirada') { if (vivos.length) { vivos.shift(); if (vivos.length) anuncios.set(k, vivos); else anuncios.delete(k); } return; }
+      const semProto = Object.create(null);
+      if (Array.isArray(cabecalhos)) for (const par of cabecalhos) if (Array.isArray(par) && par.length === 2) semProto[String(par[0]).toLowerCase()] = String(par[1]);
+      // Atributos do pedido CONSTRUIDO (Astra B131), so os conhecidos e so primitivos.
+      const at = Object.create(null);
+      if (atributos && typeof atributos === 'object') for (const [k] of ATRIBUTOS_DE_IDENTIDADE) { const v = atributos[k]; if (typeof v === 'string' || typeof v === 'boolean') at[k] = v; }
+      if (typeof credenciais === 'string' && credenciais) at.credentials = credenciais;
+      if (typeof modo === 'string' && modo) at.mode = modo;
+      if (atributos && atributos.corpoPresente === true) at.corpoPresente = true;
+      vivos.push({ t: Date.now(), credenciais: String(credenciais || ''), cabecalhos: semProto, modo: String(modo || ''), tamanho: Number.isInteger(tamanhoCorpo) ? tamanhoCorpo : -1, atributos: at, documento: typeof documento === 'string' ? documento : null, politica: typeof politica === 'string' ? politica : null }); anuncios.set(k, vivos);
+    });
+    await page.addInitScript((nome) => {
+      if (self !== top) return;
+      const anunciar = self[nome]; const original = self.fetch;
+      if (typeof anunciar !== 'function' || typeof original !== 'function') return;
+      try { Object.defineProperty(self, nome, { value: anunciar, enumerable: false, configurable: true, writable: true }); } catch (e) { /* segue visivel */ }
+      // Intrinsecos capturados ANTES de qualquer script da pagina (init script).
+      // Pre-ligados (uncurried) na inicializacao (Astra B122): guardar a referencia do getter
+      // nao basta — `.call` e procurado de novo na funcao, que a pagina alcanca. Defesa em
+      // profundidade: a pagina que adultera intrinsecos para sabotar o proprio clone esta fora
+      // do modelo de ameaca (decisao de produto, 2026-08-09).
+      const LIGAR = Function.prototype.call.bind(Function.prototype.bind);
+      const uncurry = function (fn) { return LIGAR(Function.prototype.call, fn); };
+      const AB_LEN = uncurry(Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get);
+      const TA_LEN = uncurry(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'byteLength').get);
+      const DV_LEN = uncurry(Object.getOwnPropertyDescriptor(DataView.prototype, 'byteLength').get);
+      const USP_STR = uncurry(URLSearchParams.prototype.toString);
+      const E_VIEW = ArrayBuffer.isView;
+      const ENC_ENCODE = uncurry(TextEncoder.prototype.encode);
+      const ENC = new TextEncoder();
+      const BYTES_LEN = uncurry(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), 'byteLength').get);
+      const tamanhoIntrinseco = function (v) {
+        try { return AB_LEN(v); } catch (e) { /* nao e ArrayBuffer */ }
+        try { if (E_VIEW(v)) { try { return TA_LEN(v); } catch (e) { return DV_LEN(v); } } } catch (e) { /* nao e view */ }
+        try { return BYTES_LEN(ENC_ENCODE(ENC, USP_STR(v))); } catch (e) { /* nao e URLSearchParams */ }
+        return -1;   // Blob, FormData, fluxo, ou qualquer objeto: desconhecido (grupo excluido)
+      };
+      // URL do documento no momento da CHAMADA (Astra B132), sem fragmento; '' = a de entrada
+      // deste documento (a mesma regra no remendo, onde a entrada e a URL do clone).
+      // POLITICA DE REFERRER do documento (Astra B135): Request.referrerPolicy '' herda a do
+      // documento, que um <meta name="referrer"> muda sem mudar URL nem atributos. JS nao le a
+      // politica, mas ela so muda quando uma meta de referrer entra ou tem o conteudo trocado —
+      // acompanhada por MutationObserver, com takeRecords() na chamada (sem atraso de microtarefa).
+      // ⚠️ Espelhado LITERALMENTE no remendo. Residual: o cabecalho Referrer-Policy da resposta
+      // do documento (constante por documento) nao entra.
+      var POLITICAS_VALIDAS = { 'no-referrer': 1, 'no-referrer-when-downgrade': 1, 'same-origin': 1, 'origin': 1, 'strict-origin': 1, 'origin-when-cross-origin': 1, 'strict-origin-when-cross-origin': 1, 'unsafe-url': 1 };
+      var metasConhecidas = typeof WeakSet === 'function' ? new WeakSet() : null;   // metas cujo efeito ja foi aplicado
+      var POLITICA_DESCONHECIDA = String.fromCharCode(0) + 'desconhecida';
+      var politicaMeta = '';
+      function aplicarMeta(el) {
+        // So o CERTO e aplicado (Astra B139): nome exatamente 'referrer' e valor exatamente um token
+        // do padrao; conteudo vazio e ignorado (norma). Qualquer outro valor numa meta de referrer —
+        // legado ('none', 'never'...), caixa ou espaco diferentes — e interpretado pelo navegador de
+        // um jeito que nao se reproduz com certeza aqui: politica DESCONHECIDA (so miss, nunca erro).
+        try {
+          if (!el || el.nodeName !== 'META' || !el.isConnected) return;
+          var nome = el.getAttribute('name');
+          if (nome === null || String(nome).toLowerCase() !== 'referrer') return;
+          var v = el.getAttribute('content');
+          if (v === null) return;   // sem content o Chromium nao processa; vazio ele tenta — desconhecido abaixo
+          if (nome === 'referrer' && Object.prototype.hasOwnProperty.call(POLITICAS_VALIDAS, v)) politicaMeta = v;
+          else politicaMeta = POLITICA_DESCONHECIDA;
+        } catch (e) { politicaMeta = POLITICA_DESCONHECIDA; }
+      }
+      function processarMetas(registros) {
+        // Lote RECONSTRUIVEL so quando cada meta aparece UMA vez e segue conectada (Astra B137): o
+        // registro aponta para o elemento de AGORA — uma meta inserida e removida na mesma tarefa,
+        // ou alterada duas vezes, ja nao mostra o valor que a politica tomou (remover nao desfaz a
+        // politica). Fora disso a politica fica DESCONHECIDA para o resto do documento.
+        if (politicaMeta === POLITICA_DESCONHECIDA) return;
+        var eventos = [];   // [elemento, 'direto' | 'sub' | 'attr' | 'rem']
+        for (var i = 0; i < registros.length; i++) {
+          var rg = registros[i];
+          if (rg.type === 'attributes') { if (rg.target && rg.target.nodeName === 'META') eventos.push([rg.target, 'attr']); continue; }
+          for (var j = 0; j < rg.addedNodes.length; j++) {
+            var no = rg.addedNodes[j];
+            if (no.nodeName === 'META') eventos.push([no, 'direto']);
+            else if (no.querySelectorAll) { var ms = no.querySelectorAll('meta'); for (var k = 0; k < ms.length; k++) eventos.push([ms[k], 'sub']); }
+          }
+          // REMOCAO de meta (Astra B138): remover nao desfaz a politica e o que a meta valia na
+          // insercao pode nao estar em nenhum registro de adicao (subarvore montada e esvaziada).
+          for (var rr = 0; rr < rg.removedNodes.length; rr++) {
+            var rm = rg.removedNodes[rr];
+            if (rm.nodeName === 'META') eventos.push([rm, 'rem']);
+            else if (rm.querySelectorAll) { var rms = rm.querySelectorAll('meta'); for (var rk = 0; rk < rms.length; rk++) eventos.push([rms[rk], 'rem']); }
+          }
+        }
+        // A mesma insercao vista duas vezes: o parser insere o ancestral vazio e depois a meta (que
+        // tem registro proprio); a busca no ancestral a acha de novo. Sub descartado quando ha direto.
+        var vale = [];
+        for (var a = 0; a < eventos.length; a++) {
+          var ev = eventos[a];
+          if (ev[1] === 'sub') { var temDireto = false; for (var d = 0; d < eventos.length; d++) if (eventos[d][0] === ev[0] && eventos[d][1] === 'direto') temDireto = true; if (temDireto) continue; }
+          vale.push(ev);
+        }
+        for (var b = 0; b < vale.length; b++) {
+          var el = vale[b][0]; var vezes = 0; var mexido = false;
+          for (var c = 0; c < vale.length; c++) if (vale[c][0] === el) { vezes++; if (vale[c][1] === 'attr') mexido = true; }
+          var nome = ''; try { nome = String(el.getAttribute('name') || '').toLowerCase(); } catch (e) { nome = ''; }
+          // Irrelevante: nao e de referrer agora e nenhum atributo mudou (ex.: meta charset).
+          if (nome !== 'referrer' && !mexido) continue;
+          // Removida SEM insercao vista (Astra B138): o valor que ela aplicou nao e reconstruivel. Uma meta
+          // ja processada em lote anterior, sem atributo mexido agora, sai sem efeito (remover nao desfaz).
+          var removida = false; for (var g = 0; g < vale.length; g++) if (vale[g][0] === el && vale[g][1] === 'rem') removida = true;
+          if (removida && vezes === 1 && !mexido && metasConhecidas && metasConhecidas.has(el)) continue;
+          if (removida || !el.isConnected || vezes > 1) { politicaMeta = POLITICA_DESCONHECIDA; return; }
+        }
+        for (var f = 0; f < vale.length; f++) if (vale[f][1] !== 'rem') { aplicarMeta(vale[f][0]); if (metasConhecidas) metasConhecidas.add(vale[f][0]); }
+      }
+      var observadorDeMetas = null;
+      try {
+        var iniciais = document.querySelectorAll('meta'); for (var q = 0; q < iniciais.length; q++) { aplicarMeta(iniciais[q]); if (metasConhecidas) metasConhecidas.add(iniciais[q]); }
+        observadorDeMetas = new MutationObserver(processarMetas);
+        observadorDeMetas.observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['name', 'content', 'media'] });   // os tres que o Chromium reprocessa (Astra B140)
+      } catch (e) { observadorDeMetas = null; }
+      function politicaDoDocumento() {
+        if (observadorDeMetas) { try { processarMetas(observadorDeMetas.takeRecords()); } catch (e) { /* segue */ } }
+        return politicaMeta;
+      }
+      const DOC_ENTRADA = String(location.href).split('#')[0];
+      const documentoDaChamada = function () { const h = String(location.href).split('#')[0]; return h === DOC_ENTRADA ? '' : h; };
+      self.fetch = function (input, init) {
+        let pedido;
+        // Tamanho do corpo CONHECIVEL de forma sincrona (Astra B116): o construtor e o unico
+        // leitor de init.body — um Proxy transparente so anota o valor lido. -1 = desconhecido
+        // (FormData, fluxo, corpo herdado de Request): a captura nao pode provar os bytes.
+        let lido = { houve: false, valor: undefined };
+        let initC = init;
+        if (init !== null && (typeof init === 'object' || typeof init === 'function') && typeof Proxy === 'function') {
+          initC = new Proxy(init, { get: function (a, p) { const v = Reflect.get(a, p, a); if (p === 'body') { lido.houve = true; lido.valor = v; } return v; } });
+        }
+        try { pedido = new Request(input, initC); }
+        catch (e) { return Promise.reject(e); }   // o erro ORIGINAL, sem reavaliar os argumentos (Astra B73: um getter com estado despacharia na 2a leitura); nada despacha, nada se anuncia
+        let despachavel = !(pedido.signal && pedido.signal.aborted);
+        // Rejeicoes GARANTIDAS antes de despachar (medidas em Chromium: zero pedidos):
+        // 'same-origin' para outra origem; 'no-cors' com redirect != 'follow' para outra
+        // origem (Astra B75). Nao anunciam — o remendo rejeita as mesmas antes de alocar.
+        try {
+          const alheia = new URL(pedido.url).origin !== self.location.origin;
+          if (despachavel && alheia && pedido.mode === 'same-origin') despachavel = false;
+          if (despachavel && alheia && pedido.mode === 'no-cors' && pedido.redirect !== 'follow') despachavel = false;
+        } catch (e) { /* segue anunciavel */ }
+        // only-if-cached nunca e anunciado (Astra B124): o replay o rejeita sem alocar, entao a
+        // captura tambem nao lhe da vaga — senao a lista desloca e o reload seguinte recebe o
+        // envelope do cache.
+        if (pedido.cache === 'only-if-cached') despachavel = false;
+        if (!despachavel) return original.call(this, pedido);   // rejeita no nativo (ou segue sem vaga), sem anuncio
+        try {
+          const cabecalhos = []; pedido.headers.forEach(function (v, k) { cabecalhos.push([k, v]); });   // so o que o script pos; PARES sem perda (Astra B115)
+          let tamanho = -1;
+          const b = lido.houve ? lido.valor : undefined;
+          // Corpo HERDADO de Request (Astra B117): o construtor consome o input, entao bodyUsed nao
+          // prova ausencia — so pedido.body === null prova. Herdado nao nulo = desconhecido.
+          // ... decidido pelo pedido CONSTRUIDO, nunca pelo realm do input (Astra B119: um Request
+          // de iframe falha o instanceof da janela e virava 0).
+          if (b === undefined || b === null) tamanho = pedido.body === null ? 0 : -1;
+          else if (typeof b === 'string') tamanho = new TextEncoder().encode(b).byteLength;
+          // Objetos: tamanho SO por getter intrinseco com checagem de marca (Astra B121) —
+          // instanceof e protótipo sao falsificaveis (um Blob com protótipo de ArrayBuffer
+          // anunciava 0). Marca que nao confere = desconhecido.
+          else tamanho = tamanhoIntrinseco(b);
+          if (pedido.body === null) tamanho = 0;
+          anunciar('anuncio', pedido.method, pedido.url, pedido.credentials, cabecalhos, pedido.mode, tamanho,
+            { cache: pedido.cache, credentials: pedido.credentials, mode: pedido.mode, referrer: pedido.referrer, referrerPolicy: pedido.referrerPolicy, corpoPresente: pedido.body !== null },
+            documentoDaChamada(), politicaDoDocumento());
+        } catch (e) { /* sem anuncio = sem vaga; o pedido segue igual */ }
+        // Promessa DERIVADA (nao se marca a original como tratada: o `unhandledrejection`
+        // da pagina continua a disparar para quem nao trata) — na rejeicao retira o anuncio.
+        return original.call(this, pedido).then(function (v) { return v; }, function (e) {
+          try { anunciar('retirada', pedido.method, pedido.url); } catch (e2) { /* nada */ }
+          throw e;
+        });
+      };
+    }, NOME_DO_ANUNCIO);
+
+    try {
+      const cdp = await page.context().newCDPSession(page);
+      const arvore = await cdp.send('Page.getFrameTree');
+      const frameTopo = arvore && arvore.frameTree && arvore.frameTree.frame && arvore.frameTree.frame.id;
+      await cdp.send('Network.enable');
+      cdp.on('Network.requestWillBeSent', (p) => {
+        if (!p || !p.request) return;
+        if (p.initiator && p.initiator.type === 'preflight' && p.initiator.requestId) { preflightDe.set(p.requestId, p.initiator.requestId); return; }
+        if (p.type !== 'Fetch' || !frameTopo || p.frameId !== frameTopo) return;
+        if (pedidosCdp.has(p.requestId)) return;   // salto de redirect: a raiz e a 1a
+        const novo = { metodo: String(p.request.method).toUpperCase(), url: String(p.request.url).split('#')[0], preflightOk: false, consumido: false, ambiguo: false };
+        // Sobreposicao ja no INICIO (Astra B113): outro pedido nao consumido com o mesmo
+        // (metodo, URL) em voo torna os dois ambiguos, qualquer que seja a ordem de termino.
+        for (const outro of pedidosCdp.values()) if (!outro.consumido && outro.url === novo.url && outro.metodo === novo.metodo) { outro.ambiguo = true; novo.ambiguo = true; }
+        pedidosCdp.set(p.requestId, novo);
+      });
+      cdp.on('Network.responseReceived', (p) => {
+        if (!p || p.type !== 'Preflight' || !p.response) return;
+        const st = Number(p.response.status);
+        if (!(st >= 200 && st < 300)) return;
+        const alvo = pedidosCdp.get(preflightDe.get(p.requestId));
+        if (alvo) alvo.preflightOk = true;
+      });
+    } catch { /* sem CDP: nenhum preflight e certificado (fail-closed) */ }
+    page.on('framenavigated', (frame) => {
+      if (frame !== page.mainFrame() || !navegacaoPendente) return;   // same-document ou 204/download: o documento nao trocou
+      navegacaoPendente = false;
+      geracaoDoc += 1;   // novo documento de entrada COMMITADO (Astra B68/B69)
+      anuncios.clear();   // anuncios de um documento nao valem para o proximo
+    });
+    page.on('request', (req) => {
+      ordemDoPedido.set(req, ++seqPedido);
+      // TODA URL de uma cadeia de fetch (raiz E sucessores de redirect) entra nos caminhos
+      // protegidos JA no pedido (Astra B88), independente de o envelope chegar a ser
+      // registrado: um terminal de midia same-origin saia pela guarda antes de
+      // `registrarEnvelope`, a repescagem o publicava sem `tipo` e um miss de identidade
+      // (outro api-key) recebia a copia estatica — a resposta de OUTRO pedido.
+      // ... e tambem XHR (Astra B89): a chamada respondida errado seria um `fetch` do replay ao
+      // asset que um XHR de mídia (api-key A) deixou na repescagem sem `tipo`. A RESERVA de
+      // vaga continua so para fetch; a PROTECAO cobre tudo o que um script pediu.
+      if (ehChamadaDeFetch(req) || req.resourceType() === 'xhr') urlsDeFetch.add(req.url());
+      // Só o pedido RAIZ (não um salto de redirect) do documento de entrada, ANUNCIADO
+      // pelo seu `window.fetch`, ganha vaga na lista.
+      if (ehChamadaDeFetch(req) && doDocumentoDeEntrada(req) && !req.redirectedFrom()) {
+        const k = chaveDeAnuncio(req.method(), req.url());
+        const vivos = anunciosVivos(k);
+        if (vivos.length) {
+          const a = vivos.shift(); if (!vivos.length) anuncios.delete(k);
+          // Corpo PROVADO (Astra B116): o Chromium omite bytes de Blob/arquivo do postData e o
+          // Playwright devolveria vazio — "ausente" viraria "vazio" e colidiria com o pedido sem
+          // corpo. So reserva quando o tamanho anunciado e conhecido e bate com os bytes vistos.
+          let visto = null; try { visto = req.postDataBuffer(); } catch { visto = null; }
+          const nVisto = visto ? visto.length : 0;
+          if (a.tamanho >= 0 && a.tamanho === nVisto) reservarSePossivel(req, a.credenciais, a.cabecalhos, a.modo, a.atributos, a.documento, a.politica);
+          // Omitir a chamada DESLOCA a ordem das ocorrencias (Astra B118): no replay ela casaria a
+          // ocorrencia de outra. O grupo (metodo, URL) inteiro sai do replay — miss, nunca troca.
+          else gruposEnvenenados.add(`${metodoCanonico(req.method())} ${String(req.url()).split('#')[0]}`);
+        }
+      }
+    });
     page.on('requestfailed', (req) => {
       const u = req.url();
       if (!/^https?:/i.test(u)) return;
@@ -413,23 +1280,18 @@ export async function captureNativeBundle(url, opts = {}) {
           // Os bytes do anterior ficam contados na contabilidade — sobra
           // conservadora, nunca fura o teto.
           const req = res.request();
+          // SALTO registrado ANTES de qualquer guarda ou await (Astra B85): os filtros de
+          // asset (midia, tamanho declarado) saiam antes de `marcarHop` e a cadeia ficava
+          // incompleta — o terminal sozinho passava na validacao CORS.
+          if (ehHop(res) && ehChamadaDeFetch(req)) marcarHop(req, res);
           const documentoPrincipal = req.resourceType() === 'document' && req.isNavigationRequest() && req.frame() === page.mainFrame();
-          if (recursos.has(u) && !documentoPrincipal) {
-            const tipoRep = req.resourceType();
-            if ((tipoRep === 'fetch' || tipoRep === 'xhr') && !cancelado) {
-              const declarado = Number(res.headers()['content-length'] || 0);
-              if (!(declarado > ENVELOPE_MAX_BYTES)) {
-                let temporizador = null;
-                try {
-                  const corpoRep = await Promise.race([
-                    res.body(),
-                    new Promise((_, rej) => { temporizador = setTimeout(() => rej(new Error('teto')), ENVELOPE_REPETIDO_TETO_MS); }),
-                  ]);
-                  if (corpoRep && corpoRep.byteLength <= ENVELOPE_MAX_BYTES) registrarEnvelope(req, res, u, corpoRep);
-                } catch (_) { envelopesRepetidosPerdidos.push(u); }
-                finally { if (temporizador) clearTimeout(temporizador); }
-              }
-            }
+          if (documentoPrincipal && !ehHop(res)) navegacaoPendente = respostaQueViraDocumento(res);   // o commit e o `framenavigated` que segue (sincrono, antes de qualquer await)
+          // So um substituto que PODE COMMITAR substitui o documento capturado (Astra B70):
+          // uma recarga que responde 204/205 (ou download) na MESMA URL deixa o documento
+          // vivo — e anulava o HTML ja capturado da entrada. Salto tampouco commita.
+          const trocaDocumento = documentoPrincipal && !ehHop(res) && respostaQueViraDocumento(res);
+          if (recursos.has(u) && !trocaDocumento) {
+            if (ehChamadaDeFetch(req) && !cancelado) await envelopeRepetido(req, res, u);
             return;
           }
           // GERAÇÃO por URL: o recarregamento pode chegar enquanto o handler da
@@ -466,8 +1328,33 @@ export async function captureNativeBundle(url, opts = {}) {
           // Duas leituras somadas: `resourceType` classifica quem INICIOU o
           // pedido (o <video>), e um vídeo baixado por fetch/XHR chega como
           // 'fetch' — só o content-type da RESPOSTA o entrega (Sol).
+          // Fetch CROSS-ORIGIN (terminal ou cadeia cruzada) decidido ANTES da guarda de midia
+          // (Astra B86): um terminal `video/*` sem ACAO saia pela guarda com a reserva nula, a
+          // repescagem o baixava e guardava como asset — sem `tipo` e fora de `urlsDeFetch`,
+          // logo desprotegido e legivel no clone. Nunca asset; opaco fecha o envelope aqui;
+          // legivel segue para o ramo de envelope (que le o corpo com teto).
+          const fetchAlheio = !ehHop(res) && fetchCrossOrigin(req, u);
+          if (fetchAlheio && !cadeiaLegivel(req, res)) {
+            // Opaco: solta a reserva (nunca asset, a repescagem nao re-busca) e fecha o
+            // envelope. O legivel NAO solta aqui: a reserva nula e o bilhete que o ramo de
+            // envelope, mais abaixo, exige para registrar ("so quem ainda segura decide").
+            recursos.delete(u);
+            descartados.push({ u, motivo: 'resposta opaca (fetch cross-origin sem CORS)' });
+            if (temVaga(req)) registrarEnvelope(req, res, u, null, { opaco: true });
+            return;
+          }
           const tipoResposta = (res.headers()['content-type'] || '').split(';')[0].trim();
-          if (res.request().resourceType() === 'media' || /^(?:video|audio)\//i.test(tipoResposta)) return;
+          // Midia LEGIVEL de fetch cross-origin (Astra B87) NAO passa pela guarda de midia: ela
+          // e envelope (com os tetos do ramo de envelope), nunca asset da repescagem — a guarda
+          // a mandava para a repescagem, que a guardava como asset desprotegido, e a lista
+          // ficava com buraco.
+          if (!fetchAlheio && (res.request().resourceType() === 'media' || /^(?:video|audio)\//i.test(tipoResposta))) {
+            // Salto de uma cadeia de FETCH nunca e asset (Astra B85): deixar a reserva nula
+            // fazia a repescagem re-buscar a URL do salto pelo Node, seguir o redirect e
+            // guardar o corpo TERMINAL como asset sob o caminho do salto — legivel no clone.
+            if (ehHop(res) && ehChamadaDeFetch(req)) recursos.delete(u);
+            return;
+          }
           // ⚠️ REJEIÇÃO ANTECIPADA, não proteção de memória. `content-length` é
           // opcional, pode mentir e pode vir comprimido — quando falta ou está
           // errado, `res.body()` carrega o arquivo inteiro do mesmo jeito, e a
@@ -485,7 +1372,11 @@ export async function captureNativeBundle(url, opts = {}) {
           // honesto (decisão de 2026-08-09).
           const declarado = Number(res.headers()['content-length'] || 0);
           if (declarado > MAX_ASSET_BYTES || (declarado && declarado > conta.restante())) {
-            recursos.delete(u); descartados.push({ u, motivo: 'grande demais (declarado)' }); return;
+            recursos.delete(u); descartados.push({ u, motivo: 'grande demais (declarado)' });
+            // Um SALTO nunca carrega o corpo: nomea-lo como perda era espurio (o terminal
+            // preenche a vaga logo a seguir) — Astra B85 colateral.
+            if (ehChamadaDeFetch(req) && !ehHop(res)) registrarPerda(req, u, 'grande demais (declarado)');
+            return;
           }
           // SEGUNDA BARREIRA (Sol): sem content-length ainda dá para saber o
           // tamanho ANTES de materializar — `finished()` + `sizes()` entrega
@@ -496,7 +1387,9 @@ export async function captureNativeBundle(url, opts = {}) {
           await res.finished().catch(() => {});
           const medidos = await res.request().sizes().then((t) => t.responseBodySize, () => null);
           if (Number.isFinite(medidos) && (medidos > MAX_ASSET_BYTES || medidos > conta.restante())) {
-            recursos.delete(u); descartados.push({ u, motivo: 'grande demais (recebido)' }); return;
+            recursos.delete(u); descartados.push({ u, motivo: 'grande demais (recebido)' });
+            if (ehChamadaDeFetch(req)) registrarPerda(req, u, 'grande demais (recebido)');
+            return;
           }
           const bytes = await res.body().catch(() => null);
           // ⚠️ DEPOIS de esperar, a reserva pode não ser mais minha (Astra r1
@@ -506,6 +1399,30 @@ export async function captureNativeBundle(url, opts = {}) {
           // teto) ou o contaria duas vezes (`confirmar` + `set`). Só quem ainda
           // segura a reserva nula decide; os outros saem calados.
           if (recursos.get(u) !== null || geracao.get(u) !== geracaoMinha) return;
+          // Resposta OPACA de fetch cross-origin (não é salto): fora do pacote, envelope
+          // marcador — decidido ANTES de olhar o corpo, que a página nunca leu.
+          // Fetch CROSS-ORIGIN (não é salto): NUNCA vira asset (Astra B16/B17) — o literal
+          // fica absoluto e o pedido segue cross-origin no clone, onde o modo decide.
+          // Legível (ACAO da página ou `*`) → envelope com corpo; senão → marcador opaco.
+          if (!ehHop(res) && fetchCrossOrigin(req, u)) {
+            const legivel = cadeiaLegivel(req, res);
+            recursos.delete(u); descartados.push({ u, motivo: legivel ? 'fetch cross-origin: so envelope, nunca asset' : 'resposta opaca (fetch cross-origin sem CORS)' });
+            if (!temVaga(req)) return;   // iframe: nunca asset (acima), mas tambem nenhum envelope/orcamento (Astra B67)
+            if (!legivel) { registrarEnvelope(req, res, u, null, { opaco: true }); return; }
+            // Envelope legível fora do mapa de assets: passa pelo MESMO livro-razão e
+            // pelo MESMO teto de contagem dos envelopes repetidos (Astra B19) — sem
+            // isto 61 respostas de 4 MiB somavam 244 MiB com o razão em zero. Recusa =
+            // buraco NOMEADO.
+            if (!bytes) { registrarPerda(req, u, 'corpo nao obtido'); return; }
+            if (bytes.byteLength > ENVELOPE_MAX_BYTES) { registrarPerda(req, u, 'envelope grande demais'); return; }
+            if (envelopesRepetidos >= MAX_ENVELOPES_REPETIDOS) { registrarPerda(req, u, 'limite de envelopes'); return; }
+            const reservaEnv = conta.reservar(bytes.byteLength);
+            if (reservaEnv === null) { registrarPerda(req, u, conta.estaFechada() ? 'chegou apos a montagem' : 'orcamento esgotado'); return; }
+            conta.confirmar(reservaEnv);
+            envelopesRepetidos += 1;
+            registrarEnvelope(req, res, u, bytes);
+            return;
+          }
           if (!bytes) {
             const status = res.status();
             // 204/304 não têm corpo por natureza. Redirect PODE ter corpo
@@ -523,6 +1440,14 @@ export async function captureNativeBundle(url, opts = {}) {
             // Quem não redirecionou fica como reserva nula: a repescagem
             // tenta, e se também não conseguir, a URL entra NOMEADA no
             // relatório em vez de sumir calada (Sol, 4 rodadas até aqui).
+            // Envelope de fetch SEM corpo: 204/304 é resposta legítima (vazia) e vira
+            // envelope; redirect não registra (o destino registra sob a identidade
+            // RAIZ); o resto é ocorrência perdida = BURACO na lista (Astra B3 #4).
+            if (ehChamadaDeFetch(req)) {
+              if (status === 204 || status === 304) registrarEnvelope(req, res, u, Buffer.alloc(0));
+              else if (ehHop(res)) marcarHop(req, res);
+              else registrarPerda(req, u, status >= 300 && status < 400 ? 'corpo de 3xx indisponivel na captura' : 'corpo nao obtido');
+            }
             const redirecionou = status >= 300 && status < 400 && Boolean(res.request().redirectedTo());
             if (status === 204 || status === 304 || redirecionou) { recursos.delete(u); return; }
             // ⚠️ O RESTO FICA COMO RESERVA NULA — é exatamente isso que a
@@ -570,6 +1495,7 @@ export async function captureNativeBundle(url, opts = {}) {
             bytes,
             contentType: (res.headers()['content-type'] || '').split(';')[0].trim(),
             tipo: req.resourceType(),
+            varia: variaPorPedido(res.headers()['vary']),
           });
           // ⭐ ENVELOPE DE REPLAY para fetch/XHR — AQUI, com os bytes já em mão e
           // depois de TODAS as guardas (host, mídia, tamanho medido antes de
@@ -579,9 +1505,9 @@ export async function captureNativeBundle(url, opts = {}) {
           // Resíduo declarado: um 2º POST para a MESMA URL com outro corpo não entra
           // (o dedup por URL fica intacto); a identidade por corpo já está na chave,
           // então estender é só registrar antes do dedup — com as mesmas guardas.
-          const tipoDoRecurso = req.resourceType();
-          if ((tipoDoRecurso === 'fetch' || tipoDoRecurso === 'xhr') && bytes.byteLength <= ENVELOPE_MAX_BYTES) {
-            registrarEnvelope(req, res, u, bytes);
+          if (ehChamadaDeFetch(req)) {
+            if (bytes.byteLength <= ENVELOPE_MAX_BYTES) registrarEnvelope(req, res, u, bytes);
+            else registrarPerda(req, u, 'envelope grande demais');
           }
         } catch (_) { /* resposta sem corpo (redirect, 204, 304) não é falha */ }
         finally {
@@ -642,13 +1568,26 @@ export async function captureNativeBundle(url, opts = {}) {
     // Percorre a página inteira: recurso preguiçoso só é pedido quando entra na
     // tela, e sem isso o bundle sairia sem metade das imagens.
     onProgress({ etapa: 'scrolling' });
-    const altura = Math.min(await page.evaluate(() => document.body.scrollHeight), MAX_ALTURA_PX);
-    for (let y = 0; y < altura && !cancelado; y += 700) {
-      await page.evaluate((v) => window.scrollTo(0, v), y);
-      await page.waitForTimeout(160);
+    // Um site que NAVEGA (recarrega) no meio da rolagem destroi o contexto do `evaluate`
+    // e derrubava a captura inteira (visto na suite completa sob carga; deterministico na
+    // testemunha). O documento novo e o dono (geracao): espera-se o load e rola-se de novo
+    // do topo, com teto de tentativas. Outros erros seguem subindo.
+    const contextoDestruido = (e) => /Execution context was destroyed|Cannot find context with specified id|Frame was detached|Execution context is not available/i.test(String((e && e.message) || e));
+    for (let tentativa = 0; ; tentativa += 1) {
+      try {
+        const altura = Math.min(await page.evaluate(() => document.body.scrollHeight), MAX_ALTURA_PX);
+        for (let y = 0; y < altura && !cancelado; y += 700) {
+          await page.evaluate((v) => window.scrollTo(0, v), y);
+          await page.waitForTimeout(160);
+        }
+        break;
+      } catch (e) {
+        if (!contextoDestruido(e) || tentativa >= 3) throw e;
+        await page.waitForLoadState('load', { timeout: 15000 }).catch(() => {});
+      }
     }
     if (cancelado) throw Object.assign(new Error('native_bundle_aborted'), { code: 'aborted' });
-    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.evaluate(() => window.scrollTo(0, 0)).catch((e) => { if (!contextoDestruido(e)) throw e; });
     await page.waitForTimeout(1200);
 
     // A referência do SSIM permanente: o site VIVO, topo, assentado — tirada
@@ -949,6 +1888,7 @@ export async function captureNativeBundle(url, opts = {}) {
             return {
               bytes: Buffer.concat(pedacos.map((p) => Buffer.from(p))),
               contentType: resposta.headers.get('content-type') || 'application/octet-stream',
+              varia: variaPorPedido(resposta.headers.get('vary')),   // so .get e garantido no adaptador da sessao emprestada
               // Quem publica confere de novo: entre este `return` e o `set`
               // de fora há um microtask, e a geração pode virar nele.
               geracao: geracaoNoInicio,
@@ -983,7 +1923,7 @@ export async function captureNativeBundle(url, opts = {}) {
             // Publicar exige a vaga ainda nula E a mesma geração (Astra r3:
             // o `await` acima é um microtask — a checagem de dentro não basta).
             if (valor && recursos.get(u) === null && (geracao.get(u) || 0) === valor.geracao) {
-              recursos.set(u, { bytes: valor.bytes, contentType: valor.contentType, tipo: valor.tipo });
+              recursos.set(u, { bytes: valor.bytes, contentType: valor.contentType, tipo: valor.tipo, varia: valor.varia === true });
             }
           } catch { /* segue faltando, e o relatório dirá */ }
         }
@@ -1057,10 +1997,38 @@ export async function captureNativeBundle(url, opts = {}) {
     // Marcador de origem ALEATÓRIO por pacote (Astra B2 #7): um marcador fixo trocado
     // por split/join corrompia conteúdo legítimo que o contivesse. `montarReplay` ainda
     // confere que o corpo não o contém antes de reescrever.
+    // Raiz de fetch que nunca teve desfecho (pedido pendente no fim, hop sem destino):
+    // buraco NOMEADO, nunca silencioso (Astra B5 #2).
+    const geracaoDaEntrada = geracaoDoc;
+    // "Redirect nao seguido" so quando o navegador de fato NAO seguiu o ultimo salto (Astra
+    // B84): um salto seguido cuja resposta seguinte foi bloqueada por CORS (sem evento) e
+    // "sem resposta terminal", nao politica `manual`.
+    const naoSeguiu = (vaga) => { try { return Boolean(vaga.hopVisto) && !(vaga.ultimoSalto && typeof vaga.ultimoSalto.redirectedTo === 'function' && vaga.ultimoSalto.redirectedTo()); } catch { return Boolean(vaga.hopVisto); } };
+    for (const vaga of vagas) if (vaga.geracao === geracaoDaEntrada && vaga.perdido && !vaga.nomeada) { vaga.nomeada = true; envelopesRepetidosPerdidos.push({ u: vaga.u, motivo: naoSeguiu(vaga) ? 'redirect nao seguido (manual) - opaqueredirect nao reproduzivel' : 'sem resposta terminal', geracao: vaga.geracao }); }
+    // So as ocorrencias do documento cuja HTML virou a entrada (Astra B68).
+    for (const [id, lista] of [...envelopes]) {
+      const envenenada = lista.some((v) => gruposEnvenenados.has(`${v.metodo} ${String(v.u).split('#')[0]}`));
+      const vivas = envenenada ? [] : lista.filter((v) => v.geracao === geracaoDaEntrada);
+      if (vivas.length) envelopes.set(id, vivas); else envelopes.delete(id);
+    }
+    const perdasDaEntrada = envelopesRepetidosPerdidos.filter((p) => p.geracao === geracaoDaEntrada).map(({ u, motivo }) => ({ u, motivo }));
     for (const lista of envelopes.values()) lista.sort((a, b) => a.seq - b.seq);
     const marcador = `__UNCRAFT_ORIGIN_${createHash('sha1').update(String(Date.now()) + Math.random()).digest('hex').slice(0, 12)}__`;
     const { manifesto: manifestoDeReplay, arquivos: arquivosDeReplay } = montarReplay(envelopes, mapa, { marcador });
-    const remendoDeFetch = runtimeFetchShim(manifestoDeReplay, { marcador });
+    // O remendo precisa saber a RAIZ do pacote (o gateway serve sob `/api/runtime/<token>/`,
+    // não na raiz da origem — Astra B3 #6) e a ORIGEM DA FONTE, para uma chamada relativa
+    // do site (`fetch('/api')`) bater com a identidade capturada (Astra B3 #5).
+    // MAPA DE PROVENIÊNCIA (Astra B44): asset localizado sob _ext/ → identidade EXATA do
+    // GET simples à URL original. Sem URL no HTML (só o hash); a URL reconstruída do
+    // caminho é com perdas e NUNCA pode selecionar envelope — só este mapa pode.
+    const proveniencias = mapaDeProveniencias(mapa, new URL(entradaOriginal).origin);
+    const alheias = origensAlheias(mapa, new URL(entradaOriginal).origin);
+    // ASSETS VINDOS DE FETCH (Astra B55): a cópia estática de uma resposta de fetch
+    // same-origin não pode responder a um miss de identidade (api-key B recebia o
+    // corpo de A pelo fallback estático). O remendo recebe os caminhos e rejeita o
+    // miss neles; consumidores de markup (<img>) seguem lendo o arquivo direto.
+    const caminhosDeFetch = caminhosProtegidos(congelados, mapa, urlsDeFetch, new URL(entradaOriginal).origin);
+    const remendoDeFetch = runtimeFetchShim(manifestoDeReplay, { marcador, entryPath, origemFonte: new URL(entradaOriginal).origin, proveniencias, caminhosDeFetch, origensAlheias: alheias, gruposDeProveniencia: gruposDeProveniencia(mapa), sempre: true });
 
     const assets = [];
     for (const [u, valor] of congelados) {
@@ -1195,7 +2163,7 @@ export async function captureNativeBundle(url, opts = {}) {
         chamadasDeRuntimeMapeadas: Object.keys(manifestoDeReplay).length,
         envelopesDeReplay: arquivosDeReplay.length,
         // Ocorrências repetidas de fetch/XHR cujo corpo não chegou no teto: NOMEADAS.
-        envelopesRepetidosPerdidos: envelopesRepetidosPerdidos.slice(0, 20),
+        envelopesPerdidos: perdasDaEntrada.slice(0, 20),
         pedidosQueFalharam: (() => {
           const lista = [...recusados].map(([u, info]) => ({ u, erro: info.erro, tipo: info.tipo }));
           const nossa = lista.filter((x) => geracao.has(x.u));

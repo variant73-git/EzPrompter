@@ -77,7 +77,7 @@ describe('envelopes de replay', () => {
     expect(corpo(`_replay/${id}`)).toBe('primeira');
     expect(corpo(`_replay/${id}.1`)).toBe('segunda');     // #3: a 2ª ocorrência existe
     expect(corpo(`_replay/${idAuth}`)).toBe('autenticado'); // #2: identidade própria
-    expect(r.relatorio.envelopesRepetidosPerdidos).toEqual([]);
+    expect(r.relatorio.envelopesPerdidos).toEqual([]);
 
     // #6: a URL vive no <script> do PRÓPRIO site (é ele que chama); o que não pode é o
     // nosso manifesto repeti-la.
@@ -86,6 +86,7 @@ describe('envelopes de replay', () => {
     expect(inicio).toBeGreaterThan(-1);
     const remendo = html.slice(inicio, html.indexOf('</script>', inicio));
     expect(remendo).toContain(id);                          // o manifesto conhece a identidade…
+    expect(remendo).toContain('DE_FETCH');                  // e os caminhos de asset vindos de fetch
     expect(remendo).not.toContain('SEGREDO-NA-QUERY');      // …mas não a URL
   }, 120000);
 });

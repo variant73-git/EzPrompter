@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bundlePathForUrl, srcsetCandidateUrls } from './capture-bundle.js';
+import { bundlePathForUrl, srcsetCandidateUrls, avaliarCadeiaCors, identidadeDeRequisicao, acaoLiberaLeitura, elegivelCorsCredenciado, precisaPreflight } from './capture-bundle.js';
 import { readFileSync } from 'node:fs';
 
 describe('srcsetCandidateUrls (defect 1b, 2026-08-20)', () => {
@@ -95,6 +95,24 @@ describe('a captura tenta de novo antes de desistir', () => {
   // do video. So' se guarda 206 cujo Content-Range cobre o arquivo inteiro e
   // cujo corpo tem exatamente esse tamanho; o resto fica nulo e a repescagem
   // busca o arquivo completo, sem Range.
+  // Astra B19: o ramo do fetch cross-origin (envelope, nunca asset) guardava corpo sem
+  // passar pelo livro-razao nem pelo teto de contagem — 61 × 4 MiB = 244 MiB com o
+  // razao em zero. O ramo tem que reservar+confirmar e contar ANTES de registrar.
+  it('o ramo do fetch cross-origin passa pelo livro-razao e pelo teto antes de registrar o envelope', () => {
+    const inicio = fonte.indexOf('if (!ehHop(res) && fetchCrossOrigin(req, u)) {');
+    const ramo = fonte.slice(inicio, fonte.indexOf('const bilhete = bytes.byteLength > MAX_ASSET_BYTES', inicio));
+    const registro = ramo.indexOf('registrarEnvelope(req, res, u, bytes)');
+    expect(registro).toBeGreaterThan(-1);
+    for (const guarda of ['conta.reservar(', 'conta.confirmar(', 'envelopesRepetidos >= MAX_ENVELOPES_REPETIDOS', 'envelopesRepetidos += 1']) {
+      const i = ramo.indexOf(guarda);
+      expect(i, guarda).toBeGreaterThan(-1);
+      expect(i, `${guarda} antes do registro`).toBeLessThan(registro);
+    }
+    // e a recusa deixa buraco nomeado, nunca silencio
+    expect(ramo).toMatch(/orcamento esgotado/);
+    expect(ramo).toMatch(/limite de envelopes/);
+  });
+
   it('nunca guarda corpo de 206 parcial como arquivo inteiro', () => {
     const ouvinte = fonte.slice(fonte.indexOf("page.on('response'"), fonte.indexOf("emVoo.add(tarefa)"));
     const guarda = ouvinte.slice(ouvinte.indexOf('res.status() === 206'), ouvinte.indexOf('const bilhete'));
@@ -124,8 +142,12 @@ describe('a captura tenta de novo antes de desistir', () => {
     // content-type da RESPOSTA, nao so quem iniciou o pedido
     expect(ouvinte).toMatch(/\^\(\?:video\|audio\)\\\//);
     expect(iBody).toBeGreaterThan(iMidia);
-    // e o desvio e' um return SECO na mesma linha: sai sem apagar a reserva
-    expect(ouvinte.slice(iMidia, ouvinte.indexOf('\n', iMidia))).toMatch(/return;/);
+    // e o desvio sai sem apagar a reserva de MIDIA — a unica excecao (Astra B85) e o salto de
+    // uma cadeia de FETCH, que nunca e asset: esse solta a reserva para a repescagem nao
+    // re-buscar a URL do salto e guardar o corpo terminal como asset.
+    const bloco = ouvinte.slice(iMidia, ouvinte.indexOf('return;', iMidia) + 'return;'.length);
+    expect(bloco).toMatch(/if \(ehHop\(res\) && ehChamadaDeFetch\(req\)\) recursos\.delete\(u\);\s*return;/);
+    expect(bloco.replace(/if \(ehHop\(res\) && ehChamadaDeFetch\(req\)\) recursos\.delete\(u\);/, '')).not.toContain('recursos.delete(u)');
   });
 
   it('mede o recebido ANTES de materializar, mesmo sem content-length', () => {
@@ -184,5 +206,154 @@ describe('a captura tenta de novo antes de desistir', () => {
 
   it('o que continuar faltando segue nomeado no relatorio', () => {
     expect(fonte).toMatch(/retrying[\s\S]{0,9000}motivo: 'corpo nao chegou'/);
+  });
+});
+
+
+// Astra B83: a checagem CORS de uma cadeia usa a origem SERIALIZADA do pedido, que vira `null`
+// a partir do primeiro salto que muda de origem, e toda resposta apos a cadeia ficar "cors"
+// e checada — inclusive um terminal que voltou a origem da pagina.
+describe('avaliarCadeiaCors', () => {
+  const A = 'https://a.example'; const B = 'https://b.example';
+  const resp = (url, headers = {}) => ({ url, headers });
+  it('direto cross-origin: ACAO da pagina le; com ACAC true credencia', () => {
+    expect(avaliarCadeiaCors(A, [resp(`${B}/x`, { 'access-control-allow-origin': A })])).toEqual({ legivel: true, credenciado: false });
+    expect(avaliarCadeiaCors(A, [resp(`${B}/x`, { 'access-control-allow-origin': A, 'access-control-allow-credentials': 'true' })])).toEqual({ legivel: true, credenciado: true });
+    expect(avaliarCadeiaCors(A, [resp(`${B}/x`, { 'access-control-allow-origin': '*', 'access-control-allow-credentials': 'true' })])).toEqual({ legivel: true, credenciado: false });
+  });
+  it('same-origin sem saltos: nada e checado', () => {
+    expect(avaliarCadeiaCors(A, [resp(`${A}/x`)])).toEqual({ legivel: true, credenciado: true });
+  });
+  it('A -> B -> A com ACAO A em tudo: a origem serializada e null depois do salto, o terminal FALHA', () => {
+    const cadeia = [resp(`${A}/relay`), resp(`${B}/back`, { 'access-control-allow-origin': A }), resp(`${A}/secret`, { 'access-control-allow-origin': A })];
+    expect(avaliarCadeiaCors(A, cadeia).legivel).toBe(false);
+  });
+  it('A -> B -> A com * em B e null no terminal: legivel; A+ACAC em B e null+ACAC no terminal credencia', () => {
+    const base = [resp(`${A}/relay`), resp(`${B}/back`, { 'access-control-allow-origin': '*' })];
+    expect(avaliarCadeiaCors(A, [...base, resp(`${A}/secret`, { 'access-control-allow-origin': 'null' })])).toEqual({ legivel: true, credenciado: false });
+    expect(avaliarCadeiaCors(A, [...base, resp(`${A}/secret`, { 'access-control-allow-origin': '*' })])).toEqual({ legivel: true, credenciado: false });
+    // Astra B84: em B a origem serializada ainda e A (A -> B nao tinge); so B -> A tinge.
+    expect(avaliarCadeiaCors(A, [resp(`${A}/relay`), resp(`${B}/back`, { 'access-control-allow-origin': A, 'access-control-allow-credentials': 'true' }), resp(`${A}/secret`, { 'access-control-allow-origin': 'null', 'access-control-allow-credentials': 'true' })])).toEqual({ legivel: true, credenciado: true });
+    expect(avaliarCadeiaCors(A, [resp(`${A}/relay`), resp(`${B}/back`, { 'access-control-allow-origin': 'null', 'access-control-allow-credentials': 'true' }), resp(`${A}/secret`, { 'access-control-allow-origin': 'null', 'access-control-allow-credentials': 'true' })]).legivel).toBe(false);
+  });
+  it('A -> B (salto same-origin em A, terminal em B): B e checado contra A — ACAO A le e credencia, ACAO null NAO (Astra B84)', () => {
+    expect(avaliarCadeiaCors(A, [resp(`${A}/relay`), resp(`${B}/x`, { 'access-control-allow-origin': A, 'access-control-allow-credentials': 'true' })])).toEqual({ legivel: true, credenciado: true });
+    expect(avaliarCadeiaCors(A, [resp(`${A}/relay`), resp(`${B}/x`, { 'access-control-allow-origin': 'null', 'access-control-allow-credentials': 'true' })])).toEqual({ legivel: false, credenciado: false });
+  });
+  it('B -> C (salto cross-origin fora do documento): tinge — C e checado contra null', () => {
+    const C = 'https://c.example';
+    expect(avaliarCadeiaCors(A, [resp(`${B}/relay`, { 'access-control-allow-origin': '*' }), resp(`${C}/x`, { 'access-control-allow-origin': A })]).legivel).toBe(false);
+    expect(avaliarCadeiaCors(A, [resp(`${B}/relay`, { 'access-control-allow-origin': '*' }), resp(`${C}/x`, { 'access-control-allow-origin': 'null' })]).legivel).toBe(true);
+  });
+  it('B/relay (302, *) -> B/final (A + ACAC true): legivel, NAO credenciado (Astra B80)', () => {
+    expect(avaliarCadeiaCors(A, [resp(`${B}/relay`, { 'access-control-allow-origin': '*' }), resp(`${B}/final`, { 'access-control-allow-origin': A, 'access-control-allow-credentials': 'true' })])).toEqual({ legivel: true, credenciado: false });
+  });
+  it('B/relay (302 sem ACAO) -> B/ok (*): NAO legivel (Astra B81)', () => {
+    expect(avaliarCadeiaCors(A, [resp(`${B}/relay`), resp(`${B}/ok`, { 'access-control-allow-origin': '*' })]).legivel).toBe(false);
+  });
+});
+
+
+// Astra B90: so espaco HTTP e aparado — NBSP faz parte do valor e distingue identidades.
+describe('identidade de cabecalho: espaco HTTP vs Unicode', () => {
+  const U = 'https://origin/account';
+  it('NBSP no valor e OUTRA identidade; espaco HTTP nas pontas nao e', () => {
+    const a = identidadeDeRequisicao('GET', U, Buffer.alloc(0), { 'api-key': 'A' });
+    expect(identidadeDeRequisicao('GET', U, Buffer.alloc(0), { 'api-key': 'A\u00a0' })).not.toBe(a);
+    expect(identidadeDeRequisicao('GET', U, Buffer.alloc(0), { 'api-key': ' A\t' })).toBe(a);
+    expect(identidadeDeRequisicao('GET', U, Buffer.alloc(0), { accept: '*/*\u00a0' })).not.toBe(identidadeDeRequisicao('GET', U, Buffer.alloc(0), {}));
+  });
+});
+
+
+// Astra B92: NBSP no fim de ACAO/ACAC nao e espaco HTTP — o nativo nao aceita; o trim()
+// Unicode aceitava e o corpo entrava legivel (e ate credenciado).
+describe('CORS: ACAO/ACAC com NBSP nao valem', () => {
+  const A = 'https://a.example'; const B = 'https://b.example';
+  it('acaoLiberaLeitura e elegivelCorsCredenciado rejeitam NBSP; espaco HTTP e tolerado', () => {
+    expect(acaoLiberaLeitura({ 'access-control-allow-origin': '*\u00a0' }, A)).toBe(false);
+    expect(acaoLiberaLeitura({ 'access-control-allow-origin': `${A}\u00a0` }, A)).toBe(false);
+    expect(acaoLiberaLeitura({ 'access-control-allow-origin': ` ${A}\t` }, A)).toBe(true);
+    expect(elegivelCorsCredenciado({ 'access-control-allow-origin': A, 'access-control-allow-credentials': 'true\u00a0' }, A)).toBe(false);
+    expect(elegivelCorsCredenciado({ 'access-control-allow-origin': A, 'access-control-allow-credentials': ' true ' }, A)).toBe(true);
+  });
+  it('avaliarCadeiaCors: NBSP no terminal ou num salto derruba legibilidade/credencial', () => {
+    const resp = (url, headers = {}) => ({ url, headers });
+    expect(avaliarCadeiaCors(A, [resp(`${B}/x`, { 'access-control-allow-origin': '*\u00a0' })])).toEqual({ legivel: false, credenciado: false });
+    expect(avaliarCadeiaCors(A, [resp(`${B}/x`, { 'access-control-allow-origin': A, 'access-control-allow-credentials': 'true\u00a0' })])).toEqual({ legivel: true, credenciado: false });
+    expect(avaliarCadeiaCors(A, [resp(`${B}/relay`, { 'access-control-allow-origin': '*\u00a0' }), resp(`${B}/ok`, { 'access-control-allow-origin': '*' })]).legivel).toBe(false);
+    expect(avaliarCadeiaCors(A, [resp(`${B}/relay`, { 'access-control-allow-origin': '*' }), resp(`${B}/ok`, { 'access-control-allow-origin': '*' })]).legivel).toBe(true);
+  });
+});
+
+
+// Astra B93: quando ha preflight, o OPTIONS (invisivel ao Playwright) decide as credenciais.
+describe('precisaPreflight', () => {
+  it('metodo fora de GET/HEAD/POST ou cabecalho fora do safelist exige preflight', () => {
+    expect(precisaPreflight('GET', {})).toBe(false);
+    expect(precisaPreflight('PUT', {})).toBe(true);
+    expect(precisaPreflight('GET', { 'api-key': 'k' })).toBe(true);
+    expect(precisaPreflight('POST', { 'content-type': 'text/plain' })).toBe(false);
+    expect(precisaPreflight('POST', { 'content-type': 'application/json' })).toBe(true);
+    expect(precisaPreflight('GET', { accept: 'text/csv', 'accept-language': 'pt' })).toBe(false);
+    // Astra B95: a entrada sao os cabecalhos do SCRIPT (do Request construido) — TODOS contam,
+    // inclusive os que ficam fora da identidade por o navegador tambem os por sozinho.
+    expect(precisaPreflight('GET', { 'cache-control': 'no-cache' })).toBe(true);
+    expect(precisaPreflight('GET', { pragma: 'no-cache' })).toBe(true);
+  });
+  // Astra B94: as restricoes de VALOR do safelist tambem obrigam preflight
+  it('valor > 128 bytes, byte CORS-inseguro ou lingua fora do alfabeto exigem preflight', () => {
+    expect(precisaPreflight('GET', { accept: 'a'.repeat(129) })).toBe(true);
+    expect(precisaPreflight('GET', { accept: 'a'.repeat(128) })).toBe(false);
+    expect(precisaPreflight('GET', { accept: 'text/"csv"' })).toBe(true);
+    expect(precisaPreflight('GET', { accept: 'text/csv, */*;q=0.1' })).toBe(false);
+    expect(precisaPreflight('GET', { 'accept-language': 'pt-BR,pt;q=0.9' })).toBe(false);
+    expect(precisaPreflight('GET', { 'accept-language': 'pt(BR)' })).toBe(true);
+    expect(precisaPreflight('POST', { 'content-type': 'text/plain; charset="utf-8"' })).toBe(true);
+    expect(precisaPreflight('POST', { 'content-type': 'text/plain; charset=utf-8' })).toBe(false);
+    // Astra B96: todo byte de controle exceto TAB e CORS-inseguro (0x0B, 0x0C, 0x0E, 0x0F sobrevivem ao Request)
+    for (const b of ['\x0B', '\x0C', '\x0E', '\x0F', '\x01', '\x1F']) expect(precisaPreflight('GET', { accept: `text/plain${b}` }), JSON.stringify(b)).toBe(true);
+    expect(precisaPreflight('GET', { accept: 'text/plain\t' })).toBe(false);
+    // Astra B104: range simples e safelisted; qualquer outra forma exige preflight
+    expect(precisaPreflight('POST', { range: 'bytes=0-0', 'content-type': 'text/plain' })).toBe(false);
+    // Astra B105: espaco antes do ';' — a essencia MIME e aparada
+    expect(precisaPreflight('POST', { 'content-type': 'text/plain ;charset=utf-8' })).toBe(false);
+    expect(precisaPreflight('POST', { 'content-type': 'text/plain\t;charset=utf-8' })).toBe(false);
+    expect(precisaPreflight('GET', { range: 'bytes=10-' })).toBe(false);
+    for (const v of ['bytes=-5', 'bytes=5-1', 'bytes=0-1,2-3', 'bytes= 0-1', 'items=0-1']) expect(precisaPreflight('GET', { range: v }), v).toBe(true);
+    // Astra B110: acima de 2^53 a comparacao e exata (Number arredondaria os dois para o mesmo valor)
+    expect(precisaPreflight('GET', { range: 'bytes=9007199254740993-9007199254740992' })).toBe(true);
+    expect(precisaPreflight('GET', { range: 'bytes=9007199254740992-9007199254740993' })).toBe(false);
+    expect(precisaPreflight('GET', { range: 'bytes=007-10' })).toBe(false);
+    // Astra B114: extremos >= INT64_MAX saem do safelist (Chromium)
+    expect(precisaPreflight('GET', { range: 'bytes=0-9223372036854775808' })).toBe(true);
+    expect(precisaPreflight('GET', { range: 'bytes=0-9223372036854775807' })).toBe(true);
+    expect(precisaPreflight('GET', { range: 'bytes=0-9223372036854775806' })).toBe(false);
+    expect(precisaPreflight('GET', { range: 'bytes=9223372036854775807-' })).toBe(true);
+  });
+});
+
+// Astra B145: Vary por cabecalho de PEDIDO protege o asset contra o fallback estatico do fetch.
+describe('variaPorPedido', () => {
+  it('so Accept-Encoding (transporte) nao conta; qualquer outro cabecalho ou * conta', async () => {
+    const { variaPorPedido } = await import('./capture-bundle.js');
+    expect(variaPorPedido(undefined)).toBe(false);
+    expect(variaPorPedido('')).toBe(false);
+    expect(variaPorPedido('Accept-Encoding')).toBe(false);
+    expect(variaPorPedido(' accept-encoding , Accept-Encoding ')).toBe(false);
+    expect(variaPorPedido('Accept')).toBe(true);
+    expect(variaPorPedido('accept-encoding, Origin')).toBe(true);
+    expect(variaPorPedido('*')).toBe(true);
+  });
+});
+
+// Revisao Claude (2026-09-30): rastreio (id aleatorio por pedido) fica fora da identidade.
+describe('cabecalhos de rastreio fora da identidade', () => {
+  it('sentry-trace/baggage/traceparent diferentes dao a mesma identidade; outro cabecalho nao', () => {
+    const a = identidadeDeRequisicao('GET', 'https://o/anim.json', Buffer.alloc(0), { 'sentry-trace': 'a-1', baggage: 'x', traceparent: '00-a' });
+    const b = identidadeDeRequisicao('GET', 'https://o/anim.json', Buffer.alloc(0), { 'Sentry-Trace': 'b-2', baggage: 'y', traceparent: '00-b' });
+    expect(a).toBe(b);
+    expect(a).toBe(identidadeDeRequisicao('GET', 'https://o/anim.json', Buffer.alloc(0), {}));
+    expect(identidadeDeRequisicao('GET', 'https://o/anim.json', Buffer.alloc(0), { 'x-k': 'v' })).not.toBe(a);
   });
 });
