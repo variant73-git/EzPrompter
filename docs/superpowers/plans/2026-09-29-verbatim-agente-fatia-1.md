@@ -803,3 +803,56 @@ A rodada 149 do Astra não rodou: o Codex bateu o limite de uso (volta em 2026-1
 - **P2, procedente, aplicado — REVERTIDA a regra de validade de cache do B147/B148.** O padrão da Vercel/Netlify é `max-age=0, must-revalidate`: todo asset próprio ficava protegido e o hover que busca o arquivo do markup quebrava em sites hospedados ali. Sem `Vary`, o servidor não pode escolher outra representação pelo pedido (a revalidação devolve 304, os mesmos bytes); o risco real de negociação já está coberto pelo `Vary` (B145). **Residual declarado:** servidor que negocia SEM declarar `Vary` (viola o HTTP) pode responder outra coisa ao fetch — os cenários `no-store`/"vencida" do Astra saíram e o controle positivo da Vercel entrou: **com a regra anterior o hover dava `Failed to fetch`**, agora recebe o SVG.
 - **P2, mantido — recusa por query (B146).** Cache-buster (`anim.json?t=…`) a um asset só de markup dá miss; impacto estreito (exige o caminho sem query no pacote) e aceito pelo escopo.
 `lib/native-clone`: verde (ver abaixo). Commit aguardando a escolha do Adilson (revisão Claude basta, ou esperar o Astra).
+
+## 161. Custo por execução — detalhamento (pedido do Adilson, 2026-09-30)
+
+**Preços oficiais conferidos hoje** (platform.claude.com/docs/en/about-claude/pricing), US$/MTok — entrada · gravação de cache 5 min · 1 h · leitura de cache · saída: **Fable 5.1** 10 · 12,50 · 20 · 0,25 · 50 · **Sonnet 5.5** 2 · 2,50 · 4 · 0,20 · 10. A tabela de `lib/agent/cost.js` segue desatualizada (só `claude-sonnet-4-6`).
+
+**Execução 1 (Fable 5.1, `Agent`), recalculada do histórico bruto do agente** (40 chamadas, uso por chamada):
+
+| item | tokens | US$ |
+|---|---|---|
+| gravação de cache (5 min) | 313.290 | 3,92 |
+| leitura de cache | 9.036.690 | 2,26 |
+| entrada sem cache | 1.220 | 0,01 |
+| saída | 2.702 registrados · ~19 mil pelo texto escrito | 0,14 – 0,95 |
+| **total** | | **~6,3 – 7,1** |
+
+- O "315.117 tokens" do harness era gravação de cache + entrada + saída **sem as leituras de cache** (9 M) — por isso o dólar não saía dele.
+- ⚠️ **O histórico subconta a saída**: grava o uso do INÍCIO de cada resposta em streaming; o texto efetivamente escrito (85 chamadas de ferramenta, ~75 mil caracteres) dá ~19 mil tokens. Entrada e cache são confiáveis; a saída é faixa.
+- O custo é dominado pelo CONTEXTO (gravar e reler o cache: ~US$ 6,2), não pela escrita — a escrita é < 15%.
+
+**Instrumento para as próximas execuções:** `claude -p --output-format json` devolve o uso exato por modelo (entrada, gravação e leitura de cache, saída). ⚠️ O `costUSD` que a CLI 2.1.119 calcula para `claude-sonnet-5-5` usa tabela velha (US$ 6,25/MTok de gravação contra US$ 4 oficiais) — o dólar se calcula dos tokens com o preço oficial. ⚠️ O modo headless grava cache de **1 h** (2× a entrada); o `Agent` gravou de 5 min (1,25×) — diferença de harness a declarar em toda comparação.
+
+## 162. Execução 1b — mesmo trabalho em Sonnet 5.5 (encaixe (a) do §9) — 2026-10-01
+
+**Protocolo:** idêntico ao da execução 1 — o mesmo `PROMPT.md` (byte a byte), a mesma instrução de despacho com o caminho de saída trocado (`_verbatim/verbatim-farm-sonnet/`), os mesmos 24 quadros (`ref3`) e a URL viva. **Muda o harness:** `claude -p` headless (`--model claude-sonnet-5-5`) em vez do `Agent` desta sessão — para ter o uso EXATO por tipo de token (§161). Uma execução só; variância não medida.
+
+**Custo (uso exato, preço oficial):**
+
+| item | Fable 5.1 (exec. 1) | Sonnet 5.5 (exec. 1b) |
+|---|---|---|
+| gravação de cache | 313.290 (5 min) · US$ 3,92 | 266.648 (1 h) · US$ 1,07 |
+| leitura de cache | 9.036.690 · US$ 2,26 | 5.650.853 · US$ 1,13 |
+| entrada sem cache | 1.220 · US$ 0,01 | 2.024 · US$ 0,00 |
+| saída | ~2,7–19 mil · US$ 0,14–0,95 | 35.120 · US$ 0,35 |
+| **total** | **~US$ 6,3 – 7,1** | **US$ 2,55** |
+| tempo de parede | ~18 min | 13 min 26 s (API 6 min 26 s) |
+| turnos | 40 | 48 |
+
+(A CLI informou US$ 5,38 para o Sonnet — tabela de preço velha; o número oficial é o calculado.)
+
+**Qualidade — o MESMO portão, a mesma trajetória (`ref-farm-A`), passo 20 s, máquina ociosa; os três braços recomparados com o comparador ATUAL** (⚠️ o §14 dizia 0,8167 para o Fable: aquele comparador ainda excluía 2 quadros por deriva; o atual compara os 24 — o número de hoje é 0,6329):
+
+| braço | altura | texto | imagens | SSIM mín (quadro) | quadros < 0,95 | deriva média/máx (ms) | carga do candidato | externas | movimento | alcançáveis p/ edição |
+|---|---|---|---|---|---|---|---|---|---|---|
+| autocontrole A×B | 100% | 4400 | 49/70 | 0,5907 (0) | 7 | 960 / 11053 | — | 0 | presente, 1 ponto | 930 |
+| Fable 5.1 | 100% | 4400 | 49/70 | 0,6329 (11) | 5 | 578 / 4430 | 30.003 | 0 | inconclusivo (1 ponto fora de sincronia) | 960 |
+| **Sonnet 5.5** | 100% | 4400 | 49/70 | **0,6069 (0)** | 6 | 303 / 1640 | 578 | 0 | **presente, 3 pontos vivos** | 781 |
+
+**Leitura honesta:**
+- Os dois agentes ficam ACIMA do piso do site contra si mesmo (0,59) e idênticos nas dimensões estáticas: **por este instrumento, Sonnet e Fable entregam o mesmo resultado**, ~2,5–2,8× mais barato no Sonnet e um pouco mais rápido.
+- O Sonnet também produziu um **espelho** (HTML/CSS/JS servidos, URLs reescritas) — é o que o prompt pede (§10); a execução não testa homogeneização, como a 1 também não.
+- O pior quadro do Sonnet é o 0 (preloader): o pacote dele abre em 0,6 s contra 30 s do site vivo, então o loader está em outro instante — latência, não fidelidade. O movimento saiu conclusivo no Sonnet e inconclusivo no Fable por SINCRONIA (deriva menor), não por prova de melhor animação.
+- Diferença a investigar, sem conclusão: **781 nós alcançáveis para edição** no Sonnet contra 960 no Fable e 930 no site — pode ser estado da página no instante da sonda (obstruídos: 420 vs 414).
+- **NÃO se pode concluir:** variância (uma execução cada); que o Sonnet vence em sites mais difíceis; nada sobre homogeneização; o harness diferiu (headless grava cache de 1 h, o `Agent` de 5 min).
