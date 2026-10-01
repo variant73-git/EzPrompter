@@ -37,6 +37,17 @@ Cada animação mira nós pelo `id` da regra 1; cada canal (transform inteiro co
 
 **7. Proibido no canônico:** cópia do DOM de origem; grafo de seletores específico do site (classes geradas como `.w-1a2b3c`); código executável da página além das bibliotecas e da declaração de movimento (regra 6). Conteúdo, mídia e bibliotecas originais podem ser reaproveitados.
 
+## Decisões de PRODUTO (Adilson, 2026-10-01)
+
+- **O que é editável (pergunta 2) — DECIDIDO:** tudo o que o painel do editor já prevê, como no Figma: sombras, arredondamento de bordas do bloco, todas as propriedades de mídia, texto, cor e fundo de um bloco. A regra 2/3/5 acima vale para todas essas propriedades, não só para as que o editor nativo expõe hoje (o editor nativo ainda não tem sombra, gradiente, padding/margem nem link — lacuna a fechar).
+- **Nome dos ids (pergunta 3) — DECIDIDO:** sempre DESCRITIVO (`u-hero-titulo`, `u-sec3-video-fundo`).
+- **Vídeo é cidadão de primeira classe — NOVO REQUISITO:**
+  - Um site com vídeo precisa poder ter **só o vídeo trocado**.
+  - **Por cadeias de nodes:** do site pode sair um node de MÍDIA e um node de HTML, se o usuário quiser separar; e um vídeo subido num node de mídia e LIGADO ao site que está sendo editado substitui o vídeo, conforme a ordem da cadeia.
+  - **No painel do editor:** os vídeos do site aparecem para substituir, como os fundos. Um vídeo de site dirigido por rolagem é um vídeo de FUNDO, então a **aba de fundo aceita vídeo** quando houver. Cada seção pode ter o seu vídeo, e cada um é editável separadamente.
+  - Consequência para o esquema: todo vídeo é um nó próprio com `id` descritivo (regra 1), ligado à SEÇÃO a que pertence, com `src`/`poster` substituíveis (regra 5) — nunca embutido em código de animação.
+- **Movimento (pergunta 1) e texto dividido (pergunta 4):** explicados ao Adilson em linguagem simples; aguardando a escolha. Recomendação registrada: movimento como DESCRIÇÃO EM DADOS + motor nosso (editável igual em todo site; custo: construir o tocador antes da execução 2); texto guardado INTEIRO, com o corte em letras refeito na hora da animação.
+
 ## Perguntas de PRODUTO (decidem o desenho; não são técnicas)
 
 1. **Como o movimento é expresso?** (a) código GSAP por site, escrito pelo agente seguindo a regra 6; ou (b) um manifesto declarativo de movimento + runtime NOSSO (a direção registrada em `decision_reexpressar_movimento_clone`). (b) é mais editável e homogêneo, mas exige construir o runtime antes da execução 2.
