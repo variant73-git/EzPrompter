@@ -925,3 +925,18 @@ O ponto "congelado" do site contra si mesmo é exatamente o caso que a corrobora
 **Diagnóstico:** o conteúdo agora é o real, mas o MOVIMENTO saiu estimado. O agente escreve as fichas olhando 24 quadros parados e não vê o que acontece entre eles; ele mesmo declarou os tempos de pin "estimados a partir dos quadros". No espelho (exec. 1) o movimento era fiel porque o código do site rodava. O vídeo `tab.mp4`, comandado pela rolagem no original, fica parado: a v0 não tem motor de vídeo.
 
 **O que isso indica (proposta):** o movimento não deve ser ESTIMADO por um modelo; deve ser COMPILADO a partir do que o site faz — a "compilação por observação" do Sol (2026-08-10). A ponte do motion editor JÁ lê as animações GSAP/ScrollTrigger vivas da captura nativa (alvo, propriedades, início/fim, scrub, pin, duração, curva). Um compilador determinístico desses dados para fichas cobriria as formas comuns sem IA (custo ~zero, segundos), e o agente ficaria só com a estrutura canônica e as lacunas — o que também derruba o custo e o tempo.
+
+## 166. Compilador de movimento por observação (leitura dos tweens vivos) — EXPERIMENTAL, reprovado no farmminerals — 2026-10-02
+
+`scripts/compilar-movimento.mjs`: abre a captura nativa com os scripts do site rodando, marca cada peça do inventário (o MESMO `coletar` que gerou as chaves do agente — estabilidade conferida: 825 textos e todas as mídias com chaves idênticas numa segunda geração), lê cada tween do `gsap.globalTimeline` (valores de início/fim AMOSTRADOS no próprio tween, duração, curva, intervalo, trecho exato de rolagem, arrasto) e escreve fichas, ligando alvos à página canônica pelo conteúdo (Jaccard das chaves; partes de texto dividido → `dividir` no texto inteiro). Sem IA, segundos.
+
+**Resultado no farmminerals, sobre a estrutura da execução 2b:**
+
+| movimento | vivos | congelados |
+|---|---|---|
+| estimado pelo agente (2b) | 4 | 12 |
+| compilado dos tweens | 0 | 14 |
+
+**Causa (medida):** 76 tweens lidos, 33 viram fichas; **46 dos 51 ScrollTriggers não têm animação GSAP** — o movimento vem do motor de interações do **Webflow** (callbacks), de **sequências de imagens num canvas** comandadas pela rolagem (a cápsula do hero: `gsap.to(frameObj,{frame, scrollTrigger, onUpdate: drawFrame})`; a planta) e de laços/letreiros do Webflow. **Nenhum pin do ScrollTrigger** — as seções "presas" são `position: sticky`; os 4 `fixar` do agente na 2b eram um ERRO dele. Ler tweens só alcança a fração do movimento escrita em GSAP direto.
+
+**Caminhos (levados ao Adilson):** (A) observar a página RENDERIZADA ao longo da rolagem e do tempo (gravador de trajetória genérico; o ingênuo falhou em 11/08 — os requisitos conhecidos: separar rolagem de tempo, medir o estado visual por elemento); (B) ler o formato DECLARATIVO das interações do Webflow (o IX guarda as animações como dados) e traduzi-lo em fichas — preciso, mas só para sites Webflow; (C) ficha nova "sequência de quadros" (imagens num canvas comandadas pela rolagem), que cobre o hero deste e de muitos sites de produto; (D) no produto, manter o clone NATIVO como o clone editável dos sites muito animados e promover o canônico só quando passar no portão (regra do Sol: promoção pelo clone inteiro).
