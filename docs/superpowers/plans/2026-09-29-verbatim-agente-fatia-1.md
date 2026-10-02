@@ -899,3 +899,29 @@ O ponto "congelado" do site contra si mesmo é exatamente o caso que a corrobora
 - Portão e Cobertura Canônica NÃO rodados: com o conteúdo trocado, o SSIM e o pareamento por texto medem a troca, não a reconstrução — o veredito já está dado pela falha crítica.
 
 **Próximo desenho (proposta ao Adilson): separar os papéis.** O agente escreve só a ESTRUTURA canônica (nós com ids descritivos) e as FICHAS, com o conteúdo em "vagas" (`data-u-conteudo` apontando para o texto/imagem/vídeo da captura); uma etapa DETERMINÍSTICA nossa, sem modelo, preenche as vagas com o conteúdo do clone nativo — a mesma captura que o produto já faz hoje para o canvas do usuário. Vantagens: o modelo não reproduz conteúdo de terceiros, a saída do modelo encolhe (custo menor que os US$ 7), e o texto/mídia saem byte a byte da captura.
+
+## 165. Execução 2b — papéis separados (estrutura + fichas pelo agente; conteúdo pelo preenchimento determinístico) — 2026-10-02
+
+**Protocolo:** o mesmo prompt canônico; o agente recebe o inventário enxuto (`inventario-agente.json`: 456 textos visíveis + mídias, 82 KB) e escreve só estrutura com VAGAS e `motion.json`; nunca escreve texto nem cria mídia. Pins exigidos via `fixar`. `lottie-web` vendorizado. O conteúdo real entra por `preencher-conteudo.mjs` (sem IA) a partir de `native3`, com o MESMO inventário de cujas chaves o agente partiu.
+
+**Custo e tempo — a hipótese de queda NÃO se confirmou:** gravação de cache 1 h 979.259 → US$ 3,92 · leitura 14.817.159 → US$ 2,96 · saída 181.237 → US$ 1,81 · entrada → US$ 0,03 · **~US$ 8,72** (CLI: US$ 18,15, tabela velha) · **45 min**, 132 turnos (exec. 2: US$ 7,31, 24 min). Causa: a autovalidação levou 21 min (cópias preenchidas, capturas, ajuste de tempos de pin olhando quadros); escrever menos conteúdo não compensou.
+
+**Preenchimento:** 502 vagas preenchidas, 0 chaves inexistentes, 0 tipos errados, 62 arquivos copiados, 0 faltando. Sem lugar: 49 textos visíveis (17 são letras soltas cobertas pelo texto inteiro com `dividir`), 333 ocultos (formulário/menu — fora do escopo), 9 imagens, 1 fundo, 5 SVGs, 2 Lotties.
+
+**Portão nos três braços** (passo 20 s, máquina ociosa, O medido de novo hoje):
+
+| braço | altura | texto | imagens | SSIM mín | movimento (região) |
+|---|---|---|---|---|---|
+| O1×O2 (piso de hoje) | 100% | 4400 | 49/70 | 0,8714 | inconclusivo — 1 congelado isolado (14 vivos) |
+| H nativo | 100% | 4400 | 49/70 | 0,8840 | inconclusivo — 1 congelado isolado (13 vivos) |
+| **R canônico** | 100% | 4462 | 40/40 | **0,1575** (quadro 21, y=18900) | **CONGELAMENTO DETECTADO — 12 pontos** (4 vivos) |
+
+**Cobertura Canônica de Edição: 41,9%** (meta ≥ 90%): 446 unidades do original, 248 encontradas no R, 187 canônicas; no R, 55 sem id, 22 com id não descritivo, 17 inalcançáveis. (O pareamento de BLOCOS por caixa é frágil — vários "não encontrados" são blocos deslocados; o de texto é confiável.)
+
+**Edições de prova: 4/4 passaram** (só mudando a ficha): duração do letreiro 30→10 s (66→196 px/s); valor final do vídeo do milho 0→200; separar "never make it" do grupo (fica livre, o outro segue animando); intervalo da revelação do hero (inset 50% → 88% no mesmo ponto). Zero erros do tocador nas 44 fichas, zero código de animação original, 4 pins com `fixar`.
+
+**VEREDITO: REPROVADO** — falha crítica de movimento (12 pontos congelados onde O é vivo) e cobertura 42% < 90%.
+
+**Diagnóstico:** o conteúdo agora é o real, mas o MOVIMENTO saiu estimado. O agente escreve as fichas olhando 24 quadros parados e não vê o que acontece entre eles; ele mesmo declarou os tempos de pin "estimados a partir dos quadros". No espelho (exec. 1) o movimento era fiel porque o código do site rodava. O vídeo `tab.mp4`, comandado pela rolagem no original, fica parado: a v0 não tem motor de vídeo.
+
+**O que isso indica (proposta):** o movimento não deve ser ESTIMADO por um modelo; deve ser COMPILADO a partir do que o site faz — a "compilação por observação" do Sol (2026-08-10). A ponte do motion editor JÁ lê as animações GSAP/ScrollTrigger vivas da captura nativa (alvo, propriedades, início/fim, scrub, pin, duração, curva). Um compilador determinístico desses dados para fichas cobriria as formas comuns sem IA (custo ~zero, segundos), e o agente ficaria só com a estrutura canônica e as lacunas — o que também derruba o custo e o tempo.
