@@ -19,7 +19,7 @@ import { servir } from './inventario-conteudo.mjs';
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > -1 ? process.argv[i + 1] : d; };
 
 // O MESMO `coletar` do extrator que gerou o inventário do agente, com uma marca em cada peça.
-async function coletarMarcando(extrator) {
+export async function coletarMarcando(extrator) {
   const src = await readFile(extrator, 'utf8');
   const i = src.indexOf('function coletar(origem) {'); const j = src.indexOf('\nexport async function inventariar');
   if (i < 0 || j < 0) throw new Error('coletar() nao encontrado no extrator');

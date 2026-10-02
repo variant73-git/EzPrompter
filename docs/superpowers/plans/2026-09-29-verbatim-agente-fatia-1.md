@@ -940,3 +940,24 @@ O ponto "congelado" do site contra si mesmo é exatamente o caso que a corrobora
 **Causa (medida):** 76 tweens lidos, 33 viram fichas; **46 dos 51 ScrollTriggers não têm animação GSAP** — o movimento vem do motor de interações do **Webflow** (callbacks), de **sequências de imagens num canvas** comandadas pela rolagem (a cápsula do hero: `gsap.to(frameObj,{frame, scrollTrigger, onUpdate: drawFrame})`; a planta) e de laços/letreiros do Webflow. **Nenhum pin do ScrollTrigger** — as seções "presas" são `position: sticky`; os 4 `fixar` do agente na 2b eram um ERRO dele. Ler tweens só alcança a fração do movimento escrita em GSAP direto.
 
 **Caminhos (levados ao Adilson):** (A) observar a página RENDERIZADA ao longo da rolagem e do tempo (gravador de trajetória genérico; o ingênuo falhou em 11/08 — os requisitos conhecidos: separar rolagem de tempo, medir o estado visual por elemento); (B) ler o formato DECLARATIVO das interações do Webflow (o IX guarda as animações como dados) e traduzi-lo em fichas — preciso, mas só para sites Webflow; (C) ficha nova "sequência de quadros" (imagens num canvas comandadas pela rolagem), que cobre o hero deste e de muitos sites de produto; (D) no produto, manter o clone NATIVO como o clone editável dos sites muito animados e promover o canônico só quando passar no portão (regra do Sol: promoção pelo clone inteiro).
+
+## 167. Caminho 1 — gravador de trajetória: MEDIDO, e a medida mostra que o gargalo é a ESTRUTURA — 2026-10-02
+
+`scripts/gravar-trajetoria.mjs`: observa a página RENDERIZADA, qualquer motor. Cada peça tem a mesma chave nos dois lados (`data-u-chave` na captura viva, `data-u-conteudo` na canônica), então a ligação é direta. A cada 100 px de rolagem (198 posições, rolagem suave do site trocada pela nativa) mede centro, largura e opacidade acumulada de cada peça na captura VIVA — duas leituras (300 ms e 1100 ms) para separar rolagem de tempo — e na canônica PARADA (sem JS). Ficha = a diferença que VARIA (constante = layout, fica de fora); filho grava só o que difere do pai. 4 min, sem IA: 497 peças, 117 com movimento de rolagem, 325 com movimento no tempo, 447 fichas, todas montadas sem erro.
+
+**Medida (mesma trajetória, passo 20 s, máquina ociosa), SSIM médio por braço:**
+
+| braço | SSIM médio | quadros ≥ 0,85 |
+|---|---|---|
+| O1×O2 (piso) | 0,980 | 24/24 |
+| H nativo | 0,982 | 24/24 |
+| R — estrutura da 2b **sem movimento** | **0,586** | 2/24 |
+| R — estrutura + movimento GRAVADO (caminho 1) | 0,595 | 2/24 |
+| R — estrutura + tweens compilados (§166) | 0,608 | 2/24 |
+| R — estrutura + fichas do PRÓPRIO agente (2b) | 0,770 | 11/24 |
+
+⚠️ **Leitura certa do instrumento:** a régua de movimento por região mede o que se mexe com a página PARADA (vídeo, laço, letreiro, Lottie); movimento de ROLAGEM aparece no SSIM de cada parada. Os "congelados" dos braços compilados vêm de laços/letreiros que eles não reproduzem, não da rolagem.
+
+**Conclusão:** nesta estrutura o caminho 1 acrescenta ~0 — mas o teste NÃO o julga: a estrutura escrita pelo agente, parada, já está a 0,59 do original (o nativo está a 0,98). As fichas do agente rendem mais porque a estrutura foi feita PARA elas (estados iniciais escondidos/empilhados). Movimento compilado contra uma estrutura que não reproduz o layout em repouso não tem onde acertar. **O termo dominante é a fidelidade da estrutura em repouso** — exatamente o que o spike de 11/08 já apontava (O→H dominava O→R).
+
+**Próximo teste que julga o caminho 1 de verdade:** uma estrutura canônica cujo layout em repouso seja o do original — derivada DETERMINISTICAMENTE da captura nativa (scripts do site removidos; ids descritivos em cada unidade; texto dividido achatado; conteúdo real), sem agente, custo zero. Esbarra na regra 7 do rascunho do esquema ("proibido: cópia do DOM de origem; grafo de seletores do site") — decisão de produto, levada ao Adilson.
