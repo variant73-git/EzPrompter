@@ -35,7 +35,7 @@ Imagem e vídeo como `<img>`/`<video>` com `src`/`srcset`/`poster`; fundo como `
 Cada animação mira nós pelo `id` da regra 1; cada canal (transform inteiro conta como UM canal, RB:9275-9282) tem um dono só; keyframes em forma de array com valores absolutos; sem valores por função/aleatórios e sem stagger nas animações que se quer editáveis.
 - Por quê: canal com dois donos fica `ambiguous`/travado (motion-ownership.js:171-209); stagger e funções são reportados mas não editáveis (RB:2465-2481, 2579, 2582).
 
-**7. Proibido no canônico:** cópia do DOM de origem; grafo de seletores específico do site (classes geradas como `.w-1a2b3c`); código executável da página além das bibliotecas e da declaração de movimento (regra 6). Conteúdo, mídia e bibliotecas originais podem ser reaproveitados.
+**7. (REVISTA em 2026-10-02 — decisão do Adilson) O esqueleto vem do site, NORMALIZADO.** A estrutura canônica é derivada DETERMINISTICAMENTE da captura nativa: mantém a árvore do site, mas (a) remove todo código do site; (b) troca o CSS do site por CSS NOSSO gerado do estilo CALCULADO de cada elemento (um bloco por `#id`, sem cascata de classes do site, sem `!important`); (c) desfaz embrulhos que não desenham nada; (d) junta texto dividido em texto simples; (e) converte `:hover` do site em fichas de hover e retira animações/transições de CSS (um motor só). Motivo medido: a estrutura escrita por um agente ficou a 0,59 SSIM do original em repouso (o nativo, 0,98) e o movimento não tem onde acertar sem o layout em repouso. Continua proibido: código do site, grafo de seletores do site no CSS final, e qualquer animação fora do `motion.json`.
 
 ## Decisões de PRODUTO (Adilson, 2026-10-01)
 
