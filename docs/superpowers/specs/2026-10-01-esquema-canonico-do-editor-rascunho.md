@@ -46,7 +46,8 @@ Cada animação mira nós pelo `id` da regra 1; cada canal (transform inteiro co
   - **Por cadeias de nodes:** do site pode sair um node de MÍDIA e um node de HTML, se o usuário quiser separar; e um vídeo subido num node de mídia e LIGADO ao site que está sendo editado substitui o vídeo, conforme a ordem da cadeia.
   - **No painel do editor:** os vídeos do site aparecem para substituir, como os fundos. Um vídeo de site dirigido por rolagem é um vídeo de FUNDO, então a **aba de fundo aceita vídeo** quando houver. Cada seção pode ter o seu vídeo, e cada um é editável separadamente.
   - Consequência para o esquema: todo vídeo é um nó próprio com `id` descritivo (regra 1), ligado à SEÇÃO a que pertence, com `src`/`poster` substituíveis (regra 5) — nunca embutido em código de animação.
-- **Movimento (pergunta 1) e texto dividido (pergunta 4):** explicados ao Adilson em linguagem simples; aguardando a escolha. Recomendação registrada: movimento como DESCRIÇÃO EM DADOS + motor nosso (editável igual em todo site; custo: construir o tocador antes da execução 2); texto guardado INTEIRO, com o corte em letras refeito na hora da animação.
+- **Movimento (pergunta 1) — DECIDIDO (2026-10-02): DESCRIÇÃO EM DADOS + motor nosso** (caminho B). Cada animação vira uma "ficha" com campos fixos que um tocador nosso executa; o painel edita os campos. Confirma a direção de 2026-08-10 (`2026-08-10-re-expressar-vs-herdar-advise-e-censo.md`): nativo como oráculo e fallback, programa de movimento como destino, verificação como portão, nunca dois motores com autoridade ao mesmo tempo. Especificação: `2026-10-02-programa-de-movimento-v0.md`.
+- **Texto dividido (pergunta 4) — DECIDIDO (2026-10-02): texto guardado INTEIRO**; o corte em letras/palavras é refeito pelo tocador na hora da animação.
 
 ## Perguntas de PRODUTO (decidem o desenho; não são técnicas)
 
