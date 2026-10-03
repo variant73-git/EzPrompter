@@ -996,3 +996,27 @@ Caminho 3 isolado (rodada anterior N6 → N7, mesma estrutura, só a ficha de se
 **Revisão:** 4 rodadas Claude independente (12+8+7+1 achados, todos corrigidos; o tema "justiça da régua" repetiu → loop encerrado pela regra de 5) + **2 rodadas do Astra** (r1: 4 achados — régua certificava programa errado/parado, canvas e `display` fora da régua, programa não selecionável, linha que falha deixava texto cortado; r2: 3 — régua ainda assimétrica para movimento só-no-clone, partes de texto dominando a nota, denominador do portão). Tudo corrigido com teste; **as correções da r2 não foram reauditadas pelo Astra** (pior caso: erro de medida em ferramenta experimental). Testes: 91/91 (motion-program + scripts).
 
 **Resíduos declarados:** máscara de divisão invisível à régua; peso da fonte do título do hero difere em TODOS os braços (estrutura, não movimento); texto que o site divide por script próprio (não-IX3, `[text-split]`) fica fora do caminho 2 — é o que segura os textos em 0,672; deriva lenta < 1 px/passo; arrasto curto suavizado × revelação; revelação < 300 ms; fallback estrutural de nível para divisor sem classes; cache do navegador. Medido num site só.
+
+## 169. Segundo site — gsap.com (GSAP escrito à mão, não Webflow) — 2026-10-03
+
+Captura nova (45 s, 31 arquivos, 15,9 MB). Mesmo processo do §168: normalização determinística + gravação única + referências independentes (grade deslocada 37 px).
+
+**Defeito achado e corrigido:** o normalizador copiava para o pacote os arquivos que a página referencia — e o produtor reescreve o link da home do site como `index.html`, então a página NATIVA era copiada por cima da canônica. A 1ª rodada mediu o site original achando que era o clone (altura 70%, régua recusando 587 ids). Agora os arquivos que nós escrevemos (`index.html`, `motion*.json`, `vendor/`) nunca vêm da captura, e o fim da escrita confere que a página é a canônica (senão, erro).
+
+| braço | portão SSIM (12 paradas) | ≥ 0,85 | vivos / congelados | régua equilibrada | elementos | textos em partes |
+|---|---|---|---|---|---|---|
+| site × site | 0,981 | 12/12 | 10 / 0 | 0,920 | 0,930 | 0,841 |
+| nativo (H) | 0,982 | 12/12 | 11 / 0 | — | — | — |
+| canônica sem movimento | 0,849 | 8/12 | 0 / 12 | 0,426 | 0,476 | 0,027 |
+| **caminho 1 (observação)** | **0,898** | **10/12** | 1 / 8 | **0,715** | **0,787** | 0,053 |
+| caminho 2 (IX3) | 0,849 — idêntico ao sem movimento | | | 0,426 | | |
+
+**Leitura:**
+- A estrutura determinística GENERALIZA: em repouso o gsap.com fica a 0,849 (o farmminerals, 0,690); altura e texto batem (2.465 × 2.462 caracteres).
+- O caminho 1 GENERALIZA no que é movimento de bloco por rolagem (elementos 0,476 → 0,787).
+- O caminho 2 não tem o que ler (0 interações IX3) — o resultado idêntico ao braço sem movimento é também um controle de repetibilidade do portão. Para site GSAP, o "caminho 2" equivalente é ler as animações VIVAS do GSAP (o compilador do §166, que falhou no farmminerals porque lá o movimento era callback do Webflow; aqui os tweens são reais).
+- O que fica de fora no gsap.com (visto nas capturas): **laços de tempo** (o letreiro de logos — o caminho 1 detecta laço e não grava: 6 laços), **comportamento por DIREÇÃO de rolagem** (a faixa verde do topo some ao rolar para baixo — não é função da posição), o **título do hero** (letras soltas num estado do meio da animação, causa não investigada), e mídia do Showcase (pôster no lugar do vídeo).
+- O controle site × site é mais baixo aqui (0,920 contra 0,995): o gsap.com tem mais movimento que não depende só da posição (laços, tempo), então duas gravações do próprio site já discordam mais.
+- 14 elementos com movimento só no clone (nota 0,5) no caminho 1 — não investigado.
+
+**Conclusão dos dois sites:** a direção 2 + 1 + 3 se sustenta, com o "2" sendo UM LEITOR POR MOTOR (Webflow IX3 feito; GSAP vivo a fazer) e o "1" cobrindo o resto. Os buracos comuns que nenhum caminho cobre hoje: laços de tempo e comportamento por direção de rolagem.

@@ -410,11 +410,17 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
     await writeFile(path.join(saida, 'index.html'), html);
     if (!existsSync(path.join(saida, 'motion.json'))) await writeFile(path.join(saida, 'motion.json'), JSON.stringify({ versao: 0, fichas: [] }));
     let copiados = 0; const faltando = [];
-    for (const a of r.arquivos) { if (!a) continue; const de = path.join(captura, a); if (!existsSync(de)) { faltando.push(a); continue; } if ((await stat(de)).isDirectory()) continue; const para = path.join(saida, a); await mkdir(path.dirname(para), { recursive: true }); await copyFile(de, para); copiados += 1; }
+    // os arquivos que NOS escrevemos nunca vem da captura: um link do site para "index.html" (o
+    // produtor reescreve o link da home assim) copiava a pagina NATIVA por cima da canonica —
+    // medido no gsap.com, a rodada inteira mediu o site original achando que era o clone
+    const NOSSOS = /^(index\.html|motion(\.[\w+-]+)?\.json|vendor\/)/;
+    for (const a of r.arquivos) { if (!a || NOSSOS.test(a)) continue; const de = path.join(captura, a); if (!existsSync(de)) { faltando.push(a); continue; } if ((await stat(de)).isDirectory()) continue; const para = path.join(saida, a); await mkdir(path.dirname(para), { recursive: true }); await copyFile(de, para); copiados += 1; }
     const V = path.resolve('node_modules');
     await mkdir(path.join(saida, 'vendor'), { recursive: true });
     for (const [de, nome] of [['gsap/dist/gsap.min.js', 'gsap.min.js'], ['gsap/dist/ScrollTrigger.min.js', 'ScrollTrigger.min.js'], ['lenis/dist/lenis.min.js', 'lenis.min.js'], ['lottie-web/build/player/lottie.min.js', 'lottie.min.js']]) await copyFile(path.join(V, de), path.join(saida, 'vendor', nome));
     await copyFile(path.resolve('lib/motion-program/uncraft-motion.js'), path.join(saida, 'vendor', 'uncraft-motion.js'));
+    // a pagina escrita e a canonica? (rede de seguranca da copia acima)
+    if (!(await readFile(path.join(saida, 'index.html'), 'utf8')).includes('<style id="u-estilo">')) throw new Error('index.html da saida nao e a canonica (foi sobrescrito)');
     let mov = null;
     if (movimento) {
       // etiqueta da gravacao -> id que o elemento ganhou na canonica (mesma pagina, mesmo objeto)
