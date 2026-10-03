@@ -23,6 +23,7 @@ import { chromium } from 'playwright-core';
 import { servir } from './inventario-conteudo.mjs';
 import { medirProprio, difere, fichasPorLeitura, PROPS_INLINE, preencherCss } from './gravar-trajetoria.mjs';
 import { extrairRegistro, resolverNaPagina, fichasDoIx3 } from './ler-ix3.mjs';
+import { lerGsapNaPagina, fichasDoGsap, CONTROLE_GSAP } from './ler-gsap.mjs';
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > -1 ? process.argv[i + 1] : d; };
 
@@ -432,7 +433,7 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
       const modo = movimento === true ? 'leitura' : String(movimento);
       const leit = fichasPorLeitura({ ...gravacao, mapa }, passo);
       let ix = null; let relIx = null;
-      if (modo.includes('ix3') || modo === 'todos') {
+      if (modo.includes('ix3') || modo.includes('decl') || modo === 'todos') {   // Astra: `decl` chamado sozinho nao lia o IX3
         const fontes = await page.evaluate(() => Array.from(document.scripts).map((x) => (x.src ? { src: x.src } : { texto: x.textContent })));
         const reg = { interacoes: [], linhas: [], falhas: [] };
         for (const f of fontes) {
@@ -445,31 +446,38 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
         ix = fichasDoIx3(reg, resolvido);
         relIx = { interacoes: reg.interacoes.length, linhasDeclaradas: reg.linhas.length, falhas: reg.falhas, pulos: resolvido.pulos, instancias: resolvido.instancias.length, ...ix.relatorio };
       }
+      // caminho 2 para GSAP: as animacoes VIVAS do site (sem gsap na pagina = nada)
+      let gs = null; let relGs = null;
+      if (modo.includes('gsap') || modo.includes('decl') || modo === 'todos') {
+        const lido = await page.evaluate(lerGsapNaPagina, { mapaPartes, controle: CONTROLE_GSAP });
+        if (lido.erro) relGs = { erro: lido.erro }; else { gs = fichasDoGsap(lido); relGs = gs.relatorio; }
+      }
       const seq = fichasDeSequencia({ ...gravacao, mapa, origem });
       for (const a of seq.arquivos) { const de = path.join(captura, a); if (!existsSync(de)) { seq.relatorio.quadrosFaltando += 1; continue; } const para = path.join(saida, a); await mkdir(path.dirname(para), { recursive: true }); await copyFile(de, para); }
       // Lottie: o conteiner canonico sai vazio; o tocador desenha (src ja reescrito para o pacote)
       const lot = [...html.matchAll(/<[a-z]+ id="([^"]+)"[^>]*\sdata-src="([^"]+\.json)"/gi)].map((m) => ({ id: m[1], src: m[2] }));
       const lottie = lot.map((l) => ({ id: `m-lottie-${l.id}`, tipo: 'lottie', alvo: '#' + l.id, src: l.src, motor: { tipo: 'tempo' } }));
+      // declarativo = o que o site DECLARA (IX3 do Webflow) ou executa como dado vivo (GSAP)
+      const declarativas = (m) => [...((m.includes('ix3') || m.includes('decl')) && ix ? ix.fichas : []), ...((m.includes('gsap') || m.includes('decl')) && gs ? gs.fichas : [])];
       const programa = (m) => {
-        const fs = [];
-        if (m.includes('ix3') && ix) fs.push(...ix.fichas);
+        const fs = [...declarativas(m)];
         let retiradas = 0;
         if (m.includes('leitura')) {
-          const doIx = new Set(m.includes('ix3') && ix ? ix.fichas.flatMap((f) => [].concat(f.alvo)) : []);
+          const doIx = new Set(declarativas(m).flatMap((f) => [].concat(f.alvo)));
           const ficam = leit.fichas.filter((f) => ![].concat(f.alvo).some((a) => doIx.has(a)));
           retiradas = leit.fichas.length - ficam.length; fs.push(...ficam);
         }
         fs.push(...seq.fichas, ...lottie);
         return { fichas: fs, retiradas };
       };
-      const modos = modo === 'todos' ? ['leitura', 'ix3', 'ix3+leitura'] : [modo];
+      const modos = modo === 'todos' ? ['leitura', 'ix3', 'gsap', 'decl', 'decl+leitura'] : [modo];
       const porModo = {};
       for (const m of modos) {
         const p = programa(m); porModo[m] = { fichas: p.fichas.length, retiradasDaLeituraPorIx3: p.retiradas };
         await writeFile(path.join(saida, modo === 'todos' ? `motion.${m}.json` : 'motion.json'), JSON.stringify({ versao: 0, fichas: p.fichas }, null, 1));
         if (modo === 'todos' && m === 'leitura') await writeFile(path.join(saida, 'motion.json'), JSON.stringify({ versao: 0, fichas: p.fichas }, null, 1));
       }
-      const rm = { modo, porModo, leitura: leit.relatorio, ...(relIx ? { ix3: relIx } : {}), sequencias: seq.relatorio };
+      const rm = { modo, porModo, leitura: leit.relatorio, ...(relIx ? { ix3: relIx } : {}), ...(relGs ? { gsap: relGs } : {}), sequencias: seq.relatorio };
       // a gravacao do SITE por id canonico, ao lado do pacote: e a regua de trajetoria (o estado de
       // cada elemento em cada parada) contra a qual qualquer programa de movimento se compara
       await writeFile(path.join(path.dirname(path.resolve(saida)), 'gravacao-nativa.json'), JSON.stringify({ passo, deslocamento, ids, amostras: gravacaoPorId(gravacao, { ...mapa, ...mapaPartes }) }));

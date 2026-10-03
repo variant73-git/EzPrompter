@@ -1020,3 +1020,34 @@ Captura nova (45 s, 31 arquivos, 15,9 MB). Mesmo processo do §168: normalizaç�
 - 14 elementos com movimento só no clone (nota 0,5) no caminho 1 — não investigado.
 
 **Conclusão dos dois sites:** a direção 2 + 1 + 3 se sustenta, com o "2" sendo UM LEITOR POR MOTOR (Webflow IX3 feito; GSAP vivo a fazer) e o "1" cobrindo o resto. Os buracos comuns que nenhum caminho cobre hoje: laços de tempo e comportamento por direção de rolagem.
+
+## 170. Leitor das animações GSAP vivas + combinação VERIFICADA por linha de tempo — 2026-10-03
+
+Pedido do Adilson: "pode fazer todos na sequência" (leitor GSAP vivo, laços de tempo, e o resto dos buracos).
+
+**Leitor GSAP vivo** (`scripts/ler-gsap.mjs`, o "caminho 2" para sites GSAP): lê o `globalTimeline` na página da captura, na mesma sessão da normalização (ids canônicos já postos), agrupa cada folha pelo DONO (a animação com gatilho de rolagem) numa linha de tempo, amostra os valores renderizando o dono, converte o relógio por todos os níveis (velocidade de cada linha, `delay` declarado da raiz), uma iteração só (repetição, vai-e-volta e atraso de repetição carregados para o tocador), cada alvo amostrado separado, `keyframes` do GSAP como quadros (só os destinos), `set` amostrado em volta do instante (negativo no 0), `immediateRender:false` preservado. Fica com a observação o que o tocador não reproduz: fixação de tela (pin), gatilho dentro de rolagem horizontal (containerAnimation), início/fim por função, ordem de escalonamento a partir do centro/bordas/acaso com trajetórias diferentes, animação pausada sem gatilho (tocada por clique/código), ações do Webflow IX3 (`data.id` `ta-…`, já lidas pelo leitor IX3).
+
+**Combinação verificada** (`scripts/escolher-por-elemento.mjs`): a regra "a ficha declarada vence" trocava observação melhor por declaração pior. Agora a unidade é a LINHA DE TEMPO inteira (tirar um membro encurta a linha — o Astra mostrou a outra metade correndo no dobro da velocidade): mede o clone tocando o programa declarado e o observado contra a referência B, mantém a linha se, na média dos seus alvos, reproduz o site pelo menos tão bem; senão os alvos voltam para a observação. A nota final é na referência A (outra gravação — a escolha não se avalia a si mesma).
+
+**Régua**: elementos em que duas gravações do PRÓPRIO site discordam (laços e tudo que depende do tempo — a fase muda de uma carga para outra) saem da nota de trajetória e são julgados pela energia de movimento do portão; um laço certo fora de fase perdia para um laço parado. Controle site × site: 0,999 (farm) e 0,992 (gsap.com).
+
+**Medida final (mesma rodada, régua só nos elementos estáveis):**
+
+| | sem movimento | observação (1) | declarado sozinho | declarado + 1 sem verificar | **combinação verificada** |
+|---|---|---|---|---|---|
+| farmminerals (Webflow) | 0,432 | 0,767 | 0,822 (IX3) | 0,943 | **0,945** — mantém as 20 linhas do IX3 |
+| gsap.com (GSAP) | 0,460 | **0,745** | 0,458 (GSAP vivo) | 0,737 | **0,745** — mantém 1 de 7 linhas |
+
+Portão (SSIM médio): farm 0,936 com a combinação; gsap.com 0,898 com qualquer uma das três (observação, declarado+1, verificada). Laços: no gsap.com, o leitor GSAP traz as figuras do topo (vivos 1 → 2 no portão) — marginal.
+
+**Leitura:**
+- No Webflow o declarativo é dado de verdade e vence de longe (texto letra-a-letra, intenção legível). No GSAP escrito à mão o "declarado" é código executando: reescrever as linhas de tempo em fichas perde para medir o resultado na tela, e o leitor sozinho fica igual a não ter movimento (pin, rolagem horizontal, valores por função, ciclos recriados por callback — 14 animações pausadas, 19 curvas por função, 5 gatilhos horizontais no gsap.com).
+- A combinação verificada nunca piorou: escolhe o declarativo onde ele ganha (Webflow) e cai para a observação onde não ganha (gsap.com). É a regra a usar.
+- ⚠️ A observação varia de gravação para gravação: no gsap.com, duas normalizações deram 0,801 e 0,745 para o mesmo caminho 1. Comparação só vale DENTRO da mesma rodada.
+
+**Revisão:** Astra em 2 rodadas sobre o leitor GSAP (8 + 4 achados, todos corrigidos com teste; a rodada 2 não foi reauditada — loop encerrado: o tema "tradução do GSAP" reincidiu). 106/106 testes.
+
+**Ficam de fora, com o porquê:**
+- **Comportamento por DIREÇÃO de rolagem** (a faixa do topo do gsap.com some ao descer e volta ao subir): o portão e as referências só rolam para BAIXO — descendo, a observação já reproduz a faixa sumindo (confirmado nas capturas). Construir o motor "direção" sem um instrumento que role para cima seria construir às cegas.
+- **Título "Animate anything"** do gsap.com: letras montadas por script em ciclos recriados por callback; não investigado.
+- Laços genéricos por observação (sem GSAP): nenhum dos dois sites tem laço fora do GSAP — não há onde medir.

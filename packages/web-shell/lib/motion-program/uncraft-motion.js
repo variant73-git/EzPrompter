@@ -59,7 +59,7 @@
     }
     if (!ehObj(f.motor) || !MOTORES[f.motor.tipo]) e.push('motor.tipo invalido');
     else if (f.motor.gatilho !== undefined && !ehAlvo(f.motor.gatilho)) e.push('motor.gatilho deve ser #id');
-    ['duracao', 'atraso', 'repetir', 'posicao'].forEach(function (k) {
+    ['duracao', 'atraso', 'repetir', 'posicao', 'atrasoRepeticao'].forEach(function (k) {
       if (f[k] !== undefined && !ehNum(f[k])) e.push(k + ' nao numerico');
     });
     // intervalo: segundos entre alvos, ou { cada | total, de: start|end|center|edges|random }
@@ -293,6 +293,7 @@
     if (f.curva !== undefined) vars.ease = f.curva;
     if (f.atraso !== undefined) vars.delay = f.atraso;
     if (f.imediato !== undefined) vars.immediateRender = f.imediato;
+    if (f.atrasoRepeticao !== undefined) vars.repeatDelay = f.atrasoRepeticao;
     if (ehNum(f.intervalo)) vars.stagger = f.intervalo;
     else if (ehObj(f.intervalo)) { vars.stagger = {}; if (ehNum(f.intervalo.cada)) vars.stagger.each = f.intervalo.cada; else vars.stagger.amount = f.intervalo.total; if (f.intervalo.de) vars.stagger.from = f.intervalo.de; }
     return vars;
@@ -334,13 +335,16 @@
     function montarLinhaCorpo() {
     var tv = {};
     if (m.tipo === 'carga' && m.atraso !== undefined) tv.delay = m.atraso;
-    if (m.tipo === 'tempo') tv.repeat = -1;
+    if (m.tipo === 'tempo') { tv.repeat = -1; if (m.vaiVolta) tv.yoyo = true; if (ehNum(m.atrasoRepeticao)) tv.repeatDelay = m.atrasoRepeticao; }
     if (m.tipo === 'hover') tv.paused = true;
     if (m.tipo === 'rolagem') tv.scrollTrigger = { trigger: gatilho || itens[0].registro.els[0], start: (m.inicio !== undefined ? m.inicio : 'top 80%'), end: (m.fim !== undefined ? m.fim : 'bottom 20%'), scrub: m.arrasto === true ? true : (ehNum(m.arrasto) ? m.arrasto : false), pin: Boolean(m.fixar), toggleActions: m.acoes || 'play none none none' };
     tl = gsap.timeline(tv);
     reg = { nome: nome, tl: tl, ouvintes: [], membros: [] };
     itens.forEach(function (it) {
-      try { criarTween(tl, it.f, it.alvos, varsDoTween(it.f), it.f.posicao || 0); }
+      // repeticao/vai-e-volta da FOLHA dentro da linha (um letreiro que repete dentro de uma linha
+      // que nao repete); a linha inteira repete pelo motor `tempo`
+      var vt = varsDoTween(it.f); if (it.f.repetir !== undefined) vt.repeat = it.f.repetir; if (it.f.vaiVolta) vt.yoyo = true;
+      try { criarTween(tl, it.f, it.alvos, vt, it.f.posicao || 0); }
       catch (err) { it.registro.cortados.forEach(restaurar); it.registro.cortados = []; estado.erros.push({ id: it.f.id, erros: ['falha ao montar: ' + (err && err.message)] }); return; }
       estado.montadas[it.f.id] = it.registro; reg.membros.push(it.f.id);
     });

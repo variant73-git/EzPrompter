@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fichasPorLeitura, difere, medirProprio } from './gravar-trajetoria.mjs';
 import { fichasDeSequencia, etiquetasQueSeMexem, normalizar, mapasDaPagina } from './normalizar-clone.mjs';
 import { comparar, conferirIds, idsDoCorpo } from './regua-trajetoria.mjs';
+import { escolher } from './escolher-por-elemento.mjs';
 
 const st = (o = {}) => ({ x: 0, y: 0, sx: 1, sy: 1, r: 0, op: 1, vis: 1, vef: 1, clip: 'none', tres: false, ...o });
 const P = 100;
@@ -211,5 +212,23 @@ describe('ponta a ponta: os ids da gravacao sao os do clone renderizado (r4)', (
     const c = conferirIds(ids, await canon.evaluate(idsDoCorpo));
     expect(c).toMatchObject({ ok: true, faltam: [], sobram: [], outraTag: [] });
     expect(ids.length).toBeGreaterThan(5);
+  });
+});
+
+describe('escolher por elemento (combinacao verificada)', () => {
+  const declarado = { fichas: [
+    { id: 'd1', linha: 'l', alvo: '#u-a', para: { x: 1 } }, { id: 'd2', linha: 'l', alvo: ['#u-b', '#u-c'], para: { x: 1 } },
+    { id: 's1', tipo: 'sequencia', alvo: '#u-tela', imagens: ['q.avif'] } ] };
+  const observado = { fichas: [{ id: 'o1', alvo: '#u-a', quadros: [] }, { id: 'o2', alvo: '#u-b', quadros: [] }, { id: 'o3', alvo: '#u-d', quadros: [] }, { id: 's1', tipo: 'sequencia', alvo: '#u-tela', imagens: ['q.avif'] }] };
+  it('a LINHA inteira e a unidade: fica se, na media dos alvos, reproduz pelo menos tao bem (nunca pela metade)', () => {
+    const ganha = escolher({ declarado, observado, notasDecl: { 'u-a': 0.9, 'u-b': 0.4, 'u-c': 0.9 }, notasObs: { 'u-a': 0.7, 'u-b': 0.8, 'u-c': 0.5, 'u-d': 0.8 } });
+    expect(ganha.programa.fichas.map((f) => f.id).sort()).toEqual(['d1', 'd2', 'o3', 's1']);
+    const perde = escolher({ declarado, observado, notasDecl: { 'u-a': 0.5, 'u-b': 0.4, 'u-c': 0.6 }, notasObs: { 'u-a': 0.7, 'u-b': 0.8, 'u-c': 0.5 } });
+    expect(perde.programa.fichas.map((f) => f.id).sort()).toEqual(['o1', 'o2', 'o3', 's1']);
+    expect(perde.relatorio).toMatchObject({ elementosDeclarados: 3, ficaramDeclarados: 0, voltaramParaObservacao: 3 });
+  });
+  it('empate (ninguem se move nas duas medidas) fica com o declarado', () => {
+    const r = escolher({ declarado: { fichas: [{ id: 'd', alvo: '#u-x', para: { x: 1 } }] }, observado: { fichas: [] }, notasDecl: {}, notasObs: {} });
+    expect(r.programa.fichas.map((f) => f.id)).toEqual(['d']);
   });
 });

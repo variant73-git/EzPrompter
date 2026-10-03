@@ -54,7 +54,10 @@ export function canalQueDifere(p, q) {
 // derruba a nota para 0,5, e uma revelacao que o clone nao faz tambem. Canal CSS que so o clone
 // escreve (o site nunca o animou) conta como movimento do clone. Texto cortado em PARTES vale como
 // UM elemento (media das suas partes), senao um titulo de 124 letras pesava 124 vezes.
-export function comparar(gravacao, medida) {
+// `excluir`: donos que NAO se julgam por trajetoria — os que duas gravacoes do PROPRIO site ja
+// discordam (lacos, tempo: a fase muda de uma carga para outra, e um laco certo fora de fase perdia
+// para um laco parado). Esses se julgam pela energia de movimento do portao, nao aqui.
+export function comparar(gravacao, medida, { excluir = null, notas: devolverNotas = false } = {}) {
   const N = gravacao.amostras.length;
   const ids = new Set(); gravacao.amostras.forEach((s) => Object.keys(s.b).forEach((k) => ids.add(k)));
   medida.forEach((m) => Object.keys(m || {}).forEach((k) => ids.add(k)));
@@ -63,6 +66,7 @@ export function comparar(gravacao, medida) {
   const porDono = new Map(); const errosPorCanal = {}; const fases = { M: [0, 0], R: [0, 0], F: [0, 0] };
   let soNoClone = 0; let notaSoNoClone = 0; let telas = 0; let telasCertas = 0;
   for (const id of ids) {
+    if (excluir && excluir.has(id.includes('--') ? id.split('--')[0] : id)) continue;
     const nat = gravacao.amostras.map((s) => (id in s.b ? s.b[id] : undefined));
     const can = Array.from({ length: N }, (_, i) => (medida[i] && id in medida[i] ? medida[i][id] : undefined));
     const nRef = primeiro(nat); const cRef = primeiro(can);
@@ -105,7 +109,7 @@ export function comparar(gravacao, medida) {
   }
   const r3 = (x) => Number(x.toFixed(3));
   const media = (l) => (l.length ? r3(l.reduce((a, b) => a + b, 0) / l.length) : null);
-  const donos = [...porDono.values()].map((d) => ({ texto: d.texto, nota: d.notas.reduce((a, b) => a + b, 0) / d.notas.length }));
+  const donos = [...porDono.entries()].map(([dono, d]) => ({ dono, texto: d.texto, nota: d.notas.reduce((a, b) => a + b, 0) / d.notas.length }));
   const el = donos.filter((d) => !d.texto).map((d) => d.nota); const tx = donos.filter((d) => d.texto).map((d) => d.nota);
   return {
     balanceada: media(donos.map((d) => d.nota)),
@@ -116,7 +120,13 @@ export function comparar(gravacao, medida) {
     movimentoSoNoClone: soNoClone, notaMediaSoNoClone: soNoClone ? r3(notaSoNoClone / soNoClone) : null,
     quadrosDeCanvas: telas, quadrosCertos: telasCertas, errosPorCanal,
     erroMedioDeslocamentoPx: nPx ? Number((erroPx / nPx).toFixed(1)) : null,
+    ...(devolverNotas ? { notasPorDono: Object.fromEntries(donos.map((d) => [d.dono, d.nota])) } : {}),
   };
+}
+// donos em que o site discorda de si mesmo (nota < limiar entre duas gravacoes dele)
+export function instaveisDoSite(refA, refB, limiar = 0.9) {
+  const r = comparar(refA, refB.amostras.map((s) => s.b), { notas: true });
+  return new Set(Object.entries(r.notasPorDono).filter(([, n]) => n < limiar).map(([d]) => d));
 }
 
 // `forcar`: id -> propriedades CSS que o SITE animou (inline). No clone elas sao lidas sempre: um
