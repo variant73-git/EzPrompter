@@ -34,6 +34,17 @@ describe('validar ficha', () => {
     expect(validar(base({ id: 'm-q', alvo: '#u-a', motor: { tipo: 'tempo' }, quadros: [{ x: 0 }, { x: 10 }] })).fichas.length).toBe(1);
     expect(validar(base({ id: 'm-l', tipo: 'lottie', alvo: '#u-l', motor: { tipo: 'carga' } })).fichas.length).toBe(0);
   });
+  it('sequencia: >= 1 imagem, ajuste conhecido, pontos crescentes, sem hover', () => {
+    const seq = (x) => base({ id: 'm-s', tipo: 'sequencia', alvo: '#u-c', motor: { tipo: 'rolagem', inicio: 0, fim: 900, arrasto: 1 }, imagens: ['a.avif', 'b.avif'], ...x });
+    expect(validar(seq({})).fichas.length).toBe(1);
+    expect(validar(seq({ imagens: ['a.avif'] })).fichas.length).toBe(1);   // quadro fixo
+    expect(validar(seq({ imagens: [] })).fichas.length).toBe(0);
+    expect(validar(seq({ imagens: ['a.avif', ''] })).fichas.length).toBe(0);
+    expect(validar(seq({ ajuste: 'esticar' })).fichas.length).toBe(0);
+    expect(validar(seq({ pontos: [[0, 0], [1, 1]] })).fichas.length).toBe(1);
+    expect(validar(seq({ pontos: [[0.5, 0], [0.2, 1]] })).fichas.length).toBe(0);
+    expect(validar(seq({ motor: { tipo: 'hover' } })).fichas.length).toBe(0);
+  });
   it('versao diferente de 0 e programa invalido sao reportados', () => {
     expect(validar({ versao: 1, fichas: [] }).erros.length).toBe(1);
     expect(validar(null).erros.length).toBe(1);

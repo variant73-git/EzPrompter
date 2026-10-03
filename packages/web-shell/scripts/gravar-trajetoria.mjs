@@ -23,7 +23,7 @@ const ASSENTA = 300; const MEDIDO = 1100;
 // Limiares do que conta como movimento (px de tela, fração de escala, opacidade).
 const MIN_PX = 3; const MIN_ESCALA = 0.02; const MIN_OPAC = 0.05;
 
-function medir(atributo) {
+export function medir(atributo) {
   const out = {};
   for (const el of document.querySelectorAll(`[${atributo}]`)) {
     const k = el.getAttribute(atributo); const r = el.getBoundingClientRect();
@@ -32,6 +32,156 @@ function medir(atributo) {
     out[k] = { cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: r.width, op };
   }
   return out;
+}
+
+// ⭐ LEITURA DIRETA (v3, 2026-10-02). Quando a estrutura canonica E o esqueleto do site
+// (normalizar-clone.mjs), cada elemento do site tem um gemeo com o mesmo papel; entao se le o
+// estado PROPRIO de cada um (transformacao decomposta, opacidade, visibilidade, recorte) e se
+// grava em valores ABSOLUTOS. A v1 (acima) media DIFERENCA de caixa contra uma pagina parada,
+// que so faz sentido quando as estruturas divergem. Sobre o esqueleto ela errava de tres jeitos
+// (medido no farmminerals, SSIM identico com e sem as 603 fichas): o tocador aplica x/y
+// ABSOLUTOS sobre a transformacao congelada, a revelacao era lida no MEIO (0 -> 0,1 em vez de
+// 0 -> 1) e a visibilidade nao era lida (a secao que cobre o hero fica `hidden` no topo).
+// Alem da transformacao: propriedades que o MOTOR do site escreve inline (Webflow IX e GSAP
+// escrevem em style="") — farmminerals: as 15 celulas creme que cobrem o hero animam `height`
+// de 0% a 100% pela rolagem. So entra o que esteve inline em alguma leitura (uma altura que muda
+// porque o filho cresceu e layout, nao animacao); o valor gravado e o COMPUTADO (px, rgb).
+export const PROPS_INLINE = { width: 'width', height: 'height', 'background-color': 'backgroundColor', color: 'color', 'border-color': 'borderColor', filter: 'filter', 'border-radius': 'borderRadius', 'letter-spacing': 'letterSpacing', 'background-position': 'backgroundPosition', top: null, left: null, right: null, bottom: null, 'max-height': null, 'max-width': null };
+export function medirProprio(atributo) {
+  const out = {};
+  const NOMES = Object.keys(window.__uPropsInline || {});
+  const vistos = (window.__uInlineVisto ||= new WeakMap());
+  for (const el of document.querySelectorAll(`[${atributo}]`)) {
+    const k = el.getAttribute(atributo); const cs = getComputedStyle(el);
+    if (cs.display === 'none') { out[k] = null; continue; }
+    let a = 1, b = 0, c = 0, d = 1, e = 0, f = 0, tres = false;
+    const t = cs.transform;
+    if (t && t !== 'none') {
+      const v = t.slice(t.indexOf('(') + 1, -1).split(',').map(Number);
+      if (t.startsWith('matrix3d')) { [a, b] = v; [c, d] = [v[4], v[5]]; [e, f] = [v[12], v[13]]; tres = Math.abs(v[2]) + Math.abs(v[6]) + Math.abs(v[8]) + Math.abs(v[9]) + Math.abs(v[3]) + Math.abs(v[7]) + Math.abs(v[11]) > 1e-6 || Math.abs(v[10] - 1) > 1e-6; } else [a, b, c, d, e, f] = v;
+    }
+    const sx = Math.hypot(a, b);
+    let visto = vistos.get(el);
+    for (const nm of NOMES) if (el.style.getPropertyValue(nm)) { if (!visto) vistos.set(el, (visto = new Set())); visto.add(nm); }
+    let css;
+    if (visto) { css = {}; for (const nm of visto) css[nm] = cs.getPropertyValue(nm); }
+    // visibilidade e HERDADA: `vis` e a PROPRIA (so 0 quando o pai esta visivel e este nao — a
+    // herdada fica com o pai, senao cada descendente ganhava ficha propria, revisao Claude #6);
+    // `vef` e a efetiva (o que se ve), usada so para comparar
+    const pai = el.parentElement; const pvis = pai ? getComputedStyle(pai).visibility : 'visible';
+    out[k] = { x: e, y: f, sx, sy: sx ? (a * d - b * c) / sx : 0, r: Math.atan2(b, a) * 180 / Math.PI, op: parseFloat(cs.opacity), vis: cs.visibility === 'hidden' && pvis !== 'hidden' ? 0 : 1, vef: cs.visibility === 'hidden' ? 0 : 1, clip: cs.clipPath, tres, ...(css ? { css } : {}) };
+  }
+  return out;
+}
+
+const LIM = { px: 1, esc: 0.005, rot: 0.5, op: 0.01 };
+function cssDifere(u, v) {
+  if (!u || !v) return false;   // o canal nasce na 1a leitura inline; antes dela vale o primeiro valor visto
+  for (const nm of Object.keys(u)) {
+    if (!(nm in v)) continue;
+    const a = parseFloat(u[nm]); const b = parseFloat(v[nm]);
+    if (/^-?[\d.]+px$/.test(u[nm]) && /^-?[\d.]+px$/.test(v[nm])) { if (Math.abs(a - b) > LIM.px) return true; } else if (u[nm] !== v[nm]) return true;
+  }
+  return false;
+}
+export function difere(p, q) {
+  if (!p || !q) return Boolean(p) !== Boolean(q);
+  if (p.vef === 0 && q.vef === 0) return false;   // dois estados invisiveis sao o mesmo para quem ve
+  return cssDifere(p.css, q.css) || Math.abs(p.x - q.x) > LIM.px || Math.abs(p.y - q.y) > LIM.px || Math.abs(p.sx - q.sx) > LIM.esc || Math.abs(p.sy - q.sy) > LIM.esc
+    || Math.abs(p.r - q.r) > LIM.rot || Math.abs(p.op - q.op) > LIM.op || p.vis !== q.vis || p.clip !== q.clip;
+}
+
+// quais canais variam entre estados; visibilidade que muda vira autoAlpha (opacidade + visibilidade)
+function canais(estados) {
+  const v = (fn, lim) => estados.some((s) => Math.abs(fn(s) - fn(estados[0])) > lim);
+  const vis = estados.some((s) => s.vis !== estados[0].vis);
+  const ch = [];
+  if (v((s) => s.x, LIM.px)) ch.push('x'); if (v((s) => s.y, LIM.px)) ch.push('y');
+  const sxv = v((s) => s.sx, LIM.esc); const syv = v((s) => s.sy, LIM.esc);
+  if (sxv || syv) { if (estados.every((s) => Math.abs(s.sx - s.sy) <= LIM.esc)) ch.push('scale'); else ch.push('scaleX', 'scaleY'); }
+  if (v((s) => s.r, LIM.rot)) ch.push('rotation');
+  if (vis) ch.push('autoAlpha'); else if (v((s) => s.op, LIM.op)) ch.push('opacity');
+  if (estados.some((s) => s.clip !== estados[0].clip) && estados.every((s) => s.clip && s.clip !== 'none')) ch.push('clipPath');
+  const nomes = new Set(); estados.forEach((s) => s.css && Object.keys(s.css).forEach((nm) => nomes.add(nm)));
+  for (const nm of nomes) {
+    const vals = estados.map((s) => s.css && s.css[nm]).filter((v) => v !== undefined);
+    const muda = vals.some((v, i) => i && cssDifere({ [nm]: v }, { [nm]: vals[0] }));
+    if (muda) ch.push('css:' + nm);
+  }
+  return ch;
+}
+const r3 = (n) => Math.round(n * 1000) / 1000;
+function valores(s, ch) {
+  const o = {};
+  for (const c of ch) {
+    if (c === 'x') o.x = r3(s.x); else if (c === 'y') o.y = r3(s.y); else if (c === 'scale') o.scale = r3(s.sx);
+    else if (c === 'scaleX') o.scaleX = r3(s.sx); else if (c === 'scaleY') o.scaleY = r3(s.sy); else if (c === 'rotation') o.rotation = r3(s.r);
+    else if (c === 'autoAlpha') o.autoAlpha = s.vis ? r3(s.op) : 0; else if (c === 'opacity') o.opacity = r3(s.op); else if (c === 'clipPath') o.clipPath = s.clip;
+    else if (c.startsWith('css:')) { const nm = c.slice(4); const g = PROPS_INLINE[nm]; if (g && s.css && s.css[nm] !== undefined) o[g] = s.css[nm]; }
+  }
+  return o;
+}
+
+// o canal inline aparece na 1a leitura em que o motor o escreveu; antes dela vale o 1o valor visto
+export function preencherCss(serie) {
+  const nomes = new Set(); serie.forEach((s) => s && s.css && Object.keys(s.css).forEach((nm) => nomes.add(nm)));
+  for (const nm of nomes) {
+    const prim = serie.find((s) => s && s.css && s.css[nm] !== undefined).css[nm];
+    let ult = prim;
+    for (const s of serie) { if (!s) continue; s.css ||= {}; if (s.css[nm] === undefined) s.css[nm] = ult; else ult = s.css[nm]; }
+  }
+}
+// canal que o tocador nao anima (top/left...): contado e retirado, nunca escrito
+function contarFora(ch, rel) { const fora = (c) => c.startsWith('css:') && !PROPS_INLINE[c.slice(4)]; for (const c of ch) if (fora(c)) rel.canaisForaDoContrato[c.slice(4)] = (rel.canaisForaDoContrato[c.slice(4)] || 0) + 1; return ch.filter((c) => !fora(c)); }
+
+// amostras: [{ y, a, b }] com a/b = medirProprio por etiqueta; mapa: etiqueta -> id canonico;
+// lacos: etiquetas que mudam com a pagina PARADA (laco de tempo: v3 nao grava)
+export function fichasPorLeitura({ amostras, mapa, lacos = new Set() }, passo) {
+  const chaves = new Set(); amostras.forEach((s) => Object.keys(s.b).forEach((k) => chaves.add(k)));
+  const rel = { pecas: chaves.size, semMovimento: 0, semId: 0, revelacoes: 0, rolagens: 0, lacosNaoGravados: 0, mudaDisplay: 0, transitorios: 0, tres: 0 };
+  const fichas = []; let n = 0;
+  rel.canaisForaDoContrato = {};
+  for (const k of chaves) {
+    const B = amostras.map((s) => s.b[k]); const A = amostras.map((s) => s.a[k]);
+    preencherCss(B);
+    const idx = B.map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
+    if (!idx.length) continue;
+    if (B.some((v) => v === null)) { rel.mudaDisplay += 1; continue; }
+    const mud = []; for (let j = 1; j < idx.length; j += 1) if (difere(B[idx[j]], B[idx[j - 1]])) mud.push(idx[j]);
+    const tempo = idx.filter((i) => A[i] && difere(A[i], B[i]));
+    if (!mud.length && !tempo.length) { rel.semMovimento += 1; continue; }
+    const id = mapa[k]; if (!id) { rel.semId += 1; continue; }
+    if (lacos.has(k)) { rel.lacosNaoGravados += 1; continue; }
+    if (!mud.length) { rel.transitorios += 1; continue; }
+    if (idx.some((i) => B[i].tres)) rel.tres += 1;
+    const antes = idx.filter((i) => i < mud[0]).pop();
+    const janela = mud[mud.length - 1] - mud[0];
+    const revelacao = antes !== undefined && tempo.length && janela <= 3 && tempo.every((t) => t >= mud[0] - 1 && t <= mud[mud.length - 1] + 1);
+    if (revelacao) {
+      // REVELACAO: disparada pela rolagem, corre no tempo; o fim e o estado ASSENTADO (ultima leitura)
+      const de = B[antes]; const para = B[idx[idx.length - 1]];
+      const ch = contarFora(canais([de, para]), rel); if (!ch.length) { rel.transitorios += 1; continue; }
+      const inicio = Math.max(0, Math.round(amostras[mud[0]].y - passo / 2));
+      fichas.push({ id: `m-leit-${String(++n).padStart(3, '0')}`, alvo: '#' + id, de: valores(de, ch), para: valores(para, ch), duracao: 0.8, curva: 'power2.out', motor: { tipo: 'rolagem', inicio, fim: inicio + passo, arrasto: false, acoes: 'play none none none' } });
+      rel.revelacoes += 1; continue;
+    }
+    // ROLAGEM: quadros a cada `passo` px do trecho ativo. O 1o segmento do GSAP vai do estado atual
+    // ao 1o quadro, entao o inicio recua um passo para o quadro i cair exatamente em y(i0 + i).
+    const i0 = antes !== undefined ? antes : mud[0]; const i1 = mud[mud.length - 1];
+    const trecho = []; let ult = B[i0];
+    for (let i = i0; i <= i1; i += 1) { if (B[i]) ult = B[i]; trecho.push(ult); }
+    const ch = contarFora(canais(trecho), rel); if (!ch.length || trecho.length < 2) { rel.transitorios += 1; continue; }
+    let qs = trecho; let inicio = amostras[i0].y - passo;
+    // movimento que comeca no TOPO (i0 = 0): recuar um passo daria rolagem negativa, e o 0 grampeado
+    // espremia os quadros (o k-esimo chegava ate um passo atrasado, revisao Claude #7). O 1o quadro
+    // E o estado em repouso da canonica: sai, e o arrasto comeca em y(i0).
+    if (inicio < 0) { qs = trecho.slice(1); inicio = amostras[i0].y; }
+    const motor = { tipo: 'rolagem', inicio, fim: amostras[i1].y, arrasto: true };
+    if (qs.length === 1) fichas.push({ id: `m-leit-${String(++n).padStart(3, '0')}`, alvo: '#' + id, para: valores(qs[0], ch), curva: 'none', motor });
+    else fichas.push({ id: `m-leit-${String(++n).padStart(3, '0')}`, alvo: '#' + id, quadros: qs.map((s) => ({ ...valores(s, ch), ease: 'none' })), curva: 'none', motor });
+    rel.rolagens += 1;
+  }
+  return { fichas, relatorio: rel };
 }
 
 async function rolarE(page, y) { await page.evaluate((v) => window.scrollTo(0, v), y); }
@@ -74,7 +224,7 @@ export async function gravar({ captura, extrator, canonico, passo = 100 }) {
 
 const mediana = (v) => { const s = v.slice().sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; };
 
-export function fichasDaTrajetoria({ amostras, ids, pais = {} }, passo) {
+export function fichasDaTrajetoria({ amostras, ids, pais = {} }, passo, { semBase = false } = {}) {
   const chaves = new Set(); amostras.forEach((s) => Object.keys(s.b).forEach((k) => { if (s.c[k] !== undefined) chaves.add(k); }));
   const fichas = []; const rel = { pecas: chaves.size, comMovimentoDeRolagem: 0, comMovimentoDeTempo: 0, semId: 0, semMovimento: 0 }; let n = 0;
   // pais antes dos filhos
@@ -89,9 +239,10 @@ export function fichasDaTrajetoria({ amostras, ids, pais = {} }, passo) {
     const util = serie.filter((p) => p.b.cy > -600 && p.b.cy < 1800);
     if (util.length < 3) continue;
     const dx = util.map((p) => p.b.cx - p.c.cx); const dy = util.map((p) => p.b.cy - p.c.cy);
-    const mx = mediana(dx); const my = mediana(dy);
+    // semBase: a canonica e o PROPRIO site congelado no topo — toda diferenca e movimento
+    const mx = semBase ? 0 : mediana(dx); const my = semBase ? 0 : mediana(dy);
     const q = util.map((p, i) => { const h = herdado(k, p.y); return { y: p.y, x: dx[i] - mx - h.x, yy: dy[i] - my - h.yy, s: p.c.w ? p.b.w / p.c.w : 1, op: h.op > 0.01 ? Math.min(1, p.b.op / h.op) : p.b.op, tempo: p.a && (Math.abs(p.a.cx - p.b.cx) > MIN_PX || Math.abs(p.a.cy - p.b.cy) > MIN_PX || Math.abs(p.a.op - p.b.op) > MIN_OPAC) }; });
-    const sMed = mediana(q.map((p) => p.s));
+    const sMed = semBase ? 1 : mediana(q.map((p) => p.s));
     const varia = (p) => Math.abs(p.x) > MIN_PX || Math.abs(p.yy) > MIN_PX || Math.abs(p.s / sMed - 1) > MIN_ESCALA || p.op < 1 - MIN_OPAC;
     const ativos = q.filter(varia);
     if (!ativos.length) { rel.semMovimento += 1; continue; }

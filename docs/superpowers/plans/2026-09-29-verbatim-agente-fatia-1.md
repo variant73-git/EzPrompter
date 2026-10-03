@@ -961,3 +961,38 @@ O ponto "congelado" do site contra si mesmo é exatamente o caso que a corrobora
 **Conclusão:** nesta estrutura o caminho 1 acrescenta ~0 — mas o teste NÃO o julga: a estrutura escrita pelo agente, parada, já está a 0,59 do original (o nativo está a 0,98). As fichas do agente rendem mais porque a estrutura foi feita PARA elas (estados iniciais escondidos/empilhados). Movimento compilado contra uma estrutura que não reproduz o layout em repouso não tem onde acertar. **O termo dominante é a fidelidade da estrutura em repouso** — exatamente o que o spike de 11/08 já apontava (O→H dominava O→R).
 
 **Próximo teste que julga o caminho 1 de verdade:** uma estrutura canônica cujo layout em repouso seja o do original — derivada DETERMINISTICAMENTE da captura nativa (scripts do site removidos; ids descritivos em cada unidade; texto dividido achatado; conteúdo real), sem agente, custo zero. Esbarra na regra 7 do rascunho do esquema ("proibido: cópia do DOM de origem; grafo de seletores do site") — decisão de produto, levada ao Adilson.
+
+## 168. Os três caminhos de movimento MEDIDOS sobre o esqueleto normalizado — custo × benefício — 2026-10-02
+
+**Estrutura (decisão do Adilson, regra 7 revista):** `scripts/normalizar-clone.mjs` deriva a canônica DETERMINISTICAMENTE da captura nativa — esqueleto do site, sem código do site, CSS nosso por `#id` a partir do estilo computado, ids descritivos, texto dividido rejuntado (assinatura do SplitText + `aria-label`), invólucros vazios desfeitos (nunca os que carregam estado visual/movimento), tamanhos explícitos em mídia e em contêiner Lottie esvaziado. Sem IA, minutos. Sem movimento ela já fica em SSIM 0,690 (a estrutura escrita pelo agente na 2b ficava em 0,586).
+
+**Os três caminhos, gerados da MESMA gravação** (`--movimento=todos`, 1 passada de ~7 min):
+- **Caminho 1 — observação** (`gravar-trajetoria.mjs` v3, `fichasPorLeitura`): estado PRÓPRIO de cada elemento (transformação decomposta, opacidade, visibilidade própria, recorte, CSS que o motor do site escreve inline — as células creme animam `height`) a cada 100 px, duas leituras (300/1100 ms) para separar rolagem de tempo. Genérico (qualquer motor). Sai: 150 fichas, 1.010 quadros amostrados, gatilhos em px ABSOLUTOS (presos à janela de 1440).
+- **Caminho 2 — leitura declarativa do Webflow IX3** (`ler-ix3.mjs`): o `register(interações, linhas)` é DADO; lido em `vm` sem globais, traduzido com a tabela de curvas e o `tt` do próprio runtime, alvos resolvidos na página da captura (relação `within`/`direct-child-of`, `data-wf-target`), `clamp`, escalonamento, divisão de texto. Sai: 83 fichas em 20 linhas de tempo, gatilhos RELATIVOS, intenção do autor ("palavras sobem com intervalo de 0,3 s"). Só Webflow IX3 (cliques e breakpoints pulados e contados; 3 `register` com variáveis não avaliam).
+- **Caminho 3 — sequência de quadros** (ficha `sequencia` no tocador): `drawImage` interceptado diz que imagem cada `<canvas>` mostra em cada posição; 142 quadros da cápsula, pontos medidos, `cobrir/conter`, suavização detectada; canvas que desenha uma imagem só vira quadro fixo. Vai junto nos dois programas.
+
+**Achado que mudou a comparação:** o tocador calculava os gatilhos RELATIVOS antes do layout assentar (o do rodapé em 17.711 px contra 18.842 do site) — só ficha com início em px escapava, ou seja, punia o caminho 2. Corrigido com vigia de layout (`ResizeObserver` → `ScrollTrigger.refresh`), teste vermelho sem ela. Antes da correção o caminho 2 ficava em 0,847; depois, 0,931.
+
+**Medida (farmminerals, tocador corrigido nos quatro braços):**
+
+| braço | portão SSIM (23 paradas distintas) | ≥ 0,85 | pontos vivos/congelados | régua de trajetória (equilibrada) | elementos | textos em partes |
+|---|---|---|---|---|---|---|
+| controle site × site | — | — | — | **0,995** | 0,999 | 0,974 |
+| sem movimento | 0,690 | 6/23 | 1 / 15 | 0,429 | 0,491 | 0,023 |
+| caminho 1 (observação) | 0,914 | 20/23 | 5 / 7 | 0,760 | **0,871** | 0,045 |
+| caminho 2 (IX3) | 0,931 | 20/23 | **12 / 4** | 0,816 | 0,838 | **0,672** |
+| **2 + 1** (IX3 onde o site declara, observação no resto) | **0,936** | **21/23** | 11 / 3 | **0,937** | **0,977** | 0,672 |
+
+Caminho 3 isolado (rodada anterior N6 → N7, mesma estrutura, só a ficha de sequência acrescentada; tocador ainda sem a vigia): SSIM médio 0,856 → 0,894; paradas da cápsula 0,686 → 0,963 e 0,701 → 0,880. Na rodada final, régua: 197/199 quadros certos (vazio: 0/199).
+
+⚠️ **Leitura certa:** o portão para em múltiplos de 900 px — sobre a grade de 100 px de onde o caminho 1 é gerado (exato ali por construção; só o fim, 19.742, sai da grade). A régua de trajetória (`regua-trajetoria.mjs`) é a medida justa: referência INDEPENDENTE (`--so-gravacao`, grade deslocada de 37 px, 1ª amostra sempre y=0 fresca, gêmeos conferidos por id), fases repouso/movido/falso-positivo com nota = média das fases, movimento só-no-clone conta como erro, texto em partes vale um elemento, quadro do canvas e `display:none` comparados.
+
+**Custo × benefício:**
+- **Caminho 1**: $0, ~7 min de navegador por página, funciona em qualquer motor. Acerta o que é MOVIMENTO DE BLOCO (elementos 0,871), não alcança texto dividido (por desenho), gatilhos em px não sobrevivem a outra largura de janela, e 1.010 quadros não são editáveis como intenção.
+- **Caminho 2**: $0, segundos, mas SÓ onde o site declara (Webflow IX3; outro motor = outro leitor). Melhor movimento vivo (12 pontos), única que reproduz a revelação de letras/palavras (textos 0,672), gatilhos relativos, fichas legíveis — o que o editor e o upsell para Figma pedem.
+- **Caminho 3**: $0, sem custo extra (vai na mesma gravação), genérico para canvas de imagens.
+- **Combinação 2 + 1 (+3)**: a melhor em tudo que se mede (0,936 / 0,937), mesmo custo do caminho 1. Recomendação: declarativo onde houver leitor, observação no que sobrar, sequência para canvas.
+
+**Revisão:** 4 rodadas Claude independente (12+8+7+1 achados, todos corrigidos; o tema "justiça da régua" repetiu → loop encerrado pela regra de 5) + **2 rodadas do Astra** (r1: 4 achados — régua certificava programa errado/parado, canvas e `display` fora da régua, programa não selecionável, linha que falha deixava texto cortado; r2: 3 — régua ainda assimétrica para movimento só-no-clone, partes de texto dominando a nota, denominador do portão). Tudo corrigido com teste; **as correções da r2 não foram reauditadas pelo Astra** (pior caso: erro de medida em ferramenta experimental). Testes: 91/91 (motion-program + scripts).
+
+**Resíduos declarados:** máscara de divisão invisível à régua; peso da fonte do título do hero difere em TODOS os braços (estrutura, não movimento); texto que o site divide por script próprio (não-IX3, `[text-split]`) fica fora do caminho 2 — é o que segura os textos em 0,672; deriva lenta < 1 px/passo; arrasto curto suavizado × revelação; revelação < 300 ms; fallback estrutural de nível para divisor sem classes; cache do navegador. Medido num site só.
