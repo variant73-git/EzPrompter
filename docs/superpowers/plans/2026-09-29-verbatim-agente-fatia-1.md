@@ -1146,3 +1146,21 @@ Imagens: `_verbatim/comparacao-caminhos-2026-10-02/framer-final-*.png` (site | a
 
 **Limites declarados:** imagem montada em tempo de execução com endereço absoluto do PRÓPRIO site não está no mapa do produtor (Astra r3) — pior caso: não localizada, nunca a errada. Específicos que não se perseguem: etiquetas empilhadas por física e logo do topo do nexusmag; cartões inclinados ao rolar no uptechsoft. Setas de `<select>` no nexusmag viram blocos pretos (não investigado).
 - ⚠️ Lição: **mudar o código no meio de uma rodada de medição invalida a rodada** — a estrutura e as gravações de referência saíram de versões diferentes e a régua recusou (corretamente) o uptechsoft. Rodada em andamento = código congelado.
+
+**Rodada final com o código fechado (uptechsoft refeito):** portão 0,911 / **0,909** (antes 0,909 / 0,899). Régua AINDA recusada — 6 ids a mais no clone, todos da **biblioteca de ícones** escondida do Framer (`<svg>` de definição que o `<use>` referencia), que cresce conforme os componentes renderizam; a contagem varia entre cargas. ⚠️ A explicação "mudei o código no meio da rodada" estava ERRADA (mesmo código em todas as etapas, ainda recusa); o provável gatilho é a rede da normalização servir agora os arquivos capturados (mais componentes carregam). Problema do INSTRUMENTO (a conferência de gêmeos conta definições invisíveis), não do clone — pendente.
+
+## 175. landonorris.com (pedido do Adilson: "um site que muitos designers experimentarão") — 2026-10-04
+
+Mesmo roteiro, código da §174. Captura 39 s, 270 arquivos, 14,8 MB; estrutura 283 s. Motores detectados: **Lenis**, sem GSAP global (`gsap ausente`) e sem Webflow IX3 — só a observação tem o que ler.
+
+| | site × site | sem movimento | nosso |
+|---|---|---|---|
+| portão | 0,900 (mín. 0,467 — site muito vivo) | 0,496 | **0,542** (1 de 14 paradas ≥ 0,85) |
+| régua | 1,0 | 0,326 | **0,63** (textos animados: 0 de 5) |
+
+O que falta (imagens `_verbatim/comparacao-caminhos-2026-10-02/lando-*.png`, site | nosso):
+1. ⭐ **A cor do FUNDO da página muda com a rolagem** (escuro → bege claro com linhas topográficas); o clone fica escuro o tempo todo — a maior perda. A observação só grava posição/tamanho/rotação/opacidade/recorte, não cor. Família nova e comum em site premiado.
+2. **Tela de abertura** (carregamento verde-limão) no topo.
+3. **Títulos letra a letra e realces de texto** feitos por código próprio (não GSAP exposto): textos 0/5 na régua.
+4. Logo do canto ausente; linhas topográficas ausentes.
+O final da página (foto grande) sai igual.
