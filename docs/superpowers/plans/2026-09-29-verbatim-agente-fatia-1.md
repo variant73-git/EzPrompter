@@ -1092,3 +1092,26 @@ Pedido do Adilson: "corrija na ordem."
 **Revisão:** Astra 5 rodadas (o teto), 6 achados, todos reproduzidos com vermelho antes da correção; a quinta limpa. 125/125 testes.
 
 **Abertos, com o porquê:** os vídeos da vitrine do gsap.com mostram o pôster em vez de tocar (não investigado); a régua não enxerga cor de preenchimento nem altura de imagem (o defeito do 12.600 só o portão viu — limite documentado do instrumento); o título do hero do gsap.com (letras trocadas por ciclos de callback) segue não investigado.
+
+## 173. Teste às cegas em 4 sites da galeria do Framer — o movimento generaliza, a ESTRUTURA não — 2026-10-04
+
+Pedido do Adilson: parar de corrigir caso a caso e testar às cegas, sem corrigir nada, em sites da galeria do Framer (`framer.com/community/gallery`). Sondagem de 18 sites (gerador Framer, elementos escondidos que aparecem ao rolar, altura); escolhidos 4 de tipos diferentes: uptechsoft.com (software), go-getter.uk (agência), nexusmag.eu (revista), revena.com.br (BR, curto). Roteiro `_verbatim/rodada-framer.sh`, cadência 20 s, nada alterado no código. 2 h de máquina no total; no produto, captura 11–34 s + estrutura 53–195 s por site.
+
+| site | portão: site×site / sem mov. / nosso | régua: sem mov. / nosso (controle 1,0) | conteúdo perdido |
+|---|---|---|---|
+| uptechsoft | 0,952 / 0,909 / 0,899 | 0,477 / **0,933** | nenhum |
+| go-getter | 0,985 / 0,921 / 0,923 | 0,494 / **0,944** | nenhum |
+| revena | 0,932 / 0,813 / 0,852 | 0,462 / **0,921** | nenhum |
+| nexusmag | 0,921 / 0,624 / 0,625 | **recusada** (ids diferentes — ver abaixo) | nenhum |
+
+**Movimento: generaliza.** O Framer não tem leitor declarado (anima pelo motor próprio); a observação sozinha deu 0,92–0,94 nos 3 sites medíveis, no mesmo patamar do farmminerals. Nenhuma correção específica foi necessária.
+
+**Estrutura: quatro classes GERAIS de defeito**, vistas nas imagens (`_verbatim/comparacao-caminhos-2026-10-02/framer-*.png`, site | nosso):
+1. **Imagem com endereço montado em tempo de execução fica remota** (VERIFICADO): o arquivo existe na captura (`_ext/framerusercontent.com/...`), mas o código do Framer monta a URL ao rodar e a estrutura grava a URL remota → offline quebra (nexusmag 4, revena 15 de 33). No nexusmag o Framer ainda põe o aviso "Failed to load image", a lista de elementos muda entre gravações e a régua RECUSA medir (comportamento correto).
+2. **Links com a cor padrão do navegador** (VERIFICADO no go-getter: a regra do link grava `color: rgb(0, 0, 238)`, o azul padrão): menu azul e sublinhado. O mesmo aparece no menu do gsap.com nas imagens da §172 — estava lá o tempo todo; o SSIM quase não vê sublinhado fino.
+3. **Ícones faltando** (uptech: 445 de 670 `<svg>` e 220 de 414 referências `<use>` sobrevivem; os ícones dos cartões e as marcas de lista somem; revena perde a seta do link). Causa não investigada.
+4. **Formas e campos**: pílulas e botões perdem o contorno arredondado, campos de formulário mudam de aparência (nexusmag, go-getter). Causa não investigada (hipótese: contornos desenhados por pseudo-elemento).
+
+Além disso, específicos (não perseguir): pílulas empilhadas por física no nexusmag; cartões inclinados ao rolar no uptech.
+
+**Leitura:** o que falta não é mais movimento caso a caso — são defeitos gerais da limpeza da estrutura, que todo site do Framer (e os links, todo site) vai expor. E o portão por SSIM não pega classes finas (sublinhado, ícone pequeno): olhar as imagens continua obrigatório.
