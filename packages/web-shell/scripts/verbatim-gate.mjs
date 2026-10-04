@@ -317,6 +317,49 @@ function energiaPorRegiao(mapaRef, mapaCand) {
   return { areaPx: areaTotal, areaFracao: Number((areaTotal / a.length).toFixed(5)), componentes: comps, pior: comps[0] || null };
 }
 export { energiaPorRegiao, decodificarMapa, AREA_MIN_PX };
+
+// ⭐ CONTEUDO DO QUADRO (2026-10-03). O SSIM e fortemente dominado pelo FUNDO: medido no gsap.com, a
+// secao horizontal mostrava texto e figuras no site e tela VAZIA no clone, e as duas telas quase
+// pretas deram SSIM 0,96 — o defeito so aparecia olhando a imagem. Aqui cada quadro e partido em
+// blocos de 40 px; bloco "com conteudo" = variacao de luminancia acima do limiar (texto, figura,
+// borda). Fracao de blocos com conteudo; o quadro em que o clone PERDE (ou ganha) a maior parte do
+// conteudo do site e marcado, qualquer que seja o SSIM.
+const BLOCO_PX = 40; const DESVIO_CONTEUDO = 12;
+// MAPA de blocos com conteudo (Astra: comparar so a QUANTIDADE deixava passar conteudo no topo de um e
+// no rodape do outro). O aviso mede o conteudo do site que NAO tem conteudo no clone na mesma regiao
+// (vizinhanca de 1 bloco tolera um deslocamento pequeno de renderizacao).
+export const CONTEUDO_MIN_BLOCOS = 12;   // ~ uma linha de texto de 500 px numa tela de 1440 x 1200
+export const PERDA_MAX = 0.6;
+export function mapaDeConteudo(rgba, w, h) {
+  const cols = Math.floor(w / BLOCO_PX); const rows = Math.floor(h / BLOCO_PX); const bits = new Array(cols * rows).fill(0);
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      let s = 0; let s2 = 0; let n = 0;
+      for (let y = r * BLOCO_PX; y < (r + 1) * BLOCO_PX; y += 2) for (let x = c * BLOCO_PX; x < (c + 1) * BLOCO_PX; x += 2) {
+        const i = (y * w + x) * 4; const l = 0.299 * rgba[i] + 0.587 * rgba[i + 1] + 0.114 * rgba[i + 2];
+        s += l; s2 += l * l; n += 1;
+      }
+      const m = s / n; if (Math.sqrt(Math.max(0, s2 / n - m * m)) > 12) bits[r * cols + c] = 1;
+    }
+  }
+  return { cols, rows, bits };
+}
+export function fracaoComConteudo(rgba, w, h) { const m = mapaDeConteudo(rgba, w, h); return m.bits.length ? m.bits.reduce((a, b) => a + b, 0) / m.bits.length : 0; }
+// quanto do conteudo de `a` nao tem conteudo em `b` na vizinhanca
+function semPar(a, b) {
+  let tot = 0; let sem = 0;
+  for (let r = 0; r < a.rows; r += 1) for (let c = 0; c < a.cols; c += 1) {
+    if (!a.bits[r * a.cols + c]) continue; tot += 1; let tem = false;
+    for (let dr = -1; dr <= 1 && !tem; dr += 1) for (let dc = -1; dc <= 1 && !tem; dc += 1) { const rr = r + dr; const cc = c + dc; if (rr >= 0 && cc >= 0 && rr < b.rows && cc < b.cols && b.bits[rr * b.cols + cc]) tem = true; }
+    if (!tem) sem += 1;
+  }
+  return { tot, sem };
+}
+export function avisoDeConteudo(mRef, mCand) {
+  const p = semPar(mRef, mCand); if (p.tot >= CONTEUDO_MIN_BLOCOS && p.sem / p.tot >= PERDA_MAX) return 'conteudoPerdido';
+  const g = semPar(mCand, mRef); if (g.tot >= CONTEUDO_MIN_BLOCOS && g.sem / g.tot >= PERDA_MAX) return 'conteudoAMais';
+  return null;
+}
 // ⚠️ DUAS, não três. Medido em gsap.com: com três tentativas o candidato re-fazia a
 // rajada em 8 de 13 paradas e o custo médio do instrumento subiu para 6,1 s contra
 // 3,5 s da referência — a cadência então atuou só num lado e o portão de regime
@@ -723,7 +766,7 @@ async function compare(refDir, candDir) {
 
   const browser = await chromium.launch({ headless: true, channel: 'chrome' });
   const page = await browser.newPage();
-  await page.addScriptTag({ content: `window.__ssim = ${computeSsimRgb.toString()};` });
+  await page.addScriptTag({ content: `window.__ssim = ${computeSsimRgb.toString()}; window.__mapa = ${mapaDeConteudo.toString().replace('> 12)', `> ${DESVIO_CONTEUDO})`).replace(/BLOCO_PX/g, String(BLOCO_PX))};` });
 
   // ⭐ DERIVA É JULGADA POR PONTO, NÃO POR EXECUÇÃO (2026-09-29). Medido: uma execução
   // com deriva média de 17,9 s emitiu "MOVIMENTO MAIS FRACO" e a nota ao lado dizia
@@ -748,15 +791,20 @@ async function compare(refDir, candDir) {
     if (!a || !existsSync(a)) { perFrame.push({ index: rf.index, target: rf.target, ssim: null, note: `quadro ausente na referencia${rf.capturaFalhou ? ` (${rf.capturaFalhou})` : ''}` }); continue; }
     if (!b || !existsSync(b)) { perFrame.push({ index: rf.index, target: rf.target, ssim: null, note: `quadro ausente no candidato${cf && cf.capturaFalhou ? ` (${cf.capturaFalhou})` : ''}` }); continue; }
     const [da, db] = await Promise.all([readFile(a), readFile(b)]);
-    const ssim = await page.evaluate(async ([aB64, bB64]) => {
+    const { ssim, cRef, cCand } = await page.evaluate(async ([aB64, bB64]) => {
       const load = (b64) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = `data:image/png;base64,${b64}`; });
       const [ia, ib] = await Promise.all([load(aB64), load(bB64)]);
       const w = Math.min(ia.naturalWidth, ib.naturalWidth), h = Math.min(ia.naturalHeight, ib.naturalHeight);
       const grab = (img) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d'); x.drawImage(img, 0, 0); return x.getImageData(0, 0, w, h).data; };
-      return window.__ssim(grab(ia), grab(ib), w, h);
+      const ga = grab(ia); const gb = grab(ib);
+      return { ssim: window.__ssim(ga, gb, w, h), cRef: window.__mapa(ga, w, h), cCand: window.__mapa(gb, w, h) };
     }, [da.toString('base64'), db.toString('base64')]);
+    // quadro fora de sincronia nao recebe aviso (Astra: dois estados diferentes da animacao nao provam falta)
+    const aviso = foraDeSincronia(rf.index) ? null : avisoDeConteudo(cRef, cCand);
+    const fr = (m) => Number((m.bits.reduce((a, b) => a + b, 0) / (m.bits.length || 1)).toFixed(3));
     perFrame.push({
       index: rf.index, target: rf.target, refObserved: rf.observed, candObserved: cf.observed, ssim: Number(ssim.toFixed(4)),
+      conteudo: { referencia: fr(cRef), candidato: fr(cCand) }, ...(aviso ? { aviso } : {}),
       ...(foraDeSincronia(rf.index) ? { excluido: true, note: `inconclusivo — deriva ${derivaDoQuadro.get(rf.index)} ms` } : {}),
     });
   }
@@ -794,6 +842,9 @@ async function compare(refDir, candDir) {
       framesMissing: missing,
       quadrosExcluidosPorDeriva: excluidosPorDeriva,
       quadrosNoVeredito: measured.length,
+      // quadros em que o SSIM pode estar escondendo falta (ou sobra) de conteudo — olhar a imagem
+      conteudoPerdido: perFrame.filter((f) => f.aviso === 'conteudoPerdido' && !f.excluido).map((f) => f.target),
+      conteudoAMais: perFrame.filter((f) => f.aviso === 'conteudoAMais' && !f.excluido).map((f) => f.target),
     },
     // DERIVA DE TEMPO — reportada ANTES do SSIM ser lido como fidelidade.
     // Numa página dirigida por rolagem, o mesmo alvo em px alcançado em

@@ -59,3 +59,25 @@ describe('energiaPorRegiao', () => {
     expect(r.pior.cand).toBeGreaterThan(0);   // o cursor tenue (energia 1) nao virou o pior componente
   });
 });
+
+describe('conteudo do quadro (o SSIM e dominado pelo fundo)', async () => {
+  const { fracaoComConteudo, mapaDeConteudo, avisoDeConteudo } = await import('./verbatim-gate.mjs');
+  const quadro = (w, h, desenhar) => { const a = new Uint8ClampedArray(w * h * 4).fill(16); for (let i = 3; i < a.length; i += 4) a[i] = 255; desenhar && desenhar(a, w); return a; };
+  const texto = (a, w, x0, y0, x1, y1) => { for (let y = y0; y < y1; y += 1) for (let x = x0; x < x1; x += 1) if ((x + y) % 3 === 0) { const i = (y * w + x) * 4; a[i] = a[i + 1] = a[i + 2] = 240; } };
+  const W = 1440; const H = 1200; const m = (f) => mapaDeConteudo(quadro(W, H, f), W, H);
+  it('tela lisa = 0; com "texto" em parte da tela = a fracao de blocos ocupados', () => {
+    expect(fracaoComConteudo(quadro(400, 400), 400, 400)).toBe(0);
+    expect(fracaoComConteudo(quadro(400, 400, (a, w) => texto(a, w, 0, 0, 200, 80)), 400, 400)).toBeCloseTo(10 / 100, 2);
+  });
+  it('avisa quando o site tem conteudo onde o clone esta vazio (ou o contrario); telas parecidas nao', () => {
+    const site = m((a, w) => texto(a, w, 100, 400, 1300, 640));
+    expect(avisoDeConteudo(site, m())).toBe('conteudoPerdido');
+    expect(avisoDeConteudo(m(), site)).toBe('conteudoAMais');
+    expect(avisoDeConteudo(site, m((a, w) => texto(a, w, 120, 420, 1300, 640)))).toBe(null);   // deslocado 20 px: tolera
+    expect(avisoDeConteudo(m(), m())).toBe(null);
+  });
+  it('Astra: mesma QUANTIDADE em lugares diferentes avisa; uma linha de texto sumida em tela grande tambem', () => {
+    expect(avisoDeConteudo(m((a, w) => texto(a, w, 0, 0, 1440, 120)), m((a, w) => texto(a, w, 0, 1080, 1440, 1200)))).toBe('conteudoPerdido');
+    expect(avisoDeConteudo(m((a, w) => texto(a, w, 400, 560, 1000, 640)), m())).toBe('conteudoPerdido');
+  });
+});

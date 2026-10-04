@@ -33,13 +33,21 @@ export function lerGsapNaPagina({ mapaPartes, controle }) {
     // RECURSOS QUE O TOCADOR NAO REPRODUZ (medido no gsap.com: a secao horizontal FIXA a tela e os
     // gatilhos de dentro dela contam a rolagem HORIZONTAL): a linha que os usa nao vira ficha — fica
     // com a observacao (caminho 1), que mede o resultado na tela em vez de reescrever errado
+    // FIXACAO (pin) e ROLAGEM HORIZONTAL (containerAnimation) agora sao reproduzidas pelo tocador:
+    // a fixacao com o espaco que a estrutura normalizada ja traz (o espacador do GSAP foi assado nela),
+    // o gatilho de dentro contando o deslizamento da linha conteiner
     const naoReproduz = [];
-    if (s.pin) naoReproduz.push('fixacao');
-    if (s.vars.containerAnimation) naoReproduz.push('rolagemHorizontal');
     if (typeof s.vars.start === 'function' || typeof s.vars.end === 'function') naoReproduz.push('inicioPorFuncao');
-    return { gatilho: trig, inicio: trig && txt(s.vars.start) ? s.vars.start : Math.round(s.start), fim: trig && txt(s.vars.end) ? s.vars.end : Math.round(s.end), scrub: s.vars.scrub === undefined ? false : s.vars.scrub, acoes: s.vars.toggleActions || null, pin: Boolean(s.pin), naoReproduz };
+    const ca = s.vars.containerAnimation || null;
+    if (ca && !(txt(s.vars.start) && txt(s.vars.end))) naoReproduz.push('rolagemHorizontalSemTexto');   // dentro do conteiner so vale o texto relativo
+    let fixar;
+    if (s.pin) { const pid = s.pin instanceof Element ? s.pin.getAttribute('data-u-id') : null; if (s.pin === s.trigger) fixar = true; else if (pid) fixar = '#' + pid; else naoReproduz.push('fixacaoSemId'); }
+    return { gatilho: trig, inicio: trig && txt(s.vars.start) ? s.vars.start : Math.round(s.start), fim: trig && txt(s.vars.end) ? s.vars.end : Math.round(s.end), scrub: s.vars.scrub === undefined ? false : s.vars.scrub, acoes: s.vars.toggleActions || null, fixar, conteiner: ca ? idDe(ca) : undefined, naoReproduz };
   };
   const linhas = [];
+  // id estavel de cada DONO (a linha conteiner pode ser lida depois da que depende dela)
+  const ids = new WeakMap(); let proximo = 0;
+  const idDe = (a) => { if (!ids.has(a)) ids.set(a, ++proximo); return ids.get(a); };
   const temGatilho = (a) => Boolean(a.scrollTrigger) || (a.getChildren ? a.getChildren(true, true, true).some((k) => k.scrollTrigger) : false);
   const temDom = (a) => (a.getChildren ? a.getChildren(true, true, false).some((k) => (k.targets ? k.targets() : []).some((x) => x instanceof Element)) : (a.targets ? a.targets() : []).some((x) => x instanceof Element));
   const ler = (el, props) => { const o = {}; props.forEach((p) => { o[p] = g.getProperty(el, p); }); return o; };
@@ -125,7 +133,7 @@ export function lerGsapNaPagina({ mapaPartes, controle }) {
       }
       try { dono.totalTime(tDono, true); } catch (e) { /* segue */ }
       if (!itens.length) continue;
-      linhas.push({ st, repeticao: dono.vars ? dono.vars.repeat : undefined, vaiVolta: Boolean(dono.vars && dono.vars.yoyo), atrasoRepeticao: dono.vars && typeof dono.vars.repeatDelay === 'number' ? dono.vars.repeatDelay * toca : undefined, atraso: !dono.scrollTrigger && dono === raiz && typeof raiz.vars.delay === 'number' ? raiz.vars.delay : 0, itens });
+      linhas.push({ id: idDe(dono), st, repeticao: dono.vars ? dono.vars.repeat : undefined, vaiVolta: Boolean(dono.vars && dono.vars.yoyo), atrasoRepeticao: dono.vars && typeof dono.vars.repeatDelay === 'number' ? dono.vars.repeatDelay * toca : undefined, atraso: !dono.scrollTrigger && dono === raiz && typeof raiz.vars.delay === 'number' ? raiz.vars.delay : 0, itens });
     }
   }
   return { linhas, pulos };
@@ -140,18 +148,21 @@ const limpo = (s) => String(s).replace(/[^\w-]+/g, '-');
 export function fichasDoGsap(lido) {
   const rel = { linhas: 0, fichas: 0, foraDoContrato: {}, semMudanca: 0, ...(lido.pulos || {}) };
   const fichas = []; let nl = 0;
+  const existentes = new Set((lido.linhas || []).map((L) => L.id));
   for (const L of lido.linhas || []) {
     nl += 1;
     let motor;
     if (L.st) {
       const s = L.st;
-      motor = { tipo: 'rolagem', ...(s.gatilho ? { gatilho: '#' + s.gatilho } : {}), inicio: s.inicio, fim: s.fim, arrasto: s.scrub === true ? true : typeof s.scrub === 'number' ? s.scrub : false, ...(s.scrub ? {} : { acoes: s.acoes || 'play none none none' }) };
+      if (s.conteiner !== undefined && !existentes.has(s.conteiner)) { rel.conteinerAusente = (rel.conteinerAusente || 0) + 1; continue; }
+      motor = { tipo: 'rolagem', ...(s.gatilho ? { gatilho: '#' + s.gatilho } : {}), inicio: s.inicio, fim: s.fim, arrasto: s.scrub === true ? true : typeof s.scrub === 'number' ? s.scrub : false, ...(s.scrub ? {} : { acoes: s.acoes || 'play none none none' }),
+        ...(s.fixar ? { fixar: s.fixar, espacoReservado: true } : {}), ...(s.conteiner !== undefined ? { conteiner: `gsap-${s.conteiner}` } : {}) };
     } else if (L.repeticao === -1 || L.itens.every((i) => i.repetir === -1)) motor = { tipo: 'tempo', ...(L.repeticao === -1 && L.vaiVolta ? { vaiVolta: true } : {}), ...(L.repeticao === -1 && L.atrasoRepeticao ? { atrasoRepeticao: num(L.atrasoRepeticao) } : {}) };
     // carga: toca ao montar. O startTime da raiz NAO e "atraso desde a carga" — e o instante em que
     // ela foi criada no relogio global do GSAP, e uma animacao que se recria em ciclos (o titulo do
     // gsap.com) ja nasceu muitos segundos depois; usado como atraso, ela so aparecia aos 6 s
     else motor = { tipo: 'carga', ...(L.atraso > 0 ? { atraso: num(L.atraso) } : {}) };   // o `delay` DECLARADO da raiz
-    const nome = `gsap-${nl}`; const vistos = new Map(); let n = 0;
+    const nome = `gsap-${L.id ?? nl}`; const vistos = new Map(); let n = 0;
     const itens = [...L.itens].sort((a, b) => a.posicao - b.posicao);
     for (const it of itens) {
       const de = {}; const para = {}; let quadros = null;
@@ -187,9 +198,16 @@ export function fichasDoGsap(lido) {
       fichas.push(f);
     }
   }
-  // uma linha so de laco (motor tempo) repete inteira; o tocador repete a linha pelo motor
-  rel.linhas = new Set(fichas.map((f) => f.linha)).size; rel.fichas = fichas.length;
-  return { fichas, relatorio: rel };
+  // dependente cujo CONTEINER nao virou ficha nenhuma (todas as acoes dele ficaram de fora) sai —
+  // recursivamente — e o elemento fica com a observacao (Astra: o tocador falhava "conteiner ausente")
+  let fs = fichas; let saiu = true;
+  while (saiu) {
+    const emitidas = new Set(fs.map((f) => f.linha));
+    const ficam = fs.filter((f) => !(f.motor && f.motor.conteiner && !emitidas.has(f.motor.conteiner)));
+    saiu = ficam.length !== fs.length; if (saiu) rel.conteinerAusente = (rel.conteinerAusente || 0) + (fs.length - ficam.length); fs = ficam;
+  }
+  rel.linhas = new Set(fs.map((f) => f.linha)).size; rel.fichas = fs.length;
+  return { fichas: fs, relatorio: rel };
 }
 
 export const CONTROLE_GSAP = [...CONTROLE];

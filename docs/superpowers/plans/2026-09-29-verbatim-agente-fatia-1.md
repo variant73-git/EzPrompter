@@ -1051,3 +1051,17 @@ Portão (SSIM médio): farm 0,936 com a combinação; gsap.com 0,898 com qualque
 - **Comportamento por DIREÇÃO de rolagem** (a faixa do topo do gsap.com some ao descer e volta ao subir): o portão e as referências só rolam para BAIXO — descendo, a observação já reproduz a faixa sumindo (confirmado nas capturas). Construir o motor "direção" sem um instrumento que role para cima seria construir às cegas.
 - **Título "Animate anything"** do gsap.com: letras montadas por script em ciclos recriados por callback; não investigado.
 - Laços genéricos por observação (sem GSAP): nenhum dos dois sites tem laço fora do GSAP — não há onde medir.
+
+## 171. Rolagem horizontal reproduzida + aviso de tela vazia no portão — 2026-10-03
+
+Pedido do Adilson, na ordem proposta: primeiro o aviso, depois a rolagem horizontal.
+
+**1. Aviso de conteúdo no portão** (`verbatim-gate.mjs`, `mapaDeConteudo`/`avisoDeConteudo`). O SSIM é dominado pelo fundo: no gsap.com a seção horizontal mostrava texto no site e tela VAZIA no clone, e as duas telas quase pretas davam 0,96. Agora cada quadro vira um mapa de blocos de 40 px "com conteúdo" (variação de luminância); o quadro em que ≥ 60% do conteúdo do site não tem conteúdo no clone na mesma região (vizinhança de 1 bloco, mínimo 12 blocos) é marcado `conteudoPerdido` (e o inverso `conteudoAMais`), qualquer que seja o SSIM; quadro fora de sincronia não recebe aviso. Controles site × site: limpos nos dois sites. Achou o defeito do gsap.com (3600, 4500) e um defeito REAL no farmminerals que o SSIM 0,94 escondia (12600: o letreiro "Healthier Animals" apagado e a imagem em folha achatada — revelação que não completa; não corrigido ainda).
+
+**2. Rolagem horizontal** (gsap.com: a seção fica PRESA na tela enquanto a faixa desliza para o lado, e gatilhos de dentro contam o deslizamento):
+- Tocador: `motor.fixar` (true ou `#id`), `motor.espacoReservado` (a estrutura normalizada já traz o espaço que o site reservou para a fixação — assado da captura —, então o tocador fixa SEM somar espaço), `motor.conteiner` (o gatilho conta o deslizamento de outra linha). Ordem de montagem: trilho antes de quem depende; editar o trilho remonta o componente inteiro (linhas e fichas avulsas dependentes); dependente que não remonta derruba a edição inteira; trilho referenciado tem que existir.
+- Leitor GSAP: emite fixação e trilho em vez de desistir; dependente cujo trilho não virou ficha sai (fica com a observação).
+
+**Medida (gsap.com, mesma rodada):** a seção agora fica presa e o texto desliza (antes: tela vazia). Portão sem avisos na combinação verificada (a observação sozinha segue acusando 3600/4500). Pontos com movimento vivo: 4 (observação: 1); congelados 5 (observação: 8). Régua nos elementos estáveis: combinação verificada 0,787 × observação 0,781. Falta a entrada letra a letra dentro da faixa (4 gatilhos de dentro com início/fim que não são texto ficam com a observação).
+
+**Revisão:** Astra 2 rodadas (4 achados + 1 na verificação), todos corrigidos com teste (vermelho sem a correção conferido). 116/116 testes.

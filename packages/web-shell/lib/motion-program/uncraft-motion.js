@@ -59,6 +59,16 @@
     }
     if (!ehObj(f.motor) || !MOTORES[f.motor.tipo]) e.push('motor.tipo invalido');
     else if (f.motor.gatilho !== undefined && !ehAlvo(f.motor.gatilho)) e.push('motor.gatilho deve ser #id');
+    // FIXAR a secao na tela (pin): true = o gatilho; '#id' = outro elemento. espacoReservado: a estrutura
+    // ja traz o espaco que o site reservou para a fixacao (nao somar de novo). conteiner: o gatilho conta
+    // o deslizamento de OUTRA linha (rolagem horizontal), nao a rolagem da pagina.
+    if (ehObj(f.motor)) {
+      if (f.motor.fixar !== undefined && typeof f.motor.fixar !== 'boolean' && !ehAlvo(f.motor.fixar)) e.push('motor.fixar deve ser booleano ou #id');
+      if (f.motor.espacoReservado !== undefined && typeof f.motor.espacoReservado !== 'boolean') e.push('motor.espacoReservado deve ser booleano');
+      if (f.motor.conteiner !== undefined && !(typeof f.motor.conteiner === 'string' && /^[\w-]+$/.test(f.motor.conteiner))) e.push('motor.conteiner invalido');
+      if (f.motor.conteiner !== undefined && f.motor.conteiner === f.linha) e.push('linha nao pode ser o proprio conteiner');
+      if (f.motor.conteiner !== undefined && f.motor.tipo !== 'rolagem') e.push('conteiner so vale para rolagem');
+    }
     ['duracao', 'atraso', 'repetir', 'posicao', 'atrasoRepeticao'].forEach(function (k) {
       if (f[k] !== undefined && !ehNum(f[k])) e.push(k + ' nao numerico');
     });
@@ -96,6 +106,12 @@
       }
       if (e.length) erros.push({ id: f && f.id, erros: e }); else { vistos[f.id] = 1; fichas.push(f); }
     });
+    // o CONTEINER citado tem que existir entre as linhas validas (Astra: renomear a linha trilho
+    // passava como sucesso e soltava quem dependia dela)
+    var nomes = {}; fichas.forEach(function (f) { if (f.linha !== undefined) nomes[f.linha] = 1; });
+    var orfas = fichas.filter(function (f) { return f.motor && f.motor.conteiner !== undefined && !nomes[f.motor.conteiner]; });
+    orfas.forEach(function (f) { erros.push({ id: f.id, erros: ['conteiner inexistente: ' + f.motor.conteiner] }); });
+    if (orfas.length) fichas = fichas.filter(function (f) { return orfas.indexOf(f) < 0; });
     return { fichas: fichas, erros: erros };
   }
 
@@ -247,25 +263,17 @@
       estado.montadas[f.id] = registro; return;
     }
     var alvos = cortarAlvos(f, els, registro);
-    try { montarTween(f, els, alvos, gatilho, registro); }
+    try { montarTween(f, els, alvos, gatilho, registro, doc); }
     catch (err) { registro.cortados.forEach(restaurar); throw err; }   // r2 #7: o corte nao vaza
   }
-  function montarTween(f, els, alvos, gatilho, registro) {
+  function montarTween(f, els, alvos, gatilho, registro, doc) {
     var gsap = raiz.gsap;
     var vars = varsDoTween(f);
     var m = f.motor;
     if (m.tipo === 'carga' && m.atraso !== undefined) vars.delay = m.atraso;
     if (m.tipo === 'tempo') { vars.repeat = f.repetir !== undefined ? f.repetir : -1; vars.yoyo = Boolean(f.vaiVolta); }
     else { if (f.repetir !== undefined) vars.repeat = f.repetir; if (f.vaiVolta) vars.yoyo = true; }
-    if (m.tipo === 'rolagem') {
-      vars.scrollTrigger = {
-        trigger: gatilho || els[0],
-        start: (m.inicio !== undefined ? m.inicio : 'top 80%'), end: (m.fim !== undefined ? m.fim : 'bottom 20%'),
-        scrub: m.arrasto === true ? true : (ehNum(m.arrasto) ? m.arrasto : false),
-        pin: Boolean(m.fixar),
-        toggleActions: m.acoes || 'play none none none',
-      };
-    }
+    if (m.tipo === 'rolagem') vars.scrollTrigger = gatilhoDoMotor(m, gatilho, els[0], doc || raiz.document);
     if (m.tipo === 'hover') vars.paused = true;
     registro.animacao = criarTween(gsap, f, alvos, vars);
     if (m.tipo === 'hover') {
@@ -276,6 +284,20 @@
       });
     }
     estado.montadas[f.id] = registro;
+  }
+
+  // gatilho de rolagem do motor (ficha avulsa e linha usam o mesmo)
+  function gatilhoDoMotor(m, gatilho, primeiro, doc) {
+    var st = { trigger: gatilho || primeiro, start: (m.inicio !== undefined ? m.inicio : 'top 80%'), end: (m.fim !== undefined ? m.fim : 'bottom 20%'), scrub: m.arrasto === true ? true : (ehNum(m.arrasto) ? m.arrasto : false), toggleActions: m.acoes || 'play none none none' };
+    if (m.fixar === true) st.pin = true;
+    else if (ehAlvo(m.fixar)) { var p = doc.getElementById(m.fixar.slice(1)); if (!p) throw new Error('elemento a fixar ausente: ' + m.fixar); st.pin = p; }
+    if (st.pin && m.espacoReservado) st.pinSpacing = false;
+    if (m.conteiner !== undefined) {
+      var c = estado.linhas[m.conteiner];
+      if (!c) throw new Error('conteiner ausente: ' + m.conteiner);
+      st.containerAnimation = c.tl;
+    }
+    return st;
   }
 
   function cortarAlvos(f, els, registro) {
@@ -337,7 +359,7 @@
     if (m.tipo === 'carga' && m.atraso !== undefined) tv.delay = m.atraso;
     if (m.tipo === 'tempo') { tv.repeat = -1; if (m.vaiVolta) tv.yoyo = true; if (ehNum(m.atrasoRepeticao)) tv.repeatDelay = m.atrasoRepeticao; }
     if (m.tipo === 'hover') tv.paused = true;
-    if (m.tipo === 'rolagem') tv.scrollTrigger = { trigger: gatilho || itens[0].registro.els[0], start: (m.inicio !== undefined ? m.inicio : 'top 80%'), end: (m.fim !== undefined ? m.fim : 'bottom 20%'), scrub: m.arrasto === true ? true : (ehNum(m.arrasto) ? m.arrasto : false), pin: Boolean(m.fixar), toggleActions: m.acoes || 'play none none none' };
+    if (m.tipo === 'rolagem') tv.scrollTrigger = gatilhoDoMotor(m, gatilho, itens[0].registro.els[0], doc);
     tl = gsap.timeline(tv);
     reg = { nome: nome, tl: tl, ouvintes: [], membros: [] };
     itens.forEach(function (it) {
@@ -354,6 +376,30 @@
     }
     estado.linhas[nome] = reg;
     }
+  }
+  function ordemPorConteiner(ordem, grupos) {
+    var feitas = {}; var out = [];
+    var por = function (nome, pilha) {
+      if (feitas[nome] || pilha[nome]) return; pilha[nome] = 1;
+      var c = grupos[nome] && grupos[nome][0].motor.conteiner; if (c !== undefined && grupos[c]) por(c, pilha);
+      feitas[nome] = 1; out.push(nome);
+    };
+    ordem.forEach(function (n) { por(n, {}); });
+    return out;
+  }
+  // quem depende (conteiner) das linhas dadas, em qualquer profundidade: linhas E fichas avulsas
+  // (Astra: a avulsa ficava presa a linha conteiner velha depois de editar a conteiner)
+  function dependentesDe(nomes, lista) {
+    var fichas = lista || (estado.programa && estado.programa.fichas) || []; var out = nomes.slice(); var avulsas = []; var mudou = true;
+    while (mudou) {
+      mudou = false;
+      fichas.forEach(function (f) {
+        if (!f || !f.motor || out.indexOf(f.motor.conteiner) < 0) return;
+        if (f.linha !== undefined) { if (out.indexOf(f.linha) < 0) { out.push(f.linha); mudou = true; } }
+        else if (avulsas.indexOf(f.id) < 0) avulsas.push(f.id);
+      });
+    }
+    return { linhas: out, avulsas: avulsas };
   }
   function desmontarLinha(nome) {
     var reg = estado.linhas[nome]; if (!reg) return;
@@ -400,14 +446,18 @@
       raiz.gsap.ticker.add(estado.tique); raiz.gsap.ticker.lagSmoothing(0);
       estado.lenis = lenis;
     }
-    var grupos = {}; var ordem = [];
+    var grupos = {}; var ordem = []; var avulsasDependentes = [];
     v.fichas.forEach(function (f) {
       if (f.linha !== undefined) { if (!grupos[f.linha]) { grupos[f.linha] = []; ordem.push(f.linha); } grupos[f.linha].push(f); return; }
+      if (f.motor.conteiner !== undefined) { avulsasDependentes.push(f); return; }
       try { montarFicha(f, doc); } catch (err) { estado.erros.push({ id: f.id, erros: ['falha ao montar: ' + (err && err.message)] }); }
     });
+    // a linha que conta o deslizamento de OUTRA (conteiner) monta depois dela
+    ordem = ordemPorConteiner(ordem, grupos);
     ordem.forEach(function (nome) {
       try { montarLinha(nome, grupos[nome], doc); } catch (err) { desmontarLinha(nome); grupos[nome].forEach(function (f) { estado.erros.push({ id: f.id, erros: ['falha ao montar a linha: ' + (err && err.message)] }); }); }
     });
+    avulsasDependentes.forEach(function (f) { try { montarFicha(f, doc); } catch (err) { estado.erros.push({ id: f.id, erros: ['falha ao montar: ' + (err && err.message)] }); } });
     try { if (raiz.ScrollTrigger) raiz.ScrollTrigger.refresh(); } catch (err) { estado.erros.push({ id: null, erros: ['refresh falhou: ' + (err && err.message)] }); }
     vigiarLayout(doc);
     return relatorio();
@@ -465,6 +515,10 @@
       return f;
     });
     var linhasAfetadas = [antiga.linha, nova.linha].filter(function (x) { return x !== undefined; });
+    // o COMPONENTE inteiro remonta: quem conta o deslizamento das linhas afetadas (linhas e avulsas),
+    // desmontado antes delas e montado depois — senao ficava preso a linha velha
+    var dep = dependentesDe(linhasAfetadas.filter(function (x, k, l) { return l.indexOf(x) === k; }), fichas.concat([nova]));
+    linhasAfetadas = dep.linhas; var avulsasDep = dep.avulsas.filter(function (x) { return x !== id; });
     if (!e.length) {
       // recusa todo erro que a EDICAO cria, em QUALQUER ficha (revisao Claude r2 #2: mudar o corte de
       // A culpava B, que ficava de fora); ficha que ja era invalida antes nao bloqueia
@@ -473,12 +527,14 @@
     }
     if (e.length) return { ok: false, erro: e.join('; ') };
     var antigas = fichas.slice();
-    var tira = function () { desmontarFicha(id); linhasAfetadas.forEach(desmontarLinha); };
+    var tira = function () { avulsasDep.forEach(desmontarFicha); desmontarFicha(id); linhasAfetadas.slice().reverse().forEach(desmontarLinha); };
     var poe = function (lista) {
       lista.forEach(function (f, k) { fichas[k] = f; });
       var f = fichas[i];
-      if (f.linha === undefined) montarFicha(f, doc);
       linhasAfetadas.forEach(function (nome) { remontarLinha(nome, doc); });
+      if (f.linha === undefined) montarFicha(f, doc);
+      // dependente que nao remonta derruba a edicao inteira (volta tudo), nunca "ok" pela metade
+      avulsasDep.forEach(function (aid) { var a = fichas.find(function (x) { return x && x.id === aid; }); if (a) { montarFicha(a, doc); if (!estado.montadas[aid]) throw new Error('dependente nao montou: ' + aid); } });
     };
     tira();
     // Seguro contra excecao (revisao Claude): se a nova nao monta, a antiga volta.

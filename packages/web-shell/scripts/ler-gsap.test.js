@@ -11,7 +11,7 @@ beforeAll(async () => {
   const { chromium } = await import('playwright-core');
   browser = await chromium.launch(); page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
   await page.setContent(`<body style="margin:0"><div data-u-id="u-sec" style="height:600px;margin-top:900px"><h2 data-u-id="u-tit"><span data-u-rec="r1">Ola</span> <span data-u-rec="r2">mundo</span></h2><div data-u-id="u-caixa" style="width:50px;height:50px"></div></div>
-    <div data-u-id="u-letreiro" style="width:50px;height:20px"></div><div data-u-id="u-pausada"></div><div data-u-id="u-figura" style="width:10px;height:10px"></div><div data-u-id="u-ts"></div><div data-u-id="u-ioio"></div><div data-u-id="u-m0"></div><div data-u-id="u-m1"></div><div data-u-id="u-set"></div><div data-u-id="u-ir"></div><div data-u-id="u-rapido"></div><div data-u-id="u-set0"></div><div data-u-id="u-c0"></div><div data-u-id="u-c1"></div><div data-u-id="u-c2"></div><div data-u-id="u-laco-pausado"></div><div data-u-id="u-fixo" style="height:100px"></div><div style="height:3000px"></div></body>`);
+    <div data-u-id="u-letreiro" style="width:50px;height:20px"></div><div data-u-id="u-pausada"></div><div data-u-id="u-figura" style="width:10px;height:10px"></div><div data-u-id="u-ts"></div><div data-u-id="u-ioio"></div><div data-u-id="u-m0"></div><div data-u-id="u-m1"></div><div data-u-id="u-set"></div><div data-u-id="u-ir"></div><div data-u-id="u-rapido"></div><div data-u-id="u-set0"></div><div data-u-id="u-c0"></div><div data-u-id="u-c1"></div><div data-u-id="u-c2"></div><div data-u-id="u-laco-pausado"></div><div data-u-id="u-fixo" style="height:100px;width:2000px"><div data-u-id="u-dentro" style="width:100px;height:50px;margin-left:900px"></div></div><div style="height:3000px"></div></body>`);
   await page.addScriptTag({ content: await readFile(path.join(RAIZ, 'node_modules/gsap/dist/gsap.min.js'), 'utf8') });
   await page.addScriptTag({ content: await readFile(path.join(RAIZ, 'node_modules/gsap/dist/ScrollTrigger.min.js'), 'utf8') });
   await page.evaluate(() => {
@@ -35,7 +35,8 @@ beforeAll(async () => {
     g.to(['[data-u-id="u-c0"]', '[data-u-id="u-c1"]', '[data-u-id="u-c2"]'], { x: (i) => (i + 1) * 10, duration: 1, stagger: { each: 0.5, from: 'center' } });
     g.to('[data-u-id="u-pausada"]', { x: 10, paused: true });
     g.to('[data-u-id="u-laco-pausado"]', { x: 30, repeat: -1, duration: 2, paused: true });
-    g.to('[data-u-id="u-fixo"]', { x: 50, scrollTrigger: { trigger: '[data-u-id="u-fixo"]', pin: true, scrub: true } });
+    const faixa = g.to('[data-u-id="u-fixo"]', { x: -500, ease: 'none', scrollTrigger: { trigger: '[data-u-id="u-fixo"]', pin: true, scrub: true, end: '+=500' } });
+    g.to('[data-u-id="u-dentro"]', { opacity: 0.5, scrollTrigger: { trigger: '[data-u-id="u-dentro"]', containerAnimation: faixa, start: 'left 80%', end: 'left 20%', scrub: true } });
     g.to({ quadro: 0 }, { quadro: 10, duration: 1 });
     g.to('[data-u-id="u-caixa"]', { rotation: 30, duration: 1, data: { id: 'ta-0001' } });   // acao do IX3
   });
@@ -49,7 +50,7 @@ describe('lerGsapNaPagina + fichasDoGsap', () => {
   });
   it('a linha com gatilho de rolagem vira UMA linha de tempo com o gatilho relativo do site', () => {
     const { fichas } = fichasDoGsap(lido);
-    const daLinha = fichas.filter((f) => f.motor.tipo === 'rolagem');
+    const daLinha = fichas.filter((f) => f.motor.tipo === 'rolagem' && f.motor.gatilho === '#u-sec');
     expect(new Set(daLinha.map((f) => f.linha)).size).toBe(1);
     expect(daLinha[0].motor).toEqual({ tipo: 'rolagem', gatilho: '#u-sec', inicio: 'top 80%', fim: 'bottom top', arrasto: 0.5 });
   });
@@ -67,11 +68,14 @@ describe('lerGsapNaPagina + fichasDoGsap', () => {
     expect(lido.pulos.doIx3).toBe(1);
     expect(fichasDoGsap(lido).fichas.some((f) => f.alvo === '#u-caixa' && f.para && f.para.rotation !== undefined)).toBe(false);
   });
-  it('laco PAUSADO sem controlador legivel fica de fora (Astra: inventava movimento); linha que FIXA a tela tambem', () => {
+  it('laco PAUSADO sem controlador legivel fica de fora (Astra: inventava movimento)', () => {
+    expect(fichasDoGsap(lido).fichas.some((f) => f.alvo === '#u-laco-pausado')).toBe(false);
+  });
+  it('rolagem horizontal: a faixa FIXA a tela (espaco ja na estrutura) e o gatilho de dentro conta o deslizamento dela', () => {
     const fs = fichasDoGsap(lido).fichas;
-    expect(fs.some((f) => f.alvo === '#u-laco-pausado')).toBe(false);
-    expect(fs.some((f) => f.alvo === '#u-fixo')).toBe(false);
-    expect(lido.pulos.fixacao).toBe(1);
+    const faixa = fs.find((f) => f.alvo === '#u-fixo'); const dentro = fs.find((f) => f.alvo === '#u-dentro');
+    expect(faixa.motor).toMatchObject({ fixar: true, espacoReservado: true, fim: '+=500' });
+    expect(dentro.motor).toMatchObject({ inicio: 'left 80%', fim: 'left 20%', conteiner: faixa.linha });
   });
   it('keyframes do GSAP viram QUADROS amostrados (laco de figura)', () => {
     const f = fichasDoGsap(lido).fichas.find((x) => x.alvo === '#u-figura');
@@ -101,6 +105,14 @@ describe('lerGsapNaPagina + fichasDoGsap', () => {
     expect(fs.find((x) => x.alvo === '#u-set0' && x.para.opacity !== undefined)).toMatchObject({ duracao: 0, para: { opacity: 0.2 } });
     expect(fs.some((x) => ['#u-c0', '#u-c1', '#u-c2'].includes(x.alvo))).toBe(false);
     expect(lido.pulos.alvosDistintosNaoReproduz).toBeGreaterThanOrEqual(1);
+  });
+  it('Astra: dependente cujo conteiner nao virou ficha sai (fica com a observacao)', () => {
+    const lidoFalso = { pulos: {}, linhas: [
+      { id: 1, st: { gatilho: 'u-f', inicio: 0, fim: '+=500', scrub: true, naoReproduz: [] }, itens: [{ alvos: [{ id: 'u-f' }], de: { left: 0 }, para: { left: -500 }, posicao: 0, duracao: 1, curva: 'none' }] },
+      { id: 2, st: { gatilho: 'u-d', inicio: 'left 80%', fim: 'left 20%', scrub: true, conteiner: 1, naoReproduz: [] }, itens: [{ alvos: [{ id: 'u-d' }], de: { opacity: 0 }, para: { opacity: 1 }, posicao: 0, duracao: 1, curva: 'none' }] },
+    ] };
+    const r = fichasDoGsap(lidoFalso);
+    expect(r.fichas).toEqual([]); expect(r.relatorio.conteinerAusente).toBe(1);
   });
   it('laco infinito sem gatilho vira motor tempo com repeticao', () => {
     const l = fichasDoGsap(lido).fichas.find((f) => f.alvo === '#u-letreiro');
