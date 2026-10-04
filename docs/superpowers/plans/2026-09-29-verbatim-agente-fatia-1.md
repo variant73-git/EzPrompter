@@ -1115,3 +1115,34 @@ Pedido do Adilson: parar de corrigir caso a caso e testar às cegas, sem corrigi
 Além disso, específicos (não perseguir): pílulas empilhadas por física no nexusmag; cartões inclinados ao rolar no uptech.
 
 **Leitura:** o que falta não é mais movimento caso a caso — são defeitos gerais da limpeza da estrutura, que todo site do Framer (e os links, todo site) vai expor. E o portão por SSIM não pega classes finas (sublinhado, ícone pequeno): olhar as imagens continua obrigatório.
+
+## 174. As classes gerais da estrutura corrigidas — e o teste às cegas repetido — 2026-10-04
+
+Pedido do Adilson: "pode começar" (as quatro classes da §173). Cada causa confirmada por sonda ANTES do conserto; cada conserto com teste vermelho primeiro.
+
+**O que era cada uma (causa medida, não a suposta):**
+1. **Links azuis e sublinhados** — o padrão do navegador era medido num `<a>` SEM endereço (só link com `href` é azul/sublinhado), e propriedade herdável que o navegador NÃO herda naquela tag (cor do link, tamanho do h1, negrito do `<b>`) era pulada por "igual ao pai". Agora: padrão por tag COM os atributos que mudam o estilo (`a[href]`, `input[type]`), herança detectada por sentinelas, e `inherit` só quando o filho ACOMPANHA uma troca no pai (Astra r1: igualdade não prova dependência).
+2. **Ícones sumindo** — o desenho do ícone fica numa biblioteca de símbolos e o ícone a referencia pelo nome (`<use href="#x">`). A cópia punha o NOSSO id por cima do original (a tag ficava com dois ids e o navegador ficava com o nosso). A mesma perda quebrava âncoras internas (`#secao`). Agora: id original → nosso (inclusive de invólucro desfeito), referência MARCADA no atributo na hora da cópia e resolvida no fim (Astra r1: regex sobre o corpo reescrevia texto visível).
+3. **Contornos arredondados perdidos** — o Framer desenha o contorno num `::after` com `border-radius: inherit`; o pseudo era comparado com o próprio elemento e o arredondamento saía. Agora: herdáveis contra o elemento, o resto contra o valor inicial do pseudo. ⚠️ Essa correção criou um defeito (contorno AZUL no nexusmag): cor que segue `color` comparada com um "currentcolor" resolvido em outro contexto (preto) — preto=preto, pulava, e a borda seguia o azul do link. Agora cor-que-segue-cor nunca é comparada com o padrão: só é omitida se PROVADO que segue (elemento e pseudo). O mesmo erro já existia nos elementos.
+4. **Imagens remotas** — o Framer monta o endereço da imagem enquanto a página roda. Na normalização a rede está cortada, o Framer trocava a imagem por "Failed to load image" e o aviso entrava no esqueleto. Agora a rede da normalização SERVE da captura o que ela guardou, pelo MAPA que o próprio produtor grava (caminho → URL original, com os desempates de colisão — Astra r2: recalcular o nome e aceitar "o arquivo existe" serviria bytes errados).
+5. **Campos e SVG** — `appearance`, `fill`, `stroke`, `stroke-width` entram.
+6. Achado ao conferir: **altura de imagem** — a regra da §172 ("altura só quando imposta") testava contra `auto`, mas com atributo `height="800"` a canônica (sem o CSS do site) aplica o atributo: foto 800 px num quadro de 215 (ampliada e cortada). Referência agora = o atributo quando existe.
+7. Achado ao conferir: **máscara** — logo desenhado como bloco branco recortado por SVG (`mask-image`) virava retângulo branco (revena; máscaras em 3 dos 4 sites).
+
+**Medida (mesma gravação do site vivo da §173; antes → depois):**
+
+| site | portão: sem mov. / nosso | régua nosso |
+|---|---|---|
+| nexusmag | 0,624 / 0,625 → **0,854 / 0,855** (controle 0,921) | recusada → **0,708** (sem mov. 0,50; 11 elementos) |
+| go-getter | 0,921 / 0,923 → **0,941 / 0,940** | 0,944 → 0,920 (variação entre gravações) |
+| uptechsoft | 0,909 / 0,899 → 0,912 / 0,906 | recusada (mudei código no meio da rodada — refeita) |
+| revena | 0,813 / 0,852 → 0,817 / 0,850 | 0,921 → 0,921 |
+
+Imagens: `_verbatim/comparacao-caminhos-2026-10-02/framer-final-*.png` (site | antes | depois). Os itens 6 e 7 entraram DEPOIS desta rodada.
+
+8. Achado do Astra (r4/r5): **fragmento de endereço** (`masks.svg#logo`, `/sobre#equipe`) se perdia ao virar caminho local, e máscara remota nem entrava no mapa de remotas.
+
+**Revisão:** Astra 5 rodadas (o teto): r1 3 achados (inherit por igualdade, id de invólucro desfeito, regex sobre texto visível), r2 1 (colisão de nomes — servir bytes errados), r3 1 (aceito como limite), r4 1 (fragmento), r5 1 (máscara remota). Todos os corrigidos com teste vermelho primeiro. 140/140.
+
+**Limites declarados:** imagem montada em tempo de execução com endereço absoluto do PRÓPRIO site não está no mapa do produtor (Astra r3) — pior caso: não localizada, nunca a errada. Específicos que não se perseguem: etiquetas empilhadas por física e logo do topo do nexusmag; cartões inclinados ao rolar no uptechsoft. Setas de `<select>` no nexusmag viram blocos pretos (não investigado).
+- ⚠️ Lição: **mudar o código no meio de uma rodada de medição invalida a rodada** — a estrutura e as gravações de referência saíram de versões diferentes e a régua recusou (corretamente) o uptechsoft. Rodada em andamento = código congelado.

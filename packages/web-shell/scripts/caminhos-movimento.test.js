@@ -3,7 +3,11 @@
 // controles que a revisao pediu: programa vazio NAO pode ganhar nota nas revelacoes.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fichasPorLeitura, difere, medirProprio } from './gravar-trajetoria.mjs';
-import { fichasDeSequencia, etiquetasQueSeMexem, normalizar, mapasDaPagina } from './normalizar-clone.mjs';
+import { fichasDeSequencia, etiquetasQueSeMexem, normalizar, mapasDaPagina, mapaDeRemotas, mapaDaCaptura, remotasNaPagina } from './normalizar-clone.mjs';
+import { runtimeFetchShim } from '../lib/native-clone/runtime-fetch-map.js';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
 import { comparar, conferirIds, idsDoCorpo } from './regua-trajetoria.mjs';
 import { escolher } from './escolher-por-elemento.mjs';
 
@@ -309,5 +313,119 @@ describe('normalizar: auto declarado', () => {
     expect(solto).toMatch(/position:absolute/); expect(solto).not.toMatch(/(^|[;{])(top|left|right|bottom):/);
     expect(preso).toMatch(/top:7px/); expect(preso).toMatch(/left:9px/);
     expect(secao).toMatch(/margin-left:auto/); expect(secao).toMatch(/margin-right:auto/);
+  });
+});
+
+// Teste as cegas no Framer (2026-10-04): quatro classes GERAIS da estrutura. Cada caso normaliza um
+// site minimo, RENDERIZA a canonica numa pagina limpa e confere o que o visitante veria.
+describe('normalizar: classes gerais achadas no teste as cegas (Framer)', () => {
+  let browser;
+  beforeAll(async () => { const { chromium } = await import('playwright-core'); browser = await chromium.launch(); });
+  afterAll(async () => { if (browser) await browser.close(); });
+  const canonica = async (siteHtml, ler, opcoes = {}) => {
+    const site = await browser.newPage(); await site.setContent(siteHtml); const r = await site.evaluate(normalizar, opcoes); await site.close();
+    const canon = await browser.newPage();
+    await canon.setContent(`<!doctype html><html><head><style id="u-fontes">${r.fontes}</style><style id="u-estilo">${r.css}</style></head><body>${r.corpo}</body></html>`);
+    try { return await canon.evaluate(ler); } finally { await canon.close(); }
+  };
+  it('link com a cor e o sublinhado do SITE, nao os padroes do navegador (o padrao do <a> e medido COM endereco)', async () => {
+    const v = await canonica('<body style="color:rgb(10, 20, 30)"><p>texto <a href="/x" style="color:inherit;text-decoration:none">link</a></p></body>', () => {
+      const a = document.querySelector('a'); const cs = getComputedStyle(a); return { cor: cs.color, sub: cs.textDecorationLine };
+    });
+    expect(v).toEqual({ cor: 'rgb(10, 20, 30)', sub: 'none' });
+  });
+  it('link que herda a cor do pai continua SEGUINDO o pai na canonica (cor do pai animada -> link acompanha)', async () => {
+    const v = await canonica('<body style="color:rgb(10, 20, 30)"><p>texto <a href="/x" style="color:inherit">link</a></p></body>', () => {
+      const p = document.querySelector('p'); p.style.color = 'rgb(200, 0, 0)'; return getComputedStyle(document.querySelector('a')).color;
+    });
+    expect(v).toBe('rgb(200, 0, 0)');
+  });
+  it('propriedade herdavel que o navegador NAO herda naquela tag (h1 font-size: inherit) e gravada', async () => {
+    const v = await canonica('<body><div style="font-size:20px"><h1 style="font-size:inherit;font-weight:inherit;margin:0">Titulo</h1></div></body>', () => {
+      const h = getComputedStyle(document.querySelector('h1')); return { tam: h.fontSize, peso: h.fontWeight };
+    });
+    expect(v).toEqual({ tam: '20px', peso: '400' });
+  });
+  it('contorno desenhado por ::after com border-radius: inherit continua arredondado', async () => {
+    const v = await canonica('<head><style>a::after{content:"";position:absolute;inset:0;border:1px solid rgb(200, 0, 0);border-radius:inherit}</style></head><body><a href="#" style="position:relative;display:inline-block;border-radius:20px;padding:10px">botao</a></body>', () => getComputedStyle(document.querySelector('a'), '::after').borderTopLeftRadius);
+    expect(v).toBe('20px');
+  });
+  it('borda PRETA num elemento de texto AZUL continua preta (o padrao "currentcolor" medido em outro contexto tambem e preto, e igual nao e o mesmo) — elemento e ::after', async () => {
+    const v = await canonica('<head><style>a::after{content:"";position:absolute;inset:0;border:1px solid rgb(0, 0, 0)}</style></head><body><a href="#" style="position:relative;display:inline-block;color:rgb(0, 0, 238);padding:10px">x</a><div style="color:rgb(0, 0, 238);border:1px solid rgb(0, 0, 0)">y</div></body>', () => ({
+      pseudo: getComputedStyle(document.querySelector('a'), '::after').borderTopColor, el: getComputedStyle(document.querySelector('div')).borderTopColor,
+    }));
+    expect(v).toEqual({ pseudo: 'rgb(0, 0, 0)', el: 'rgb(0, 0, 0)' });
+  });
+  it('Astra r1 #1: cor do link IGUAL a do pai mas FIXA nao vira inherit (o pai muda, o link fica)', async () => {
+    const v = await canonica('<body><p style="color:rgb(10, 20, 30)">texto <a href="/x" style="color:rgb(10, 20, 30)">link</a></p></body>', () => {
+      document.querySelector('p').style.color = 'rgb(200, 0, 0)'; return getComputedStyle(document.querySelector('a')).color;
+    });
+    expect(v).toBe('rgb(10, 20, 30)');
+  });
+  it('Astra r1 #2: ancora para um elemento cujo invólucro e DESFEITO continua achando o alvo', async () => {
+    const v = await canonica('<body><a href="#sec">ir</a><div id="sec"><div>alvo aqui</div></div></body>', () => {
+      const k = document.querySelector('a').getAttribute('href').slice(1); const e = document.getElementById(k); return e ? e.textContent.trim() : null;
+    });
+    expect(v).toBe('alvo aqui');
+  });
+  it('Astra r1 #3: texto VISIVEL que parece referencia ou endereco nao e reescrito', async () => {
+    const v = await canonica('<body><p id="fim">veja href="#fim" e url(#fim) e https://cdn.test/a.png</p><img alt="https://cdn.test/a.png" src="https://cdn.test/a.png"></body>', () => ({
+      texto: document.querySelector('p').textContent, alt: document.querySelector('img').getAttribute('alt'), src: document.querySelector('img').getAttribute('src'),
+    }), { remotas: { 'https://cdn.test/a.png': '_ext/cdn.test/a.png' } });
+    expect(v).toEqual({ texto: 'veja href="#fim" e url(#fim) e https://cdn.test/a.png', alt: 'https://cdn.test/a.png', src: '_ext/cdn.test/a.png' });
+  });
+  it('imagem com atributo height="800" e CSS height:100% num quadro de 215 px: a canonica mantem 215 (o atributo nao pode voltar a valer)', async () => {
+    const gif = 'data:image/gif;base64,R0lGODlhAQABAAAAACw=';
+    const v = await canonica(`<body><div style="position:relative;width:382px;height:215px;overflow:hidden"><div style="position:absolute;inset:0"><img src="${gif}" width="1420" height="800" style="display:block;width:100%;height:100%;object-fit:cover"></div></div></body>`, () => Math.round(document.querySelector('img').getBoundingClientRect().height));
+    expect(v).toBe(215);
+  });
+  it('logo desenhado por MASCARA (bloco branco recortado pelo SVG) mantem a mascara — sem ela vira um retangulo branco', async () => {
+    const svg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Ccircle cx='5' cy='5' r='5'/%3E%3C/svg%3E";
+    const v = await canonica(`<body><div style="width:40px;height:40px;background-color:rgb(255, 255, 255);-webkit-mask-image:url(&quot;${svg}&quot;);mask-image:url(&quot;${svg}&quot;);mask-size:contain;mask-repeat:no-repeat"></div></body>`, () => {
+      const cs = getComputedStyle(document.querySelector('div')); return { mask: cs.maskImage !== 'none', size: cs.maskSize, rep: cs.maskRepeat };
+    });
+    expect(v).toEqual({ mask: true, size: 'contain', rep: 'no-repeat' });
+  });
+  it('Astra r4: endereco local guarda o FRAGMENTO (mascara masks.svg#logo, link /sobre#equipe)', async () => {
+    const site = await browser.newPage();
+    await site.route('http://u.test/**', (r) => r.fulfill({ contentType: 'text/html', body: '<body><div style="width:10px;height:10px;mask-image:url(/masks.svg#logo);background-image:url(/bg.svg#a)"></div><a href="/sobre#equipe">sobre</a></body>' }));
+    await site.goto('http://u.test/'); const r = await site.evaluate(normalizar); await site.close();
+    expect(r.css).toContain('url("masks.svg#logo")'); expect(r.css).toContain('url("bg.svg#a")');
+    expect(r.corpo).toContain('href="sobre#equipe"');
+  });
+  it('Astra r5: MASCARA remota capturada entra no mapa e sai local com o fragmento', async () => {
+    const site = await browser.newPage();
+    await site.route('http://u.test/**', (r) => r.fulfill({ contentType: 'text/html', body: '<body><div style="width:10px;height:10px;mask-image:url(https://cdn.test/m.svg#logo)"></div></body>' }));
+    await site.route('https://cdn.test/**', (r) => r.abort());
+    await site.goto('http://u.test/');
+    const remotas = mapaDeRemotas(await site.evaluate(remotasNaPagina), { 'https://cdn.test/m.svg': '_ext/cdn.test/m.svg' });
+    const r = await site.evaluate(normalizar, { remotas }); await site.close();
+    expect(r.css).toContain('url("_ext/cdn.test/m.svg#logo")'); expect(r.arquivos).toContain('_ext/cdn.test/m.svg');
+  });
+  it('icone por <use href="#id"> continua achando o desenho (o id original nao pode ser trocado sem levar a referencia)', async () => {
+    const v = await canonica('<body><svg id="ic" width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" fill="red"></rect></svg><div style="width:20px;height:20px"><svg style="width:100%;height:100%" viewBox="0 0 10 10"><use href="#ic"></use></svg></div><a href="#fim">ir</a><section id="fim">fim</section></body>', () => {
+      const u = document.querySelector('use'); const alvo = document.getElementById(u.getAttribute('href').slice(1));
+      const ancora = document.querySelector('a').getAttribute('href').slice(1);
+      return { icone: Boolean(alvo) && alvo.tagName.toLowerCase() === 'svg', ancora: Boolean(document.getElementById(ancora)) && document.getElementById(ancora).textContent.trim() };
+    });
+    expect(v).toEqual({ icone: true, ancora: 'fim' });
+  });
+  it('preenchimento herdado de SVG (fill no conteiner) e a aparencia de campo (appearance: none) sobrevivem', async () => {
+    const v = await canonica('<body><div style="fill:rgb(255, 255, 255)"><svg width="10" height="10"><rect width="10" height="10"></rect></svg></div><select style="appearance:none;border:0;background:rgb(238, 238, 238)"><option>a</option></select></body>', () => ({
+      fill: getComputedStyle(document.querySelector('rect')).fill, apar: getComputedStyle(document.querySelector('select')).appearance,
+    }));
+    expect(v).toEqual({ fill: 'rgb(255, 255, 255)', apar: 'none' });
+  });
+});
+
+describe('mapaDaCaptura + mapaDeRemotas: endereco remoto -> arquivo, pelo MAPA que a captura gravou', () => {
+  it('le o mapa caminho->URL que o produtor embute na pagina; enderecos que COLIDEM no nome vao cada um para o SEU arquivo (Astra r2)', () => {
+    const alheias = { '_ext/cdn.test/a_20b.png': 'https://cdn.test/a%20b.png', '_ext/cdn.test/a_20b.k3j9.png': 'https://cdn.test/a_20b.png', '_ext/framerusercontent.com/images/x.1234abcd.png': 'https://framerusercontent.com/images/x.png?width=191&height=52' };
+    const html = `<html><head><script>${runtimeFetchShim({}, { origensAlheias: alheias, origemFonte: 'https://site.test' })}</script></head><body></body></html>`;
+    const porUrl = mapaDaCaptura(html);
+    expect(mapaDeRemotas(['https://cdn.test/a%20b.png', 'https://cdn.test/a_20b.png', 'https://framerusercontent.com/images/x.png?width=191&height=52', 'https://twitter.com/x'], porUrl)).toEqual({
+      'https://cdn.test/a%20b.png': '_ext/cdn.test/a_20b.png', 'https://cdn.test/a_20b.png': '_ext/cdn.test/a_20b.k3j9.png', 'https://framerusercontent.com/images/x.png?width=191&height=52': '_ext/framerusercontent.com/images/x.1234abcd.png',
+    });
+    expect(Object.keys(mapaDaCaptura('<html><body>sem remendo</body></html>'))).toEqual([]);
   });
 });

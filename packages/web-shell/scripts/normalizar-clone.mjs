@@ -37,7 +37,8 @@ async function coletarDoExtrator() {
 }
 
 // Roda NO NAVEGADOR. Devolve { html, css, fontes, arquivos, relatorio }.
-export function normalizar() {
+export function normalizar(opcoes = {}) {
+  const remotas = (opcoes && opcoes.remotas) || {};
   // DUAS sentinelas (Astra r2: com uma so, um elemento que ja tivesse aquela cor "provava" dependencia)
   // Transicoes desligadas durante a sondagem (Astra r3: com `transition: color` o valor lido logo apos a troca
   // ainda e o antigo, e a dependencia real saia gravada como cor fixa); a cor e restaurada AINDA sem transicao.
@@ -47,18 +48,27 @@ export function normalizar() {
   const transicaoEmAndamento = (el) => {
     try { return typeof CSSTransition !== 'undefined' && el.getAnimations().some((a) => a instanceof CSSTransition && a.playState !== 'finished' && a.playState !== 'idle'); } catch (e) { return true; }
   };
-  const segueCor = (el, p) => {
+  const segueCor = (el, p, pseudo = null) => {
     if (transicaoEmAndamento(el)) return false;
     const prev = el.style.getPropertyValue('color'); const prio = el.style.getPropertyPriority('color');
     const prevT = el.style.getPropertyValue('transition'); const prioT = el.style.getPropertyPriority('transition');
     el.style.setProperty('transition', 'none', 'important'); getComputedStyle(el).color;
     try {
-      return ['rgb(1, 2, 3)', 'rgb(4, 5, 6)'].every((c) => { el.style.setProperty('color', c, 'important'); return getComputedStyle(el).getPropertyValue(p) === c; });
+      return ['rgb(1, 2, 3)', 'rgb(4, 5, 6)'].every((c) => { el.style.setProperty('color', c, 'important'); return getComputedStyle(el, pseudo).getPropertyValue(p) === c; });
     } finally { restaurar(el, 'color', prev, prio); getComputedStyle(el).color; restaurar(el, 'transition', prevT, prioT); }
+  };
+  const SONDA_HERANCA = { color: ['rgb(1, 2, 3)', 'rgb(4, 5, 6)'], 'font-family': ['u-a', 'u-b'], 'font-size': ['13px', '17px'], 'font-weight': ['300', '500'], 'font-style': ['oblique 7deg', 'oblique 9deg'], 'line-height': ['17px', '19px'], 'letter-spacing': ['1px', '2px'], 'text-align': ['right', 'center'], 'text-transform': ['lowercase', 'uppercase'], 'white-space': ['pre-line', 'nowrap'], 'word-break': ['break-all', 'keep-all'], 'list-style-type': ['square', 'circle'], cursor: ['crosshair', 'wait'], 'text-indent': ['3px', '5px'], 'word-spacing': ['2px', '4px'], fill: ['rgb(1, 2, 3)', 'rgb(4, 5, 6)'], stroke: ['rgb(1, 2, 3)', 'rgb(4, 5, 6)'], 'stroke-width': ['3px', '5px'] };
+  const segueOPai = (el, pai, p) => {
+    const vals = SONDA_HERANCA[p]; if (!vals || !pai || transicaoEmAndamento(el) || transicaoEmAndamento(pai)) return false;
+    const tr = [pai, el].map((e) => [e.style.getPropertyValue('transition'), e.style.getPropertyPriority('transition')]);
+    const prev = pai.style.getPropertyValue(p); const prio = pai.style.getPropertyPriority(p);
+    for (const e of [pai, el]) e.style.setProperty('transition', 'none', 'important'); getComputedStyle(el).getPropertyValue(p);
+    try { return vals.every((x) => { pai.style.setProperty(p, x, 'important'); return getComputedStyle(el).getPropertyValue(p) === getComputedStyle(pai).getPropertyValue(p); }); }
+    finally { restaurar(pai, p, prev, prio); getComputedStyle(el).getPropertyValue(p); [pai, el].forEach((e, i) => restaurar(e, 'transition', tr[i][0], tr[i][1])); }
   };
   const AUTO_POSSIVEL = new Set(['top', 'right', 'bottom', 'left', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left']);
   const SEGUEM_COR = new Set(['-webkit-text-fill-color', '-webkit-text-stroke-color', 'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color', 'outline-color', 'text-decoration-color', 'text-emphasis-color', 'caret-color', 'column-rule-color']);
-  const HERDAVEIS = new Set(['color', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align', 'text-transform', 'white-space', 'word-break', 'list-style-type', 'cursor', 'visibility', 'text-indent', 'word-spacing']);
+  const HERDAVEIS = new Set(['color', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align', 'text-transform', 'white-space', 'word-break', 'list-style-type', 'cursor', 'visibility', 'text-indent', 'word-spacing', 'fill', 'stroke', 'stroke-width']);
   const PROPS = ['display', 'position', 'top', 'right', 'bottom', 'left', 'z-index', 'float', 'clear', 'box-sizing',
     'min-width', 'max-width', 'min-height', 'max-height',
     'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
@@ -72,14 +82,34 @@ export function normalizar() {
     'grid-template-columns', 'grid-template-rows', 'grid-column-start', 'grid-column-end', 'grid-row-start', 'grid-row-end', 'grid-auto-flow', 'grid-auto-columns', 'grid-auto-rows',
     'object-fit', 'object-position', 'aspect-ratio', 'vertical-align', 'mix-blend-mode', 'isolation', 'pointer-events', 'user-select',
     'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align', 'text-transform', 'text-decoration-line', 'text-decoration-color',
-    'text-indent', 'word-spacing', 'white-space', 'word-break', 'color', 'list-style-type', 'cursor', 'content', 'transform', 'transform-origin', 'opacity', 'clip-path', 'filter', 'visibility', 'translate', 'rotate', 'scale', 'backdrop-filter', 'text-overflow', '-webkit-text-fill-color', '-webkit-background-clip', '-webkit-text-stroke-color', '-webkit-text-stroke-width', 'caret-color', 'column-rule-color', 'text-emphasis-color'];
+    'text-indent', 'word-spacing', 'white-space', 'word-break', 'color', 'list-style-type', 'cursor', 'content', 'transform', 'transform-origin', 'opacity', 'clip-path', 'filter', 'visibility', 'translate', 'rotate', 'scale', 'backdrop-filter', 'text-overflow', '-webkit-text-fill-color', '-webkit-background-clip', '-webkit-text-stroke-color', '-webkit-text-stroke-width', 'caret-color', 'column-rule-color', 'text-emphasis-color', 'fill', 'stroke', 'stroke-width', 'appearance',
+    // mascara: o Framer desenha logo/icone como bloco colorido recortado por um SVG (teste as cegas, 2026-10-04)
+    'mask-image', 'mask-size', 'mask-position', 'mask-repeat', 'mask-mode', 'mask-composite', 'mask-clip', 'mask-origin'];
   const PULAR = /^(SCRIPT|NOSCRIPT|STYLE|LINK|TEMPLATE|META|BASE|IFRAME)$/;
   const MIDIA = /^(IMG|VIDEO|CANVAS|PICTURE|SOURCE|svg)$/i;
   // padrao de cada tag, num documento limpo
   const ifr = document.createElement('iframe'); ifr.style.cssText = 'position:absolute;width:0;height:0;border:0;visibility:hidden'; document.body.appendChild(ifr);
   const ddoc = ifr.contentDocument; ddoc.open(); ddoc.write('<!doctype html><html><head></head><body></body></html>'); ddoc.close();
   const padroes = {};
-  const padraoDe = (tag) => { if (padroes[tag]) return padroes[tag]; const e = ddoc.createElement(tag); ddoc.body.appendChild(e); const cs = getComputedStyle(e); const o = {}; for (const p of PROPS) o[p] = cs.getPropertyValue(p); e.remove(); padroes[tag] = o; return o; };
+  // O padrao do navegador depende de ATRIBUTOS: <a> so e azul e sublinhado COM endereco, e o campo muda
+  // com o tipo (teste as cegas no Framer, 2026-10-04: o padrao medido num <a> sem href deixava o link
+  // da canonica azul e sublinhado). E uma propriedade herdavel que o navegador NAO herda naquela tag
+  // (cor do link, tamanho do h1, peso do <b>, italico do <em>) nao pode ser pulada por "igual ao pai":
+  // a canonica nao tem o CSS do site, entao o padrao do navegador voltaria. Medido com sentinelas no pai.
+  const SENTINELA = { color: 'rgb(1, 2, 3)', 'font-family': 'u-sentinela', 'font-size': '13px', 'font-weight': '300', 'font-style': 'oblique 7deg', 'line-height': '17px', 'letter-spacing': '1px', 'text-align': 'right', 'text-transform': 'lowercase', 'white-space': 'pre-line', 'word-break': 'break-all', 'list-style-type': 'square', cursor: 'crosshair', 'text-indent': '3px', 'word-spacing': '2px', fill: 'rgb(1, 2, 3)', stroke: 'rgb(1, 2, 3)', 'stroke-width': '3px' };
+  const chaveDaTag = (el) => { const t = el.tagName.toLowerCase(); if ((t === 'a' || t === 'area') && el.hasAttribute('href')) return `${t}[href]`; if (t === 'input' || t === 'button') return `${t}[type=${(el.getAttribute('type') || '').toLowerCase()}]`; return t; };
+  const padraoDe = (chave) => {
+    if (padroes[chave]) return padroes[chave];
+    const m = /^([a-z0-9-]+)(?:\[(href|type)(?:=(.*))?\])?$/i.exec(chave) || [null, chave];
+    const criar = () => { const e = ddoc.createElement(m[1]); if (m[2] === 'href') e.setAttribute('href', '#'); if (m[2] === 'type' && m[3]) e.setAttribute('type', m[3]); return e; };
+    const e = criar(); ddoc.body.appendChild(e); const cs = getComputedStyle(e); const o = {}; for (const p of PROPS) o[p] = cs.getPropertyValue(p); e.remove();
+    const caixa = ddoc.createElement('div'); for (const [p, v] of Object.entries(SENTINELA)) caixa.style.setProperty(p, v); ddoc.body.appendChild(caixa);
+    const f = criar(); caixa.appendChild(f); const ccs = getComputedStyle(caixa); const fcs = getComputedStyle(f); const herda = {};
+    for (const p of HERDAVEIS) herda[p] = !(p in SENTINELA) || fcs.getPropertyValue(p) === ccs.getPropertyValue(p);
+    caixa.remove(); o.__herda = herda; padroes[chave] = o; return o;
+  };
+  // padrao de um ::before/::after (as propriedades NAO herdaveis partem do valor inicial, nao do elemento)
+  const pseudoPadrao = (() => { const st = ddoc.createElement('style'); st.textContent = '#u-pp::after{content:""}'; ddoc.head.appendChild(st); const e = ddoc.createElement('span'); e.id = 'u-pp'; ddoc.body.appendChild(e); const cs = getComputedStyle(e, '::after'); const o = {}; for (const p of PROPS) o[p] = cs.getPropertyValue(p); e.remove(); st.remove(); return o; })();
   const rel = { elementos: 0, embrulhosDesfeitos: 0, textosJuntados: 0, pseudo: 0, tamanhosDoSite: 0, animacoesDeCssRetiradas: 0, transicoesRetiradas: 0 };
   const visual = (cs) => (cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') || cs.backgroundImage !== 'none' || parseFloat(cs.borderTopWidth) || parseFloat(cs.borderRightWidth) || parseFloat(cs.borderBottomWidth) || parseFloat(cs.borderLeftWidth) || cs.boxShadow !== 'none' || parseFloat(cs.borderTopLeftRadius) || cs.outlineStyle !== 'none';
   const caixaZero = (cs) => ['margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left'].every((p) => parseFloat(cs.getPropertyValue(p)) === 0);
@@ -147,7 +177,7 @@ export function normalizar() {
   };
   const regras = [];
   const declaracoes = (el, cs, pai, { esvaziado = false } = {}) => {
-    const pad = padraoDe(el.tagName.toLowerCase()); const pcs = pai ? getComputedStyle(pai) : null; const out = [];
+    const pad = padraoDe(chaveDaTag(el)); const pcs = pai ? getComputedStyle(pai) : null; const out = [];
     // `auto` DECLARADO (posicao estatica de um absoluto, margem que centraliza): getComputedStyle devolve
     // o numero CALCULADO e gravar o numero congela a posicao — a folha do farmminerals ficou 80 px abaixo
     // quando cresceu (2026-10-04). O mapa de estilo computado preserva a palavra `auto`.
@@ -162,10 +192,15 @@ export function normalizar() {
       // continuavam pintadas de verde pelo -webkit-text-fill-color assado (2026-10-04)
       // DEPENDENCIA provada (Astra: igual nao e o mesmo que seguir — borda verde num texto verde ficaria
       // vermelha quando o texto mudasse): troca-se `color` por um instante e ve-se se a propriedade vai junto
-      if (SEGUEM_COR.has(p) && v === cs.color && segueCor(el, p)) continue;
-      if (HERDAVEIS.has(p)) { if (pcs && pcs.getPropertyValue(p) === v) continue; if (!pcs && pad[p] === v) continue; }
+      // e NUNCA contra o padrao da tag: o "currentcolor" dele foi resolvido com OUTRA cor de texto (preto),
+      // entao uma borda preta num texto azul era pulada e a canonica a pintava de azul (nexusmag, 2026-10-04)
+      if (SEGUEM_COR.has(p)) { if (v === cs.color && segueCor(el, p)) continue; out.push(`${p}:${v}`); continue; }
+      // herdavel que o navegador nao herda naquela tag e IGUAL ao pai: `inherit` (o link continua seguindo
+      // uma animacao de cor do pai; um valor fixo o congelaria)
+      // (Astra r1: igual nao prova dependencia — so `inherit` se o filho ACOMPANHA uma troca no pai)
+      if (HERDAVEIS.has(p)) { if (pad.__herda[p]) { if (pcs && pcs.getPropertyValue(p) === v) continue; if (!pcs && pad[p] === v) continue; } else if (pcs && pcs.getPropertyValue(p) === v && segueOPai(el, pai, p)) { out.push(`${p}:inherit`); continue; } }
       else if (pad[p] === v) continue;
-      if (p === 'background-image' && v !== 'none') v = v.replace(/url\("?(.*?)"?\)/g, (m, u) => { try { const x = new URL(u, location.href); return x.origin === location.origin ? `url("${decodeURI(x.pathname).replace(/^\//, '')}")` : m; } catch { return m; } });
+      if ((p === 'background-image' || p === 'mask-image') && v !== 'none') v = v.replace(/url\("?(.*?)"?\)/g, (m, u) => { try { const x = new URL(u, location.href); if (x.origin === location.origin) return `url("${decodeURI(x.pathname).replace(/^\//, '')}${x.hash}")`; const l = remotas[x.href] || remotas[u]; if (l) { arquivos.add(l); return `url("${l}${x.hash}")`; } return m; } catch { return m; } });
       out.push(`${p}:${v}`);
     }
     // tamanho DEFINIDO pelo site: so entra se mudaria com auto. Conteiner que sai VAZIO (Lottie)
@@ -182,7 +217,11 @@ export function normalizar() {
     else if (substituido) {
       out.push(`width:${cs.width}`); rel.tamanhosDoSite += 1;
       const antes = el.getBoundingClientRect().height; const prev = el.style.getPropertyValue('height'); const prio = el.style.getPropertyPriority('height');
-      el.style.setProperty('height', 'auto', 'important'); const depois = el.getBoundingClientRect().height;
+      // a referencia e o que a CANONICA aplicaria sem o CSS do site: o atributo height (dica de apresentacao)
+      // quando existe, senao auto (nexusmag, 2026-10-04: height="800" com CSS 100% num quadro de 215 — o teste
+      // com auto dava 215 pela proporcao dos atributos, a altura nao era gravada e a canonica mostrava 800)
+      const hAttr = el.getAttribute('height'); const refAltura = hAttr && /^\d+(\.\d+)?$/.test(hAttr.trim()) ? `${hAttr.trim()}px` : 'auto';
+      el.style.setProperty('height', refAltura, 'important'); const depois = el.getBoundingClientRect().height;
       if (prev) el.style.setProperty('height', prev, prio); else el.style.removeProperty('height');
       if (Math.abs(antes - depois) > 0.5 || !/^(IMG|VIDEO|PICTURE)$/i.test(el.tagName)) { out.push(`height:${cs.height}`); rel.tamanhosDoSite += 1; }
     }
@@ -196,11 +235,23 @@ export function normalizar() {
     if (cs.transitionDuration && cs.transitionDuration.split(',').some((d) => parseFloat(d) > 0)) rel.transicoesRetiradas += 1;
     return out;
   };
-  const esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const esc = (t) => t.replace(/[\u0001-\u0003]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const escA = (t) => String(t).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
   const ATTRS = new Set(['src', 'srcset', 'sizes', 'alt', 'href', 'poster', 'muted', 'loop', 'autoplay', 'playsinline', 'preload', 'controls', 'data-src', 'aria-label', 'role', 'type', 'width', 'height', 'target', 'rel', 'name', 'value', 'placeholder', 'for', 'title', 'colspan', 'rowspan', 'datetime', 'lang', 'dir', 'tabindex']);
   const arquivos = new Set();
-  const local = (u) => { try { const x = new URL(u, location.href); if (x.origin !== location.origin) return u; const p = decodeURI(x.pathname).replace(/^\//, ''); arquivos.add(p); return p.split('/').map(encodeURIComponent).join('/'); } catch { return u; } };
+  // id ORIGINAL -> nosso id. Cada elemento ganha um id descritivo nosso e o original sai; quem apontava
+  // para o original (icone por <use href="#x">, ancora <a href="#secao">, rotulo for=, url(#x)) passa a
+  // apontar para o nosso (teste as cegas no Framer: os icones somem e as ancoras internas quebram).
+  const idsOriginais = new Map();
+  // A referencia e MARCADA no atributo na hora de copiar (\u0001 = "#id", \u0003 = "id" sem #) e resolvida no
+  // fim, quando todos os ids ja existem (o alvo pode vir depois). O texto visivel nunca tem as marcas (esc as tira).
+  const marcaRef = (k) => `\u0001${encodeURIComponent(k)}\u0002`;
+  const marcaFor = (k) => `\u0003${encodeURIComponent(k)}\u0002`;
+  const marcarUrls = (v) => v.replace(/url\((["']?)#([^"')]+)\1\)/g, (m, q, k) => `url(${q}${marcaRef(k)}${q})`);
+  const resolver = (k) => { const d = decodeURIComponent(k); return idsOriginais.has(d) ? idsOriginais.get(d) : d; };
+  const religar = (t) => t.replace(/\u0001([^\u0002]*)\u0002/g, (m, k) => `#${escA(resolver(k))}`).replace(/\u0003([^\u0002]*)\u0002/g, (m, k) => escA(resolver(k)));
+  const religarCss = (t) => t.replace(/url\((["']?)#([^"')]+)\1\)/g, (m, q, k) => (idsOriginais.has(k) ? `url(${q}#${idsOriginais.get(k)}${q})` : m));
+  const local = (u) => { try { const x = new URL(u, location.href); if (x.origin !== location.origin) { const l = remotas[x.href] || remotas[u]; if (l) { arquivos.add(l); return l + x.hash; } return u; } const p = decodeURI(x.pathname).replace(/^\//, ''); arquivos.add(p); return p.split('/').map(encodeURIComponent).join('/') + x.hash; } catch { return u; } };
   const serializar = (el, pai, profundidade) => {
     if (PULAR.test(el.tagName)) return '';
     if (el === ifr) return '';
@@ -208,18 +259,31 @@ export function normalizar() {
     if (cs.display === 'none' && !el.hasAttribute('data-u-chave')) return '';
     // SVG: copiado inteiro (desenho), com id proprio
     if (el.tagName.toLowerCase() === 'svg') {
-      const id = idPara(el); el.setAttribute('data-u-id', id); const clone = el.cloneNode(true); clone.removeAttribute('class'); clone.removeAttribute('style'); clone.removeAttribute('data-u-id'); clone.removeAttribute('data-u-rec'); clone.querySelectorAll('[data-u-rec]').forEach((x) => x.removeAttribute('data-u-rec'));
+      const id = idPara(el); el.setAttribute('data-u-id', id); if (el.id && !idsOriginais.has(el.id)) idsOriginais.set(el.id, id); const clone = el.cloneNode(true); clone.removeAttribute('id'); clone.removeAttribute('class'); clone.removeAttribute('style'); clone.removeAttribute('data-u-id'); clone.removeAttribute('data-u-rec'); clone.querySelectorAll('[data-u-rec]').forEach((x) => x.removeAttribute('data-u-rec'));
       clone.querySelectorAll('script').forEach((s) => s.remove());
+      for (const n of [clone, ...clone.querySelectorAll('*')]) for (const a of Array.from(n.attributes)) {
+        if ((a.name === 'href' || a.name === 'xlink:href') && a.value.length > 1 && a.value.startsWith('#')) n.setAttribute(a.name, marcaRef(a.value.slice(1)));
+        else if (a.name === 'href' || a.name === 'xlink:href') n.setAttribute(a.name, local(a.value));
+        else if (a.value.includes('url(#')) n.setAttribute(a.name, marcarUrls(a.value));
+      }
       const d = declaracoes(el, cs, pai); regras.push(`#${id}{${d.join(';')}}`); rel.elementos += 1;
       return clone.outerHTML.replace(/^<svg/, `<svg id="${id}"`);
     }
-    if (desfazivel(el)) { rel.embrulhosDesfeitos += 1; return serializar(el.children[0], pai, profundidade); }
+    if (desfazivel(el)) {
+      rel.embrulhosDesfeitos += 1; const filho = el.children[0]; const html = serializar(filho, pai, profundidade);
+      const sobra = filho.getAttribute('data-u-id') || (filho.querySelector('[data-u-id]') || { getAttribute: () => null }).getAttribute('data-u-id');
+      if (el.id && sobra && !idsOriginais.has(el.id)) idsOriginais.set(el.id, sobra);
+      return html;
+    }
     const id = idPara(el); rel.elementos += 1; el.setAttribute('data-u-id', id);
+    if (el.id && !idsOriginais.has(el.id)) idsOriginais.set(el.id, id);
     const tag = el.tagName.toLowerCase();
     let at = ` id="${id}"`;
     for (const a of Array.from(el.attributes)) {
       if (!ATTRS.has(a.name)) continue;
       let v = a.value;
+      if (a.name === 'href' && v.length > 1 && v.startsWith('#')) { at += ` href="${marcaRef(v.slice(1))}"`; continue; }
+      if (a.name === 'for' && v) { at += ` for="${marcaFor(v)}"`; continue; }
       if (['src', 'href', 'poster', 'data-src'].includes(a.name) && v && !v.startsWith('#') && !/^(mailto|tel|javascript):/i.test(v)) v = local(v);
       if (a.name === 'srcset') v = v.split(',').map((c) => { const [u, ...r] = c.trim().split(/\s+/); return [local(u), ...r].join(' '); }).join(', ');
       at += ` ${a.name}="${escA(v)}"`;
@@ -232,7 +296,7 @@ export function normalizar() {
     for (const pseudo of ['::before', '::after']) {
       const pcs = getComputedStyle(el, pseudo); const c = pcs.content;
       if (!c || c === 'none' || c === 'normal') continue;
-      const pd = []; for (const p of PROPS) { if (p === 'content') continue; const v = pcs.getPropertyValue(p); if (v && v !== cs.getPropertyValue(p) || ['display', 'position', 'width', 'height', 'top', 'left', 'right', 'bottom', 'background-color', 'background-image'].includes(p)) pd.push(`${p}:${v}`); }
+      const pd = []; for (const p of PROPS) { if (p === 'content') continue; const v = pcs.getPropertyValue(p); if (SEGUEM_COR.has(p)) { if (v === pcs.color && segueCor(el, p, pseudo)) continue; pd.push(`${p}:${v}`); continue; } const base = HERDAVEIS.has(p) ? cs.getPropertyValue(p) : pseudoPadrao[p]; if (v && v !== base || ['display', 'position', 'width', 'height', 'top', 'left', 'right', 'bottom', 'background-color', 'background-image'].includes(p)) pd.push(`${p}:${v}`); }
       pd.push(`width:${pcs.width}`, `height:${pcs.height}`);
       regras.push(`#${id}${pseudo}{content:${c};${pd.join(';')}}`); rel.pseudo += 1;
     }
@@ -251,7 +315,7 @@ export function normalizar() {
     }
     return `<${tag}${at}>${dentro}</${tag}>`;
   };
-  const corpo = serializar(document.body, null, 0).replace(/^<body[^>]*>/, '').replace(/<\/body>$/, '');
+  const corpo = religar(serializar(document.body, null, 0).replace(/^<body[^>]*>/, '').replace(/<\/body>$/, ''));
   // fontes: as regras @font-face do site (declaram arquivos, nao sao seletores)
   const fontes = [];
   const visitar = (rs, base) => { for (const r of Array.from(rs || [])) { if (r.type === 3 && r.styleSheet) { let x; try { x = r.styleSheet.cssRules; } catch { x = null; } visitar(x, r.styleSheet.href || base); continue; } if (r.cssRules && r.type !== 5) { visitar(r.cssRules, base); continue; } if (r.type === 5) fontes.push(r.cssText.replace(/url\("?(.*?)"?\)/g, (m, u) => `url("${local(new URL(u, base).href)}")`)); } };
@@ -259,7 +323,38 @@ export function normalizar() {
   const bodyCs = getComputedStyle(document.body);
   regras.unshift(`html{background-color:${getComputedStyle(document.documentElement).backgroundColor}}`, `body{margin:0;${['background-color', 'color', 'font-family', 'font-size', 'line-height', 'font-weight'].map((p) => `${p}:${bodyCs.getPropertyValue(p)}`).join(';')}}`);
   ifr.remove();
-  return { corpo, css: regras.join('\n'), fontes: fontes.join('\n'), arquivos: Array.from(arquivos), relatorio: rel, titulo: document.title, lang: document.documentElement.lang };
+  return { corpo, css: religarCss(regras.join('\n')), fontes: fontes.join('\n'), arquivos: Array.from(arquivos), relatorio: rel, titulo: document.title, lang: document.documentElement.lang };
+}
+
+// Imagem cujo endereco o codigo do SITE monta enquanto a pagina roda (Framer: servidor de imagens com
+// largura/altura na query) fica REMOTA, embora a captura tenha guardado o arquivo — e offline quebra
+// (teste as cegas no Framer, 2026-10-04: 15 de 33 imagens no revena; no nexusmag o proprio Framer troca a
+// imagem que falhou por um aviso "Failed to load image").
+// A identidade vem do MAPA que o produtor gravou (caminho emitido -> URL original, ja com os desempates de
+// nome que ele faz quando dois enderecos colidem), embutido na pagina nativa. Nunca se recalcula o nome e se
+// toma "o arquivo existe" como prova (Astra r2: `a%20b.png` e `a_20b.png` dao o mesmo nome; o segundo fica
+// com sufixo, e o recalculo serviria os bytes do primeiro). Sem o mapa: nada e trocado.
+export function mapaDaCaptura(htmlNativo) {
+  const porUrl = Object.create(null);   // sem prototipo: uma URL nunca cai num setter herdado
+  const m = /var ALHEIOS = JSON\.parse\(("(?:[^"\\]|\\.)*")\)/.exec(htmlNativo || '');
+  if (!m) return porUrl;
+  try { for (const [c, u] of Object.entries(JSON.parse(JSON.parse(m[1])))) if (typeof u === 'string' && !(u in porUrl)) porUrl[u] = c; } catch { return Object.create(null); }
+  return porUrl;
+}
+export function arquivoCapturado(porUrl, url) { const u = String(url).split('#')[0]; return Object.prototype.hasOwnProperty.call(porUrl, u) ? porUrl[u] : null; }
+export function mapaDeRemotas(urls, porUrl) {
+  const m = {}; for (const u of new Set(urls)) { const l = arquivoCapturado(porUrl, u); if (l) m[u] = l; } return m;
+}
+// enderecos remotos que o normalizar vai encontrar (atributos, imagem escolhida do srcset, fundo calculado)
+export function remotasNaPagina() {
+  const out = new Set(); const add = (u) => { try { const x = new URL(u, location.href); if (/^https?:$/.test(x.protocol) && x.origin !== location.origin) out.add(x.href); } catch { /* nada */ } };
+  for (const el of document.querySelectorAll('*')) {
+    for (const a of ['src', 'href', 'poster', 'data-src', 'xlink:href']) { const v = el.getAttribute(a); if (v && !v.startsWith('#')) add(v); }
+    const ss = el.getAttribute('srcset'); if (ss) for (const c of ss.split(',')) add(c.trim().split(/\s+/)[0]);
+    if (el.currentSrc) add(el.currentSrc);
+    const cs = getComputedStyle(el); for (const bg of [cs.backgroundImage, cs.maskImage]) if (bg && bg !== 'none') for (const m of bg.matchAll(/url\("?(.*?)"?\)/g)) add(m[1]);   // mascara tambem (Astra r5)
+  }
+  return Array.from(out);
 }
 
 // Grava o site VIVO numa carga fresca (antes de qualquer revelacao tocar): cada elemento leva uma
@@ -399,7 +494,14 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1200 } });
-    await page.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
+    const porUrl = mapaDaCaptura(await readFile(path.join(captura, 'index.html'), 'utf8').catch(() => ''));
+    // sem rede, MAS o que a captura guardou e servido: o site que monta o endereco da imagem enquanto roda
+    // acha o arquivo (sem isso o Framer troca a imagem por um aviso de erro e o aviso entra no esqueleto)
+    await page.route(/^https?:\/\/(?!127\.0\.0\.1)/, async (r) => {
+      const l = arquivoCapturado(porUrl, r.request().url()); if (!l || !existsSync(path.join(captura, l))) return r.abort();
+      let contentType; try { contentType = JSON.parse(await readFile(path.join(captura, `${l}.uncraft-meta.json`), 'utf8')).contentType; } catch { contentType = undefined; }
+      return r.fulfill({ path: path.join(captura, l), contentType });
+    });
     if (movimento) await page.addInitScript(() => {
       // rolagem exata por posicao para a gravacao (a suave do site interpolaria)
       const Falso = function () { this.on = () => {}; this.raf = () => {}; this.destroy = () => {}; this.start = () => {}; this.stop = () => {}; this.scrollTo = (y) => window.scrollTo(0, typeof y === 'number' ? y : 0); this.resize = () => {}; };
@@ -435,7 +537,9 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
     await page.evaluate(`window.__marca = (el, k) => { try { el.setAttribute('data-u-chave', k); } catch (e) {} return k; }; (${corpoColetar})(${JSON.stringify(origem)}); true`);
     // quem se mexeu na gravacao nao pode ter o invólucro desfeito (r2 #3): o movimento dele ficaria sem id
     if (gravacao) await page.evaluate((l) => { window.__uMoveis = new Set(l); }, etiquetasQueSeMexem(gravacao.amostras));
-    const r = await page.evaluate(normalizar);
+    const remotas = mapaDeRemotas(await page.evaluate(remotasNaPagina), porUrl);
+    const r = await page.evaluate(normalizar, { remotas });
+    r.relatorio.remotasLocalizadas = Object.keys(remotas).length;
     if (soGravacao) {
       // SO A REFERENCIA (r2 #1): a gravacao do site num arquivo PROPRIO, com a lista de ids para a regua
       // conferir que os gemeos sao os mesmos; o clone (index.html, motion.json) nao e tocado
