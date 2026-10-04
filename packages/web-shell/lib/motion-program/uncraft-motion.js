@@ -50,7 +50,7 @@
       if (ehObj(f.motor) && f.motor.tipo === 'hover') e.push('sequencia nao toca em hover');
     } else {
       // so `de` = animar DE um estado ate o atual (o `from` do GSAP; o IX3 do Webflow usa)
-      if (!ehObj(f.para) && !Array.isArray(f.quadros) && !ehObj(f.de)) e.push('falta para ou quadros');
+      if (!ehObj(f.para) && !Array.isArray(f.quadros) && !ehObj(f.de) && !Array.isArray(f.porParte)) e.push('falta para ou quadros');
       if (f.de !== undefined && !ehObj(f.de)) e.push('de deve ser objeto');
       if (f.quadros !== undefined && (!Array.isArray(f.quadros) || f.quadros.length < 2 || !f.quadros.every(ehObj))) e.push('quadros deve ter >= 2 objetos');
       if (f.quadros !== undefined && (f.de !== undefined || f.para !== undefined)) e.push('use quadros OU de/para, nao os dois');
@@ -81,6 +81,13 @@
     // imediato: false = nao aplicar o estado `de` ao montar (acao que repete uma propriedade ja
     // animada do mesmo alvo numa linha: pre-renderizar apagaria o estado da acao anterior)
     if (f.imediato !== undefined && typeof f.imediato !== 'boolean') e.push('imediato deve ser booleano');
+    // VALORES POR PARTE (letras que caem cada uma de um jeito — sorteio do site): so em linha e com
+    // dividir; cada entrada e a parte de indice `i` com o seu de/para, duracao e atraso proprios
+    if (f.porParte !== undefined) {
+      if (!Array.isArray(f.porParte) || !f.porParte.length) e.push('porParte deve ser lista');
+      else if (f.linha === undefined || !f.dividir) e.push('porParte exige linha e dividir');
+      else if (!f.porParte.every(function (q) { return ehObj(q) && ehNum(q.i) && q.i >= 0 && ehObj(q.para) && propsValidas(q.para) && (q.de === undefined || (ehObj(q.de) && propsValidas(q.de))) && (q.duracao === undefined || (ehNum(q.duracao) && q.duracao >= 0)) && (q.atraso === undefined || ehNum(q.atraso)) && (q.repetir === undefined || ehNum(q.repetir)) && (q.vaiVolta === undefined || typeof q.vaiVolta === 'boolean') && (q.atrasoRepeticao === undefined || ehNum(q.atrasoRepeticao)); })) e.push('porParte invalido');
+    }
     if (f.duracao !== undefined && f.duracao < 0) e.push('duracao negativa');
     // inicio/fim: posicao ABSOLUTA em px (numero; 0 e valido — `inicio || padrao` trocava o topo
     // da pagina por 'top 80%') ou expressao do ScrollTrigger (texto)
@@ -366,7 +373,22 @@
       // repeticao/vai-e-volta da FOLHA dentro da linha (um letreiro que repete dentro de uma linha
       // que nao repete); a linha inteira repete pelo motor `tempo`
       var vt = varsDoTween(it.f); if (it.f.repetir !== undefined) vt.repeat = it.f.repetir; if (it.f.vaiVolta) vt.yoyo = true;
-      try { criarTween(tl, it.f, it.alvos, vt, it.f.posicao || 0); }
+      try {
+        if (Array.isArray(it.f.porParte)) {
+          // uma animacao por PARTE, cada uma no seu instante e com a sua repeticao; o GRUPO numa linha
+          // aninhada, que carrega a repeticao do conjunto (Astra: copiar a repeticao do grupo para cada
+          // parte trocava a ordem do vai-e-volta)
+          var base = Object.assign({}, vt); delete base.stagger; delete base.duration; delete base.repeat; delete base.yoyo; delete base.repeatDelay;
+          var grupo = raiz.gsap.timeline({ repeat: it.f.repetir || 0, yoyo: Boolean(it.f.vaiVolta), repeatDelay: it.f.atrasoRepeticao || 0 });
+          it.f.porParte.forEach(function (q) {
+            var alvo = it.alvos[q.i]; if (!alvo) return;
+            var v1 = Object.assign({}, base, copia(q.para), { duration: q.duracao !== undefined ? q.duracao : (it.f.duracao !== undefined ? it.f.duracao : 0.5) });
+            if (q.repetir !== undefined) v1.repeat = q.repetir; if (q.vaiVolta) v1.yoyo = true; if (q.atrasoRepeticao !== undefined) v1.repeatDelay = q.atrasoRepeticao;
+            if (ehObj(q.de)) grupo.fromTo(alvo, copia(q.de), v1, q.atraso || 0); else grupo.to(alvo, v1, q.atraso || 0);
+          });
+          tl.add(grupo, it.f.posicao || 0);
+        } else criarTween(tl, it.f, it.alvos, vt, it.f.posicao || 0);
+      }
       catch (err) { it.registro.cortados.forEach(restaurar); it.registro.cortados = []; estado.erros.push({ id: it.f.id, erros: ['falha ao montar: ' + (err && err.message)] }); return; }
       estado.montadas[it.f.id] = it.registro; reg.membros.push(it.f.id);
     });

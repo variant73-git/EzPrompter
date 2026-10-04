@@ -20,11 +20,14 @@ export function lerGsapNaPagina({ mapaPartes, controle }) {
   const g = window.gsap; if (!g) return { erro: 'gsap ausente' };
   const CTRL = new Set(controle);
   const pulos = { pausadas: 0, semFolhaDom: 0, curvasFuncao: 0, alvosSemId: 0, alvosNaoDom: 0 };
+  // por que cada animacao de varios alvos ficou de fora (para diagnostico; ate 20)
+  const desistencias = [];
+  const anotar = (motivo, a, extra) => { if (desistencias.length < 20) { const t = (a.targets ? a.targets() : []).filter((x) => x instanceof Element); desistencias.push({ motivo, texto: t.map((x) => x.textContent.trim()).join('').slice(0, 30), alvos: t.length, ...extra }); } };
   const alvoDe = (t) => {
     if (!(t instanceof Element)) { pulos.alvosNaoDom += 1; return null; }
     const id = t.getAttribute('data-u-id'); if (id) return { id };
     const rec = t.getAttribute('data-u-rec'); const p = rec && mapaPartes[rec];
-    if (p) { const [dono, k] = p.split('--'); return { id: dono, nivel: k[0] }; }
+    if (p) { const [dono, k] = p.split('--'); return { id: dono, nivel: k[0], indice: Number(k.slice(1)) }; }
     pulos.alvosSemId += 1; return null;
   };
   const stDe = (s) => {
@@ -38,11 +41,18 @@ export function lerGsapNaPagina({ mapaPartes, controle }) {
     // o gatilho de dentro contando o deslizamento da linha conteiner
     const naoReproduz = [];
     if (typeof s.vars.start === 'function' || typeof s.vars.end === 'function') naoReproduz.push('inicioPorFuncao');
+    if (s.vars.endTrigger && s.vars.endTrigger !== s.trigger) naoReproduz.push('fimEmOutroGatilho');
+    // inicio/fim NAO declarados: os padroes do proprio ScrollTrigger ("0 100%", ou "0 0" com fixacao;
+    // fim "100% 0") — relativos ao gatilho, valem na vertical e dentro de rolagem horizontal. Antes o
+    // leitor gravava px absolutos (ou desistia, dentro da faixa horizontal do gsap.com)
+    const padraoInicio = s.vars.start === undefined && trig ? (s.pin ? '0 0' : '0 100%') : null;
+    const padraoFim = s.vars.end === undefined && trig ? '100% 0' : null;
     const ca = s.vars.containerAnimation || null;
-    if (ca && !(txt(s.vars.start) && txt(s.vars.end))) naoReproduz.push('rolagemHorizontalSemTexto');   // dentro do conteiner so vale o texto relativo
+    const inicioTxt = txt(s.vars.start) || padraoInicio; const fimTxt = txt(s.vars.end) || padraoFim;
+    if (ca && !(inicioTxt && fimTxt)) naoReproduz.push('rolagemHorizontalSemTexto');   // dentro do conteiner so vale o texto relativo
     let fixar;
     if (s.pin) { const pid = s.pin instanceof Element ? s.pin.getAttribute('data-u-id') : null; if (s.pin === s.trigger) fixar = true; else if (pid) fixar = '#' + pid; else naoReproduz.push('fixacaoSemId'); }
-    return { gatilho: trig, inicio: trig && txt(s.vars.start) ? s.vars.start : Math.round(s.start), fim: trig && txt(s.vars.end) ? s.vars.end : Math.round(s.end), scrub: s.vars.scrub === undefined ? false : s.vars.scrub, acoes: s.vars.toggleActions || null, fixar, conteiner: ca ? idDe(ca) : undefined, naoReproduz };
+    return { gatilho: trig, inicio: trig && inicioTxt ? inicioTxt : Math.round(s.start), fim: trig && fimTxt ? fimTxt : Math.round(s.end), scrub: s.vars.scrub === undefined ? false : s.vars.scrub, acoes: s.vars.toggleActions || null, fixar, conteiner: ca ? idDe(ca) : undefined, naoReproduz };
   };
   const linhas = [];
   // id estavel de cada DONO (a linha conteiner pode ser lida depois da que depende dela)
@@ -52,7 +62,13 @@ export function lerGsapNaPagina({ mapaPartes, controle }) {
   const temDom = (a) => (a.getChildren ? a.getChildren(true, true, false).some((k) => (k.targets ? k.targets() : []).some((x) => x instanceof Element)) : (a.targets ? a.targets() : []).some((x) => x instanceof Element));
   const ler = (el, props) => { const o = {}; props.forEach((p) => { o[p] = g.getProperty(el, p); }); return o; };
   const iguais = (u, v) => Object.keys(u).every((k) => (typeof u[k] === 'number' && typeof v[k] === 'number' ? Math.abs(u[k] - v[k]) < 1e-3 : String(u[k]) === String(v[k])));
-  for (const raiz of g.globalTimeline.getChildren(false, true, true)) {
+  // RAIZES: as do relogio global E as que os gatilhos de rolagem guardam. A gravacao rola a pagina
+  // inteira antes da leitura, e o GSAP tira do relogio global a animacao que JA TERMINOU — a entrada
+  // das letras do gsap.com (toca uma vez) sumia; o ScrollTrigger continua apontando para ela.
+  const raizes = new Set(g.globalTimeline.getChildren(false, true, true));
+  const subir = (a) => { let r = a; while (r && r.parent && r.parent !== g.globalTimeline) r = r.parent; return r; };
+  if (window.ScrollTrigger) for (const st of window.ScrollTrigger.getAll()) { if (st.animation) raizes.add(subir(st.animation)); }
+  for (const raiz of raizes) {
     // pausada SEM gatilho de rolagem = tocada por clique/hover/codigo: sem controlador legivel, fica
     // com a observacao (Astra: "pausada + infinita" nao prova que o site a toca — inventava movimento)
     if (raiz.paused() && !temGatilho(raiz)) { if (temDom(raiz)) pulos.pausadas += 1; else pulos.internas = (pulos.internas || 0) + 1; continue; }
@@ -109,7 +125,7 @@ export function lerGsapNaPagina({ mapaPartes, controle }) {
         } catch (e) { pulos.falhaAmostra = (pulos.falhaAmostra || 0) + 1; continue; }
         const validos = porAlvo.filter((x) => x.alvo);
         pulos.alvosNaoDom += alvos.filter((x) => !(x instanceof Element)).length;
-        if (!validos.length) { pulos.semFolhaDom += 1; continue; }
+        if (!validos.length) { pulos.semFolhaDom += 1; if (alvos.length > 2) anotar('semId', a, { comRec: alvos.filter((x) => x instanceof Element && x.hasAttribute('data-u-rec')).length }); continue; }
         const rv = (dono && dono.vars) || {};
         let ease = typeof v.ease === 'string' ? v.ease : v.ease ? null : (rv.defaults && typeof rv.defaults.ease === 'string' ? rv.defaults.ease : 'power1.out');
         if (ease === null) { pulos.curvasFuncao += 1; ease = 'none'; }
@@ -119,12 +135,30 @@ export function lerGsapNaPagina({ mapaPartes, controle }) {
         // partes de UM texto, ou alvos que fazem a MESMA trajetoria -> uma ficha (com escalonamento);
         // senao uma ficha por alvo, cada uma no seu instante
         const mesmaTrajetoria = (x) => iguais(x.de, validos[0].de) && iguais(x.para, validos[0].para) && (!x.quadros || x.quadros.every((q, i) => iguais(q, validos[0].quadros[i])));
-        const mesmo = validos.every(mesmaTrajetoria);
+        // o TEMPO das partes tambem conta (Astra: destinos iguais com duracao por letra recebiam duracao
+        // comum; repeticao/vai-e-volta dentro do objeto stagger se perdiam)
+        const filhosInternos = a.timeline && a.timeline.getChildren ? a.timeline.getChildren(false, true, false) : [];
+        const tempoProprio = filhosInternos.length > 1 && (new Set(filhosInternos.map((fi) => fi.duration().toFixed(4))).size > 1 || filhosInternos.some((fi) => fi.vars && (fi.vars.repeat || fi.vars.yoyo || fi.vars.repeatDelay)));
+        const mesmo = validos.every(mesmaTrajetoria) && !tempoProprio;
         // trajetorias IGUAIS (inclusive partes de um texto) -> uma ficha com escalonamento
         if (mesmo || validos.length === 1) itens.push({ ...comum, alvos: validos.map((x) => x.alvo), de: validos[0].de, para: validos[0].para, quadros: validos[0].quadros, intervalo });
         // diferentes: partes de texto ou ordem que o tocador nao reproduz (centro, bordas, acaso, grade)
         // -> fica com a observacao (Astra r2: saiam todas no instante 0)
-        else if (validos.some((x) => x.alvo.nivel) || (intervalo && intervalo.ordemComplexa)) { pulos.alvosDistintosNaoReproduz = (pulos.alvosDistintosNaoReproduz || 0) + 1; }
+        // PARTES de um texto com trajetorias diferentes (sorteio por letra): cada parte com o seu de/para,
+        // duracao e atraso, lidos da animacao INTERNA que o GSAP cria por alvo num escalonamento
+        else if (validos.every((x) => x.alvo.nivel) && new Set(validos.map((x) => x.alvo.id)).size === 1 && a.timeline && a.timeline.getChildren) {
+          const filhos = a.timeline.getChildren(false, true, false);
+          const porParte = [];
+          for (const fi of filhos) {
+            const el = (fi.targets ? fi.targets() : [])[0]; const ad = el && alvoDe(el); if (!ad || !ad.nivel) continue;
+            const st0 = ini + fi.startTime() * k_ / toca; const d = fi.duration() * k_ / toca;
+            const fv = fi.vars || {};
+            try { dono.totalTime(st0, true); const de = ler(el, props); dono.totalTime(st0 + d, true); const para = ler(el, props); porParte.push({ i: ad.indice, de, para, duracao: fi.duration() * k_, atraso: fi.startTime() * k_, ...(fv.repeat ? { repetir: fv.repeat } : {}), ...(fv.yoyo ? { vaiVolta: true } : {}), ...(typeof fv.repeatDelay === 'number' && fv.repeatDelay > 0 ? { atrasoRepeticao: fv.repeatDelay * k_ } : {}) }); } catch (e) { /* parte fica de fora */ }
+          }
+          if (porParte.length) itens.push({ ...comum, alvos: [validos[0].alvo], porParte, de: {}, para: porParte[0].para, quadros: null, intervalo: null });
+          else { pulos.alvosDistintosNaoReproduz = (pulos.alvosDistintosNaoReproduz || 0) + 1; anotar('porParteVazio', a, { filhos: filhos.length }); }
+        }
+        else if (validos.some((x) => x.alvo.nivel) || (intervalo && intervalo.ordemComplexa)) { pulos.alvosDistintosNaoReproduz = (pulos.alvosDistintosNaoReproduz || 0) + 1; anotar('distintos', a, { validos: validos.length, comNivel: validos.filter((x) => x.alvo.nivel).length, ids: [...new Set(validos.map((x) => x.alvo.id))].slice(0, 3), temTimeline: Boolean(a.timeline), complexa: Boolean(intervalo && intervalo.ordemComplexa) }); }
         else {
           pulos.alvosDistintos = (pulos.alvosDistintos || 0) + 1;
           const cada = intervalo ? (intervalo.cada != null ? intervalo.cada : intervalo.total != null && validos.length > 1 ? intervalo.total / (validos.length - 1) : 0) : 0;
@@ -136,7 +170,7 @@ export function lerGsapNaPagina({ mapaPartes, controle }) {
       linhas.push({ id: idDe(dono), st, repeticao: dono.vars ? dono.vars.repeat : undefined, vaiVolta: Boolean(dono.vars && dono.vars.yoyo), atrasoRepeticao: dono.vars && typeof dono.vars.repeatDelay === 'number' ? dono.vars.repeatDelay * toca : undefined, atraso: !dono.scrollTrigger && dono === raiz && typeof raiz.vars.delay === 'number' ? raiz.vars.delay : 0, itens });
     }
   }
-  return { linhas, pulos };
+  return { linhas, pulos, desistencias };
 }
 
 const PROPS = new Set(['x', 'y', 'xPercent', 'yPercent', 'scale', 'scaleX', 'scaleY', 'rotate', 'rotation', 'skewX', 'skewY', 'opacity', 'autoAlpha', 'color', 'backgroundColor', 'borderColor', 'clipPath', 'filter', 'width', 'height', 'backgroundPosition', 'borderRadius', 'letterSpacing']);
@@ -146,7 +180,7 @@ const num = (v) => (typeof v === 'number' ? Number(v.toFixed(4)) : v);
 const limpo = (s) => String(s).replace(/[^\w-]+/g, '-');
 
 export function fichasDoGsap(lido) {
-  const rel = { linhas: 0, fichas: 0, foraDoContrato: {}, semMudanca: 0, ...(lido.pulos || {}) };
+  const rel = { linhas: 0, fichas: 0, foraDoContrato: {}, semMudanca: 0, ...(lido.pulos || {}), ...(lido.desistencias && lido.desistencias.length ? { desistencias: lido.desistencias } : {}) };
   const fichas = []; let nl = 0;
   const existentes = new Set((lido.linhas || []).map((L) => L.id));
   for (const L of lido.linhas || []) {
@@ -165,8 +199,13 @@ export function fichasDoGsap(lido) {
     const nome = `gsap-${L.id ?? nl}`; const vistos = new Map(); let n = 0;
     const itens = [...L.itens].sort((a, b) => a.posicao - b.posicao);
     for (const it of itens) {
-      const de = {}; const para = {}; let quadros = null;
-      if (it.quadros) {
+      const de = {}; const para = {}; let quadros = null; let porParte = null;
+      if (it.porParte) {
+        const limpa = (o) => Object.fromEntries(Object.entries(o).filter(([p]) => PROPS.has(p)).map(([p, v]) => [p, num(v)]));
+        porParte = it.porParte.map((q) => ({ i: q.i, de: limpa(q.de), para: limpa(q.para), duracao: num(q.duracao), atraso: num(q.atraso), ...(q.repetir ? { repetir: q.repetir } : {}), ...(q.vaiVolta ? { vaiVolta: true } : {}), ...(q.atrasoRepeticao ? { atrasoRepeticao: num(q.atrasoRepeticao) } : {}) })).filter((q) => Object.keys(q.para).some((p) => !igual(q.de[p], q.para[p])) || q.repetir);
+        if (!porParte.length) { rel.semMudanca += 1; continue; }
+        Object.assign(para, porParte[0].para);
+      } else if (it.quadros) {
         // so as propriedades que MUDAM em algum quadro; quadros iguais entre si sao parada
         // os quadros sao os DESTINOS (o 1o segmento parte do estado atual, como nos keyframes do GSAP;
         // Astra: incluir o estado inicial como quadro criava uma pausa no comeco)
@@ -183,8 +222,9 @@ export function fichasDoGsap(lido) {
         if (!Object.keys(para).length) { rel.semMudanca += 1; continue; }
       }
       const partes = it.alvos.filter((a) => a.nivel); const ids = [...new Set(it.alvos.map((a) => a.id))];
-      const f = { id: limpo(`m-gsap-${nl}-${++n}`), linha: nome, posicao: num(Math.max(0, it.posicao)), alvo: ids.length === 1 ? '#' + ids[0] : ids.map((i) => '#' + i), motor, ...(quadros ? { quadros } : { de, para }), duracao: num(it.duracao), curva: quadros ? 'none' : it.curva };
+      const f = { id: limpo(`m-gsap-${nl}-${++n}`), linha: nome, posicao: num(Math.max(0, it.posicao)), alvo: ids.length === 1 ? '#' + ids[0] : ids.map((i) => '#' + i), motor, ...(porParte ? { porParte } : quadros ? { quadros } : { de, para }), duracao: num(it.duracao), curva: quadros ? 'none' : it.curva };
       if (partes.length && partes.length === it.alvos.length) f.dividir = NIVEL[partes[0].nivel];
+      if (porParte) { delete f.intervalo; }
       if (it.intervalo && (it.intervalo.cada != null || it.intervalo.total != null)) { f.intervalo = it.intervalo.cada != null ? { cada: num(it.intervalo.cada) } : { total: num(it.intervalo.total) }; if (it.intervalo.de) f.intervalo.de = it.intervalo.de; }
       // repeticao e vai-e-volta da FOLHA (a linha inteira repete pelo motor `tempo`)
       if (it.repetir) f.repetir = it.repetir;

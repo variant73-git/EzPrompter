@@ -37,6 +37,8 @@ const PROGRAMA = {
     // corte PARTILHADO: duas fichas dividem #u-txt em palavras; as partes levam etiqueta id--n
     { id: 'm-w1', alvo: '#u-txt', dividir: 'words', motor: { tipo: 'carga' }, para: { opacity: 1 }, duracao: 0.01 },
     { id: 'm-w2', alvo: '#u-txt', dividir: 'words', motor: { tipo: 'carga' }, para: { y: 0 }, duracao: 0.01 },
+    // valores POR PARTE: cada letra com seu de/duracao/atraso (letras sorteadas do site)
+    { id: 'm-pp', linha: 'l-pp', posicao: 0, alvo: '#u-pp', dividir: 'chars', motor: { tipo: 'carga' }, curva: 'none', porParte: [{ i: 0, de: { y: 10 }, para: { y: 0 }, duracao: 0.2, atraso: 0 }, { i: 2, de: { y: 30 }, para: { y: 0 }, duracao: 5, atraso: 0 }] },
     // so `de`: vem de opacidade 0 ate o valor atual (1)
     { id: 'm-de', alvo: '#u-c', motor: { tipo: 'carga' }, de: { opacity: 0 }, duracao: 0.2 },
     // intervalo como objeto: o ultimo da lista comeca primeiro (de: 'end')
@@ -45,7 +47,7 @@ const PROGRAMA = {
 };
 const caixa = (id) => `<div id="${id}" style="width:20px;height:20px;background:#333"></div>`;
 const SITE = `<!doctype html><html><head><meta charset="utf-8"><style>body{margin:0}main{height:3000px}</style></head>
-<body><p id="u-txt">tres palavras aqui</p><div style="position:fixed;top:0">${['u-a', 'u-b', 'u-c', 'u-d1', 'u-d2', 'u-d3', 'u-e', 'u-f', 'u-g', 'u-h'].map(caixa).join('')}</div><main></main>
+<body><p id="u-txt">tres palavras aqui</p><p id="u-pp">abc</p><div style="position:fixed;top:0">${['u-a', 'u-b', 'u-c', 'u-d1', 'u-d2', 'u-d3', 'u-e', 'u-f', 'u-g', 'u-h'].map(caixa).join('')}</div><main></main>
 <script src="/gsap.min.js"></script><script src="/ScrollTrigger.min.js"></script>
 <script type="application/json" id="uncraft-motion-programa">${JSON.stringify(PROGRAMA)}</script>
 <script src="/uncraft-motion.js"></script></body></html>`;
@@ -77,7 +79,7 @@ describe('linhas de tempo', () => {
   });
   it('monta a linha e recusa o membro com motor diferente', async () => {
     const r = await page.evaluate(() => window.__uncraftMotion.relatorio());
-    expect(r.montadas.sort()).toEqual(['m-a', 'm-b', 'm-c1', 'm-c2', 'm-de', 'm-de2', 'm-esc', 'm-i1', 'm-i2', 'm-w1', 'm-w2', 'm-zero']);
+    expect(r.montadas.sort()).toEqual(['m-a', 'm-b', 'm-c1', 'm-c2', 'm-de', 'm-de2', 'm-esc', 'm-i1', 'm-i2', 'm-pp', 'm-w1', 'm-w2', 'm-zero']);
     expect(r.erros.map((e) => e.id)).toEqual(['m-motor-errado']);
   });
   it('as fichas da linha andam EM SEQUENCIA pela rolagem (posicao manda); a avulsa comeca no 0', async () => {
@@ -106,7 +108,7 @@ describe('linhas de tempo', () => {
     expect(await xs(500)).toEqual([200, 0, 50]);
     expect(await xs(1000)).toEqual([200, 100, 100]);
     const rel = await page.evaluate(() => window.__uncraftMotion.relatorio());
-    expect(rel.montadas.sort()).toEqual(['m-a', 'm-b', 'm-c1', 'm-c2', 'm-de', 'm-de2', 'm-esc', 'm-i1', 'm-i2', 'm-w1', 'm-w2', 'm-zero']);
+    expect(rel.montadas.sort()).toEqual(['m-a', 'm-b', 'm-c1', 'm-c2', 'm-de', 'm-de2', 'm-esc', 'm-i1', 'm-i2', 'm-pp', 'm-w1', 'm-w2', 'm-zero']);
   });
   it('editar o MOTOR de um membro vale para a linha inteira (o outro membro nao some)', async () => {
     const r = await page.evaluate(() => window.__uncraftMotion.aplicar('m-b', { motor: { fim: 2000 } }));
@@ -116,6 +118,11 @@ describe('linhas de tempo', () => {
     const m = await page.evaluate(() => window.__uncraftMotion.fichas().filter((f) => f.linha === 'l-um').map((f) => f.motor.fim));
     expect(m).toEqual([2000, 2000, 2000]);   // inclusive o membro que tinha motor errado: agora e o da linha
     expect(await xs(1000)).toEqual([200, 0, 100]);   // linha agora vai ate 2000: no 1000 so a 1a acao terminou
+  });
+  it('valores por parte: a 1a letra ja chegou, a 3a (5 s) ainda esta caindo, a do meio nao se move', async () => {
+    // remonta (a carga comecou quando a pagina abriu, testes antes) e mede 0,6 s depois
+    const r = await page.evaluate(async () => { window.__uncraftMotion.aplicar('m-pp', { curva: 'none' }); await new Promise((q) => setTimeout(q, 600)); return Array.from(document.querySelectorAll('#u-pp .u-letra')).map((e) => Math.round(window.gsap.getProperty(e, 'y'))); });
+    expect(r[0]).toBe(0); expect(r[1]).toBe(0); expect(r[2]).toBeGreaterThan(20);
   });
   it('corte partilhado: as duas fichas animam as MESMAS partes, etiquetadas id--n', async () => {
     const r = await page.evaluate(() => Array.from(document.querySelectorAll('#u-txt [data-u-parte]')).map((e) => e.getAttribute('data-u-parte') + ':' + e.textContent));

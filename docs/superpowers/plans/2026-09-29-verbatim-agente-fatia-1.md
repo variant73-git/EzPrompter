@@ -1065,3 +1065,30 @@ Pedido do Adilson, na ordem proposta: primeiro o aviso, depois a rolagem horizon
 **Medida (gsap.com, mesma rodada):** a seção agora fica presa e o texto desliza (antes: tela vazia). Portão sem avisos na combinação verificada (a observação sozinha segue acusando 3600/4500). Pontos com movimento vivo: 4 (observação: 1); congelados 5 (observação: 8). Régua nos elementos estáveis: combinação verificada 0,787 × observação 0,781. Falta a entrada letra a letra dentro da faixa (4 gatilhos de dentro com início/fim que não são texto ficam com a observação).
 
 **Revisão:** Astra 2 rodadas (4 achados + 1 na verificação), todos corrigidos com teste (vermelho sem a correção conferido). 116/116 testes.
+
+## 172. Três correções na ordem pedida: o defeito do farmminerals em 12600, a entrada letra a letra do gsap.com e o portão que rola para cima — 2026-10-04
+
+Pedido do Adilson: "corrija na ordem."
+
+**1. farmminerals, parada 12600** (o letreiro "Healthier Animals" apagado e a imagem achatada que o SSIM 0,94 escondia). Três causas, todas no normalizador — o esqueleto congelava valores CALCULADOS que a animação precisava mexer:
+- **Altura de imagem congelada**: elemento substituído (img/video/picture) grava sempre a largura e só grava a altura se ela foi IMPOSTA (difere da altura com `height:auto`). A revelação que estica a imagem voltou a esticar.
+- **Cor que segue a cor do texto gravada como cor fixa** (`-webkit-text-fill-color`, bordas, contorno…): a animação de cor do letreiro mexia em `color` e o preenchimento ficava preso. Agora só se omite quando a dependência é PROVADA por perturbação com duas sentinelas, com as transições desligadas durante a sondagem e restauradas idênticas; se houver transição EM ANDAMENTO no elemento, não se sonda (fica gravada como está — o comportamento conservador de antes).
+- **`auto` de posição/margem virando pixels**: `computedStyleMap()` revela o `auto` declarado; insets e margens `auto` ficam `auto`.
+
+**2. Entrada letra a letra na faixa horizontal do gsap.com.** Duas peças:
+- Leitor GSAP: quando as partes de um texto têm valores ou tempos diferentes (`stagger` com repetição/vai-e-volta por parte, durações por letra), emite `porParte` — cada parte com `de`/`para`/duração/atraso/repetição próprios — e o tocador monta um grupo aninhado na linha. Gatilhos sem início/fim declarados recebem os padrões do ScrollTrigger.
+- ⭐ **Por que as letras nunca apareciam**: a gravação rola a página inteira ANTES de ler; uma animação de toque único que COMPLETOU é retirada da linha do tempo global do GSAP. O leitor só olhava a linha global, então as letras (já tocadas) sumiam. Agora as raízes também vêm de `ScrollTrigger.getAll()` (subindo até o ancestral logo abaixo da linha global). Teste com vermelho conferido sem a correção.
+- **Medida**: "personality" (11 letras) e "plug-and-play" agora entram por parte dentro da faixa e as duas sobreviveram à escolha verificada. Antes a palavra aparecia inteira e parada; agora as letras entram como no site (`_verbatim/comparacao-caminhos-2026-10-02/gsap-final-{2700,3600,4500}.png` — site | observação | combinação verificada). Hipótese REFUTADA: o texto letra a letra do farmminerals NÃO vinha de um script que o leitor perdia — são interações do próprio Webflow (43 animações "do IX3", já lidas pelo leitor do Webflow); lá nada muda.
+
+**3. Portão que também rola para cima** (`verbatim-gate.mjs --ida-e-volta`): depois da parada final, a trajetória volta pelas mesmas paradas até o topo; quadros marcados `volta`, resumo por perna e validade POR PERNA (perna de volta fora de sincronia é declarada INCONCLUSIVA, não excluída em silêncio). Medida:
+- gsap.com — site × site 0,986 ida / 0,968 volta; observação 0,894 / 0,890 com avisos de conteúdo perdido na volta (4500/3600/2700); combinação verificada 0,888 / 0,890 sem avisos. O banner verde não reaparece ao subir no meio da página nem no site — não há comportamento de direção a construir lá.
+- farmminerals — site × site 0,993 / 0,989; observação 0,922 / 0,885 (avisos em 900 e 0); combinação verificada 0,945 / 0,956 sem avisos.
+
+**Medida final (código desta etapa, mesma rodada, cadência 20 s):**
+- farmminerals — portão: sem movimento 0,690 · observação 0,932 · combinação verificada **0,944**, sem avisos. Régua (elementos estáveis): 0,432 / 0,767 / leitor declarado 0,823 / combinação verificada **0,945**.
+- gsap.com — portão: sem movimento 0,847 · observação 0,894 (perde conteúdo em 3600/4500) · combinação verificada **0,898** (antes 0,889), sem avisos; pontos com movimento vivo 5 (observação 2).
+- gsap.com — régua (elementos estáveis; 22 instáveis do próprio site fora da nota; controle site × site 0,992): sem movimento 0,456 · observação 0,778 · leitor declarado **0,708** (antes 0,491 — as letras agora contam: textos 0,577 contra 0,041 da observação) · combinação verificada **0,823** (antes 0,809).
+
+**Revisão:** Astra 5 rodadas (o teto), 6 achados, todos reproduzidos com vermelho antes da correção; a quinta limpa. 125/125 testes.
+
+**Abertos, com o porquê:** os vídeos da vitrine do gsap.com mostram o pôster em vez de tocar (não investigado); a régua não enxerga cor de preenchimento nem altura de imagem (o defeito do 12.600 só o portão viu — limite documentado do instrumento); o título do hero do gsap.com (letras trocadas por ciclos de callback) segue não investigado.

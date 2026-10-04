@@ -38,6 +38,26 @@ async function coletarDoExtrator() {
 
 // Roda NO NAVEGADOR. Devolve { html, css, fontes, arquivos, relatorio }.
 export function normalizar() {
+  // DUAS sentinelas (Astra r2: com uma so, um elemento que ja tivesse aquela cor "provava" dependencia)
+  // Transicoes desligadas durante a sondagem (Astra r3: com `transition: color` o valor lido logo apos a troca
+  // ainda e o antigo, e a dependencia real saia gravada como cor fixa); a cor e restaurada AINDA sem transicao.
+  const restaurar = (el, prop, valor, prio) => { if (valor) el.style.setProperty(prop, valor, prio); else el.style.removeProperty(prop); };
+  // Transicao EM ANDAMENTO no elemento (Astra r4): desligar as transicoes a cancelaria e mudaria a pagina capturada
+  // — entao nao se sonda e a cor fica gravada como esta (o comportamento conservador de antes).
+  const transicaoEmAndamento = (el) => {
+    try { return typeof CSSTransition !== 'undefined' && el.getAnimations().some((a) => a instanceof CSSTransition && a.playState !== 'finished' && a.playState !== 'idle'); } catch (e) { return true; }
+  };
+  const segueCor = (el, p) => {
+    if (transicaoEmAndamento(el)) return false;
+    const prev = el.style.getPropertyValue('color'); const prio = el.style.getPropertyPriority('color');
+    const prevT = el.style.getPropertyValue('transition'); const prioT = el.style.getPropertyPriority('transition');
+    el.style.setProperty('transition', 'none', 'important'); getComputedStyle(el).color;
+    try {
+      return ['rgb(1, 2, 3)', 'rgb(4, 5, 6)'].every((c) => { el.style.setProperty('color', c, 'important'); return getComputedStyle(el).getPropertyValue(p) === c; });
+    } finally { restaurar(el, 'color', prev, prio); getComputedStyle(el).color; restaurar(el, 'transition', prevT, prioT); }
+  };
+  const AUTO_POSSIVEL = new Set(['top', 'right', 'bottom', 'left', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left']);
+  const SEGUEM_COR = new Set(['-webkit-text-fill-color', '-webkit-text-stroke-color', 'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color', 'outline-color', 'text-decoration-color', 'text-emphasis-color', 'caret-color', 'column-rule-color']);
   const HERDAVEIS = new Set(['color', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align', 'text-transform', 'white-space', 'word-break', 'list-style-type', 'cursor', 'visibility', 'text-indent', 'word-spacing']);
   const PROPS = ['display', 'position', 'top', 'right', 'bottom', 'left', 'z-index', 'float', 'clear', 'box-sizing',
     'min-width', 'max-width', 'min-height', 'max-height',
@@ -52,7 +72,7 @@ export function normalizar() {
     'grid-template-columns', 'grid-template-rows', 'grid-column-start', 'grid-column-end', 'grid-row-start', 'grid-row-end', 'grid-auto-flow', 'grid-auto-columns', 'grid-auto-rows',
     'object-fit', 'object-position', 'aspect-ratio', 'vertical-align', 'mix-blend-mode', 'isolation', 'pointer-events', 'user-select',
     'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align', 'text-transform', 'text-decoration-line', 'text-decoration-color',
-    'text-indent', 'word-spacing', 'white-space', 'word-break', 'color', 'list-style-type', 'cursor', 'content', 'transform', 'transform-origin', 'opacity', 'clip-path', 'filter', 'visibility', 'translate', 'rotate', 'scale', 'backdrop-filter', 'text-overflow', '-webkit-text-fill-color', '-webkit-background-clip'];
+    'text-indent', 'word-spacing', 'white-space', 'word-break', 'color', 'list-style-type', 'cursor', 'content', 'transform', 'transform-origin', 'opacity', 'clip-path', 'filter', 'visibility', 'translate', 'rotate', 'scale', 'backdrop-filter', 'text-overflow', '-webkit-text-fill-color', '-webkit-background-clip', '-webkit-text-stroke-color', '-webkit-text-stroke-width', 'caret-color', 'column-rule-color', 'text-emphasis-color'];
   const PULAR = /^(SCRIPT|NOSCRIPT|STYLE|LINK|TEMPLATE|META|BASE|IFRAME)$/;
   const MIDIA = /^(IMG|VIDEO|CANVAS|PICTURE|SOURCE|svg)$/i;
   // padrao de cada tag, num documento limpo
@@ -128,9 +148,21 @@ export function normalizar() {
   const regras = [];
   const declaracoes = (el, cs, pai, { esvaziado = false } = {}) => {
     const pad = padraoDe(el.tagName.toLowerCase()); const pcs = pai ? getComputedStyle(pai) : null; const out = [];
+    // `auto` DECLARADO (posicao estatica de um absoluto, margem que centraliza): getComputedStyle devolve
+    // o numero CALCULADO e gravar o numero congela a posicao — a folha do farmminerals ficou 80 px abaixo
+    // quando cresceu (2026-10-04). O mapa de estilo computado preserva a palavra `auto`.
+    const mapa = el.computedStyleMap ? (() => { try { return el.computedStyleMap(); } catch (e) { return null; } })() : null;
+    const ehAuto = (p) => { try { const x = mapa && mapa.get(p); return Boolean(x) && String(x) === 'auto'; } catch (e) { return false; } };
     for (const p of PROPS) {
       let v = cs.getPropertyValue(p);
       if (p === 'content') continue;
+      if (AUTO_POSSIVEL.has(p) && ehAuto(p)) { if (pad[p] !== 'auto' && !/^(top|right|bottom|left)$/.test(p)) out.push(`${p}:auto`); continue; }
+      // cor que SO repete a cor do texto (o padrao e "currentcolor"): gravada como valor fixo, ela parava
+      // de seguir `color` — medido no farmminerals, a animacao trocava a cor do letreiro e as letras
+      // continuavam pintadas de verde pelo -webkit-text-fill-color assado (2026-10-04)
+      // DEPENDENCIA provada (Astra: igual nao e o mesmo que seguir — borda verde num texto verde ficaria
+      // vermelha quando o texto mudasse): troca-se `color` por um instante e ve-se se a propriedade vai junto
+      if (SEGUEM_COR.has(p) && v === cs.color && segueCor(el, p)) continue;
       if (HERDAVEIS.has(p)) { if (pcs && pcs.getPropertyValue(p) === v) continue; if (!pcs && pad[p] === v) continue; }
       else if (pad[p] === v) continue;
       if (p === 'background-image' && v !== 'none') v = v.replace(/url\("?(.*?)"?\)/g, (m, u) => { try { const x = new URL(u, location.href); return x.origin === location.origin ? `url("${decodeURI(x.pathname).replace(/^\//, '')}")` : m; } catch { return m; } });
@@ -142,7 +174,18 @@ export function normalizar() {
     // Elemento SUBSTITUIDO (img/video/canvas/svg...) tambem: o auto dele e o tamanho NATURAL do
     // recurso, que muda com a variante que o navegador escolhe do srcset (medido: a imagem do CTA
     // tinha 1440 px no site, contida por max-width:100%, e 1200 px na canonica com outra variante).
-    if (esvaziado || /^(IMG|VIDEO|CANVAS|SVG|IFRAME|OBJECT|EMBED|PICTURE)$/i.test(el.tagName)) { out.push(`width:${cs.width}`, `height:${cs.height}`); rel.tamanhosDoSite += 2; }
+    // ⚠️ mas a ALTURA de imagem/video so quando o site a impoe (2026-10-04): gravada sempre, ela ficava
+    // presa enquanto a largura animava — a folha do farmminerals saiu 476 x 84 em vez de 476 x 290 (a
+    // altura acompanha a largura pela proporcao da imagem). A largura segue sempre (variante do srcset).
+    const substituido = /^(IMG|VIDEO|CANVAS|SVG|IFRAME|OBJECT|EMBED|PICTURE)$/i.test(el.tagName);
+    if (esvaziado) { out.push(`width:${cs.width}`, `height:${cs.height}`); rel.tamanhosDoSite += 2; }
+    else if (substituido) {
+      out.push(`width:${cs.width}`); rel.tamanhosDoSite += 1;
+      const antes = el.getBoundingClientRect().height; const prev = el.style.getPropertyValue('height'); const prio = el.style.getPropertyPriority('height');
+      el.style.setProperty('height', 'auto', 'important'); const depois = el.getBoundingClientRect().height;
+      if (prev) el.style.setProperty('height', prev, prio); else el.style.removeProperty('height');
+      if (Math.abs(antes - depois) > 0.5 || !/^(IMG|VIDEO|PICTURE)$/i.test(el.tagName)) { out.push(`height:${cs.height}`); rel.tamanhosDoSite += 1; }
+    }
     else for (const [p, dim] of [['width', 'width'], ['height', 'height']]) {
       const antes = el.getBoundingClientRect()[dim]; const prev = el.style.getPropertyValue(p); const prio = el.style.getPropertyPriority(p);
       el.style.setProperty(p, 'auto', 'important'); const depois = el.getBoundingClientRect()[dim];

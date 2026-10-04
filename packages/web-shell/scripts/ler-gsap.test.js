@@ -11,13 +11,13 @@ beforeAll(async () => {
   const { chromium } = await import('playwright-core');
   browser = await chromium.launch(); page = await browser.newPage({ viewport: { width: 1000, height: 800 } });
   await page.setContent(`<body style="margin:0"><div data-u-id="u-sec" style="height:600px;margin-top:900px"><h2 data-u-id="u-tit"><span data-u-rec="r1">Ola</span> <span data-u-rec="r2">mundo</span></h2><div data-u-id="u-caixa" style="width:50px;height:50px"></div></div>
-    <div data-u-id="u-letreiro" style="width:50px;height:20px"></div><div data-u-id="u-pausada"></div><div data-u-id="u-figura" style="width:10px;height:10px"></div><div data-u-id="u-ts"></div><div data-u-id="u-ioio"></div><div data-u-id="u-m0"></div><div data-u-id="u-m1"></div><div data-u-id="u-set"></div><div data-u-id="u-ir"></div><div data-u-id="u-rapido"></div><div data-u-id="u-set0"></div><div data-u-id="u-c0"></div><div data-u-id="u-c1"></div><div data-u-id="u-c2"></div><div data-u-id="u-laco-pausado"></div><div data-u-id="u-fixo" style="height:100px;width:2000px"><div data-u-id="u-dentro" style="width:100px;height:50px;margin-left:900px"></div></div><div style="height:3000px"></div></body>`);
+    <div data-u-id="u-letreiro" style="width:50px;height:20px"></div><div data-u-id="u-pausada"></div><h4 data-u-id="u-pisca"><span data-u-rec="p0">x</span><span data-u-rec="p1">y</span></h4><h5 data-u-id="u-durs"><span data-u-rec="d0">m</span><span data-u-rec="d1">n</span></h5><div data-u-id="u-terminada"></div><h3 data-u-id="u-sorteio"><span data-u-rec="s0">a</span><span data-u-rec="s1">b</span><span data-u-rec="s2">c</span></h3><div data-u-id="u-figura" style="width:10px;height:10px"></div><div data-u-id="u-ts"></div><div data-u-id="u-ioio"></div><div data-u-id="u-m0"></div><div data-u-id="u-m1"></div><div data-u-id="u-set"></div><div data-u-id="u-ir"></div><div data-u-id="u-rapido"></div><div data-u-id="u-set0"></div><div data-u-id="u-c0"></div><div data-u-id="u-c1"></div><div data-u-id="u-c2"></div><div data-u-id="u-laco-pausado"></div><div data-u-id="u-fixo" style="height:100px;width:2000px"><div data-u-id="u-dentro" style="width:100px;height:50px;margin-left:900px"></div><div data-u-id="u-dentro2" style="width:100px;height:50px;margin-left:300px"></div></div><div style="height:3000px"></div></body>`);
   await page.addScriptTag({ content: await readFile(path.join(RAIZ, 'node_modules/gsap/dist/gsap.min.js'), 'utf8') });
   await page.addScriptTag({ content: await readFile(path.join(RAIZ, 'node_modules/gsap/dist/ScrollTrigger.min.js'), 'utf8') });
   await page.evaluate(() => {
     const g = window.gsap; g.registerPlugin(window.ScrollTrigger);
     const tl = g.timeline({ scrollTrigger: { trigger: '[data-u-id="u-sec"]', start: 'top 80%', end: 'bottom top', scrub: 0.5 } });
-    tl.from('[data-u-rec]', { y: 40, opacity: 0, stagger: 0.1, duration: 0.5, ease: 'power3.out' })
+    tl.from('[data-u-id="u-tit"] [data-u-rec]', { y: 40, opacity: 0, stagger: 0.1, duration: 0.5, ease: 'power3.out' })
       .to('[data-u-id="u-caixa"]', { x: 200, duration: 1 }, 0.3)
       .to('[data-u-id="u-caixa"]', { x: 400, duration: 1 });
     g.to('[data-u-id="u-letreiro"]', { xPercent: -100, duration: 4, repeat: -1, ease: 'none' });
@@ -34,13 +34,22 @@ beforeAll(async () => {
     g.timeline({ repeat: -1 }).set('[data-u-id="u-set0"]', { opacity: 0.2 }, 0).to('[data-u-id="u-set0"]', { y: 9, duration: 1 }, 0.5);
     g.to(['[data-u-id="u-c0"]', '[data-u-id="u-c1"]', '[data-u-id="u-c2"]'], { x: (i) => (i + 1) * 10, duration: 1, stagger: { each: 0.5, from: 'center' } });
     g.to('[data-u-id="u-pausada"]', { x: 10, paused: true });
+    // letras com valores SORTEADOS por letra (como "personality" no gsap.com): de/duracao por parte
+    g.from('[data-u-rec^="s"]', { yPercent: (i) => [100, 200, 300][i], duration: (i) => [0.5, 1, 1.5][i], stagger: 0.1, ease: 'none' });
+    // Astra: repeticao/vai-e-volta DENTRO do stagger; destinos iguais com duracao por letra
+    g.to('[data-u-rec^="p"]', { opacity: 0.5, duration: 0.2, stagger: { each: 0.1, repeat: 1, yoyo: true } });
+    g.to('[data-u-rec^="d"]', { x: 10, duration: (i) => [0.3, 0.9][i], stagger: 0.05 });
+    // animacao de entrada que JA TOCOU e terminou (o GSAP a tira do relogio global): o gatilho guarda
+    const fim = g.to('[data-u-id="u-terminada"]', { x: 77, duration: 0.01, scrollTrigger: { trigger: '[data-u-id="u-terminada"]', start: 'top bottom', toggleActions: 'play none none none' } });
+    fim.progress(1); g.globalTimeline.remove(fim);
     g.to('[data-u-id="u-laco-pausado"]', { x: 30, repeat: -1, duration: 2, paused: true });
     const faixa = g.to('[data-u-id="u-fixo"]', { x: -500, ease: 'none', scrollTrigger: { trigger: '[data-u-id="u-fixo"]', pin: true, scrub: true, end: '+=500' } });
     g.to('[data-u-id="u-dentro"]', { opacity: 0.5, scrollTrigger: { trigger: '[data-u-id="u-dentro"]', containerAnimation: faixa, start: 'left 80%', end: 'left 20%', scrub: true } });
+    g.to('[data-u-id="u-dentro2"]', { opacity: 0.2, scrollTrigger: { trigger: '[data-u-id="u-dentro2"]', containerAnimation: faixa, scrub: true } });   // sem inicio/fim declarados
     g.to({ quadro: 0 }, { quadro: 10, duration: 1 });
     g.to('[data-u-id="u-caixa"]', { rotation: 30, duration: 1, data: { id: 'ta-0001' } });   // acao do IX3
   });
-  lido = await page.evaluate(lerGsapNaPagina, { mapaPartes: { r1: 'u-tit--w0', r2: 'u-tit--w1' }, controle: CONTROLE_GSAP });
+  lido = await page.evaluate(lerGsapNaPagina, { mapaPartes: { r1: 'u-tit--w0', r2: 'u-tit--w1', s0: 'u-sorteio--c0', s1: 'u-sorteio--c1', s2: 'u-sorteio--c2', p0: 'u-pisca--c0', p1: 'u-pisca--c1', d0: 'u-durs--c0', d1: 'u-durs--c1' }, controle: CONTROLE_GSAP });
 }, 60000);
 afterAll(async () => { if (browser) await browser.close(); });
 
@@ -76,6 +85,9 @@ describe('lerGsapNaPagina + fichasDoGsap', () => {
     const faixa = fs.find((f) => f.alvo === '#u-fixo'); const dentro = fs.find((f) => f.alvo === '#u-dentro');
     expect(faixa.motor).toMatchObject({ fixar: true, espacoReservado: true, fim: '+=500' });
     expect(dentro.motor).toMatchObject({ inicio: 'left 80%', fim: 'left 20%', conteiner: faixa.linha });
+    // sem inicio/fim: os padroes do ScrollTrigger (e a faixa fixada, sem inicio declarado, comeca em "0 0")
+    expect(fs.find((f) => f.alvo === '#u-dentro2').motor).toMatchObject({ inicio: '0 100%', fim: '100% 0', conteiner: faixa.linha });
+    expect(faixa.motor.inicio).toBe('0 0');
   });
   it('keyframes do GSAP viram QUADROS amostrados (laco de figura)', () => {
     const f = fichasDoGsap(lido).fichas.find((x) => x.alvo === '#u-figura');
@@ -113,6 +125,20 @@ describe('lerGsapNaPagina + fichasDoGsap', () => {
     ] };
     const r = fichasDoGsap(lidoFalso);
     expect(r.fichas).toEqual([]); expect(r.relatorio.conteinerAusente).toBe(1);
+  });
+  it('letras com valores sorteados viram UMA ficha com valores POR PARTE (de/duracao/atraso de cada letra)', () => {
+    const f = fichasDoGsap(lido).fichas.find((x) => x.alvo === '#u-sorteio');
+    expect(f).toMatchObject({ dividir: 'chars' });
+    expect(f.porParte.map((q) => [q.i, q.de.yPercent, q.para.yPercent, q.duracao, q.atraso])).toEqual([[0, 100, 0, 0.5, 0], [1, 200, 0, 1, 0.1], [2, 300, 0, 1.5, 0.2]]);
+  });
+  it('Astra: repeticao/vai-e-volta dentro do stagger e duracao por letra entram por parte', () => {
+    const fs = fichasDoGsap(lido).fichas;
+    const pisca = fs.find((x) => x.alvo === '#u-pisca'); const durs = fs.find((x) => x.alvo === '#u-durs');
+    expect(pisca.porParte.map((q) => [q.i, q.repetir, q.vaiVolta])).toEqual([[0, 1, true], [1, 1, true]]);
+    expect(durs.porParte.map((q) => [q.i, q.duracao, q.atraso])).toEqual([[0, 0.3, 0], [1, 0.9, 0.05]]);
+  });
+  it('animacao que ja terminou (fora do relogio global) ainda e lida pelo gatilho dela', () => {
+    expect(fichasDoGsap(lido).fichas.find((x) => x.alvo === '#u-terminada')).toMatchObject({ para: { x: 77 } });
   });
   it('laco infinito sem gatilho vira motor tempo com repeticao', () => {
     const l = fichasDoGsap(lido).fichas.find((f) => f.alvo === '#u-letreiro');

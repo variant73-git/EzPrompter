@@ -488,7 +488,7 @@ async function motionEnergy(page, probe, cdp) {
 }
 
 // Percorre a MESMA sequência de entrada e devolve as dimensões + os quadros.
-async function runTrajectory(page, { targets, outDir, allowNetwork, probe, cdp }) {
+async function runTrajectory(page, { targets, outDir, allowNetwork, probe, cdp, idaEVolta = false }) {
   const frames = [];
   // Três relógios, porque eles respondem perguntas diferentes:
   //   tNav  — desde a navegação: inclui o tempo de carga, que é legitimamente
@@ -595,6 +595,21 @@ async function runTrajectory(page, { targets, outDir, allowNetwork, probe, cdp }
   // esperava ~2 s além do hold, sobre uma espera de hold já cumprida.
   await page.waitForTimeout(HOLD_MS);
   await shoot(targets.length + 1, targets.at(-1) ?? 0, 0, false);
+  // ⭐ IDA E VOLTA (2026-10-04). Sites que reagem a DIRECAO da rolagem (a faixa do topo do gsap.com some
+  // ao descer e volta ao subir) nao aparecem num percurso so de descida. Com `--ida-e-volta`, depois do
+  // fim o portao SOBE pelas mesmas paradas, com a mesma cadencia, e fotografa cada uma de novo — os
+  // quadros da volta levam `volta: true` e o compare os resume a parte.
+  if (idaEVolta) {
+    let k = targets.length + 2;
+    for (let i = targets.length - 2; i >= -1; i -= 1, k += 1) {
+      const target = i >= 0 ? targets[i] : 0;
+      const { deficit, esperou } = await aguardarCadencia(k);
+      await page.evaluate((y) => window.scrollTo(0, y), target);
+      await page.waitForTimeout(DWELL_MS);
+      await shoot(k, target, deficit, esperou);
+      frames[frames.length - 1].volta = true;
+    }
+  }
 
   const geometry = await page.evaluate(() => ({
     pageHeight: Math.max(document.body.scrollHeight, document.documentElement.scrollHeight),
@@ -608,7 +623,7 @@ async function runTrajectory(page, { targets, outDir, allowNetwork, probe, cdp }
   return {
     frames, geometry, editability: edit, allowNetwork,
     timing: {
-      loadMs, settleMs: SETTLE_MS, dwellMs: DWELL_MS, holdMs: HOLD_MS, passoMs: PASSO_MS,
+      loadMs, settleMs: SETTLE_MS, dwellMs: DWELL_MS, holdMs: HOLD_MS, passoMs: PASSO_MS, idaEVolta,
       percursoMs: Date.now() - t0,
       // ⭐ Quantas paradas a cadência REALMENTE segurou. Sem este número quem lê
       // o relatório não tem como saber se o mecanismo atuou: numa execução em
@@ -699,7 +714,7 @@ async function measure({ label, outDir, url, serveRoot, trajectory }) {
 
   // Sessão CDP na página julgada, só para a rajada de movimento (ver capturaRapida).
   const cdp = await context.newCDPSession(page).catch(() => null);
-  const run = await runTrajectory(page, { targets, outDir, allowNetwork: !allowPrefix, probe, cdp });
+  const run = await runTrajectory(page, { targets, outDir, allowNetwork: !allowPrefix, probe, cdp, idaEVolta: process.argv.includes('--ida-e-volta') });
   const hosts = (list) => [...new Set(list.map((u) => { try { return new URL(u).host; } catch { return u.slice(0, 40); } }))];
 
   const report = {
@@ -748,6 +763,7 @@ async function compare(refDir, candDir) {
   if (!mesmo(ref.trajectoryTargets, cand.trajectoryTargets)) falhasDeRegime.push('trajetória diferente: o candidato não percorreu os mesmos alvos da referência');
   if (ref.timing?.passoMs == null || cand.timing?.passoMs == null) falhasDeRegime.push(`cadência ausente num dos lados (referência ${ref.timing?.passoMs ?? 'ausente'}, candidato ${cand.timing?.passoMs ?? 'ausente'}) — relatório de versão anterior do portão`);
   else if (ref.timing.passoMs !== cand.timing.passoMs) falhasDeRegime.push(`cadência diferente: ${ref.timing.passoMs} vs ${cand.timing.passoMs}`);
+  if (Boolean(ref.timing?.idaEVolta) !== Boolean(cand.timing?.idaEVolta)) falhasDeRegime.push(`percurso diferente: ida e volta ${Boolean(ref.timing?.idaEVolta)} vs ${Boolean(cand.timing?.idaEVolta)}`);
   // ⚠️ Cadência igual no PAPEL não é cadência igual de FATO. Medido em gsap.com: os
   // dois lados com `passoMs: 6000`, a referência esperou em 5 paradas e o candidato
   // em ZERO — ou seja de um lado o relógio governou o percurso e do outro governou o
@@ -803,7 +819,7 @@ async function compare(refDir, candDir) {
     const aviso = foraDeSincronia(rf.index) ? null : avisoDeConteudo(cRef, cCand);
     const fr = (m) => Number((m.bits.reduce((a, b) => a + b, 0) / (m.bits.length || 1)).toFixed(3));
     perFrame.push({
-      index: rf.index, target: rf.target, refObserved: rf.observed, candObserved: cf.observed, ssim: Number(ssim.toFixed(4)),
+      index: rf.index, target: rf.target, ...(rf.volta ? { volta: true } : {}), refObserved: rf.observed, candObserved: cf.observed, ssim: Number(ssim.toFixed(4)),
       conteudo: { referencia: fr(cRef), candidato: fr(cCand) }, ...(aviso ? { aviso } : {}),
       ...(foraDeSincronia(rf.index) ? { excluido: true, note: `inconclusivo — deriva ${derivaDoQuadro.get(rf.index)} ms` } : {}),
     });
@@ -843,6 +859,8 @@ async function compare(refDir, candDir) {
       quadrosExcluidosPorDeriva: excluidosPorDeriva,
       quadrosNoVeredito: measured.length,
       // quadros em que o SSIM pode estar escondendo falta (ou sobra) de conteudo — olhar a imagem
+      // na VOLTA (subindo), em separado: e onde aparece o que depende da direcao da rolagem
+      volta: (() => { const v = perFrame.filter((f) => f.volta && typeof f.ssim === 'number' && !f.excluido); return v.length ? { quadros: v.length, media: Number((v.reduce((a, f) => a + f.ssim, 0) / v.length).toFixed(4)), min: Math.min(...v.map((f) => f.ssim)), conteudoPerdido: v.filter((f) => f.aviso === 'conteudoPerdido').map((f) => f.target) } : null; })(),
       conteudoPerdido: perFrame.filter((f) => f.aviso === 'conteudoPerdido' && !f.excluido).map((f) => f.target),
       conteudoAMais: perFrame.filter((f) => f.aviso === 'conteudoAMais' && !f.excluido).map((f) => f.target),
     },
@@ -1023,12 +1041,19 @@ async function compare(refDir, candDir) {
   // Quadro AUSENTE tambem invalida (revisao Claude 2026-10-01): ele sai do minimo e o
   // denominador encolhe — a mesma censura seletiva da deriva (a parada que trava e
   // justamente a que renderiza pior).
-  out.comparacaoCruzadaValida = excluidosPorDeriva * 2 < perFrame.length && moveisPerdidosSsim === 0 && missing === 0;
+  // cada PERNA (ida e volta) precisa de maioria propria em sincronia (Astra: a volta inteira podia ser
+  // descartada e a comparacao seguir valida pela maioria global)
+  const pernaValida = (fs) => !fs.length || fs.filter((f) => f.excluido).length * 2 < fs.length;
+  const voltaFs = perFrame.filter((f) => f.volta); const idaFs = perFrame.filter((f) => !f.volta);
+  if (out.ssim) out.ssim.pernas = { ida: { quadros: idaFs.length, excluidos: idaFs.filter((f) => f.excluido).length }, ...(voltaFs.length ? { volta: { quadros: voltaFs.length, excluidos: voltaFs.filter((f) => f.excluido).length } } : {}) };
+  out.comparacaoCruzadaValida = pernaValida(idaFs) && pernaValida(voltaFs) && moveisPerdidosSsim === 0 && missing === 0;
   if (!out.comparacaoCruzadaValida) {
     const motivo = missing > 0
       ? `INCONCLUSIVO — ${missing} quadro(s) ausente(s) (captura falhou); o SSIM minimo sobre os restantes seria seletivo`
       : moveisPerdidosSsim > 0
       ? `INCONCLUSIVO — ${moveisPerdidosSsim} ponto(s) MOVEL(is) da referencia fora de sincronia; o SSIM minimo sobre os restantes seria seletivo. Repetir sem outra carga na maquina`
+      : !pernaValida(voltaFs)
+      ? `INCONCLUSIVO — a VOLTA tem ${voltaFs.filter((f) => f.excluido).length} de ${voltaFs.length} quadros fora de sincronia; repetir sem outra carga na maquina`
       : `INCONCLUSIVO — ${excluidosPorDeriva} de ${perFrame.length} quadros fora de sincronia (> ${DERIVA_MAX_MS} ms); repetir sem outra carga na maquina`;
     out.ssim = { ...out.ssim, veredito: motivo };
     out.motion = { ...out.motion, veredito: motivo };

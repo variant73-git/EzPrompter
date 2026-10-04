@@ -232,3 +232,82 @@ describe('escolher por elemento (combinacao verificada)', () => {
     expect(r.programa.fichas.map((f) => f.id)).toEqual(['d']);
   });
 });
+
+describe('normalizar: imagem cuja largura anima', () => {
+  let browser;
+  afterAll(async () => { if (browser) await browser.close(); });
+  it('a altura da imagem NAO fica presa (acompanha a largura pela proporcao); altura imposta pelo site fica', async () => {
+    const { chromium } = await import('playwright-core');
+    browser = await chromium.launch(); const page = await browser.newPage();
+    const gif = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"></svg>');
+    await page.setContent(`<body><img id="livre" src="${gif}" style="width:100px"><img id="imposta" src="${gif}" style="width:100px;height:30px"></body>`);
+    await page.waitForTimeout(200);
+    const r = await page.evaluate(normalizar);
+    const regras = r.css.match(/#u-[\w-]*-img-[\w-]*\{[^}]*\}/g) || [];
+    expect(regras.length).toBe(2);
+    expect(regras[0]).toMatch(/width:100px/); expect(regras[0]).not.toMatch(/height:/);   // livre: altura pela proporcao
+    expect(regras[1]).toMatch(/width:100px/); expect(regras[1]).toMatch(/height:30px/);   // imposta pelo site: fica
+  });
+});
+
+describe('normalizar: cores que seguem a cor do texto', () => {
+  let browser;
+  afterAll(async () => { if (browser) await browser.close(); });
+  it('borda/preenchimento que so repetem `color` NAO sao gravados (seguem a animacao de cor); cor propria e gravada', async () => {
+    const { chromium } = await import('playwright-core');
+    browser = await chromium.launch(); const page = await browser.newPage();
+    await page.setContent('<body><p id="a" style="color:rgb(10, 20, 30);border:1px solid">segue</p><p id="b" style="color:rgb(10, 20, 30);border:1px solid rgb(200, 0, 0);-webkit-text-fill-color:rgb(0, 200, 0)">propria</p><p id="c" style="color:rgb(0, 128, 0);border:1px solid rgb(0, 128, 0)">igual mas propria</p><p id="d" style="color:rgb(1, 2, 3);border:1px solid rgb(1, 2, 3)">colide sentinela</p></body>');
+    const r = await page.evaluate(normalizar);
+    const regras = r.css.match(/#u-[\w-]*-p-[\w-]*\{[^}]*\}/g) || [];
+    expect(regras.length).toBe(4);
+    expect(regras[3]).toMatch(/border-top-color:rgb\(1, 2, 3\)/);   // Astra r2: cor igual a sentinela
+    // Astra: borda com a MESMA cor do texto, mas declarada — continua gravada (nao segue a animacao de cor)
+    expect(regras[2]).toMatch(/border-top-color:rgb\(0, 128, 0\)/);
+    expect(regras[0]).toMatch(/color:rgb\(10, 20, 30\)/); expect(regras[0]).not.toMatch(/border-top-color|text-fill-color/);
+    expect(regras[1]).toMatch(/border-top-color:rgb\(200, 0, 0\)/); expect(regras[1]).toMatch(/-webkit-text-fill-color:rgb\(0, 200, 0\)/);
+  });
+  it('Astra r3: com TRANSICAO de cor no elemento, a sondagem ainda reconhece quem segue `color` e nao deixa transicao correndo', async () => {
+    const { chromium } = await import('playwright-core');
+    const b = await chromium.launch(); const page = await b.newPage();
+    try {
+      await page.setContent('<body><p id="t" style="color:rgb(10, 20, 30);border:1px solid;transition:color 5s, border-color 5s, -webkit-text-fill-color 5s">segue com transicao</p></body>');
+      const r = await page.evaluate(normalizar);
+      const regra = (r.css.match(/#u-[\w-]*-p-[\w-]*\{[^}]*\}/g) || [])[0] || '';
+      expect(regra).toMatch(/color:rgb\(10, 20, 30\)/);
+      expect(regra).not.toMatch(/border-top-color|text-fill-color/);
+      const vivo = await page.evaluate(() => { const el = document.querySelector('p'); return { anim: el.getAnimations().length, cor: getComputedStyle(el).color, borda: getComputedStyle(el).borderTopColor, trans: el.style.transition }; });
+      expect(vivo).toEqual({ anim: 0, cor: 'rgb(10, 20, 30)', borda: 'rgb(10, 20, 30)', trans: 'color 5s, border-color 5s, -webkit-text-fill-color 5s' });
+    } finally { await b.close(); }
+  });
+  it('Astra r4: transicao de cor EM ANDAMENTO nao e cancelada pela sondagem (sem sondar, a cor fica gravada como esta)', async () => {
+    const { chromium } = await import('playwright-core');
+    const b = await chromium.launch(); const page = await b.newPage();
+    try {
+      await page.setContent('<body><p id="t" style="color:rgb(0, 0, 0);border:1px solid;transition:color 20s linear">em andamento</p></body>');
+      await page.evaluate(() => { const el = document.querySelector('p'); getComputedStyle(el).color; el.style.color = 'rgb(200, 200, 200)'; getComputedStyle(el).color; });
+      await page.waitForTimeout(300);
+      const r = await page.evaluate(normalizar);
+      const vivo = await page.evaluate(() => { const el = document.querySelector('p'); const a = el.getAnimations(); return { anim: a.length, estado: a[0] && a[0].playState, cor: getComputedStyle(el).color }; });
+      expect(vivo.anim).toBe(1); expect(vivo.estado).toBe('running');
+      expect(vivo.cor).not.toBe('rgb(200, 200, 200)'); expect(vivo.cor).not.toBe('rgb(0, 0, 0)');
+      const regra = (r.css.match(/#u-[\w-]*-p-[\w-]*\{[^}]*\}/g) || [])[0] || '';
+      expect(regra).not.toMatch(/color:rgb\(200, 200, 200\)/);   // nao le o ALVO da transicao cancelada
+    } finally { await b.close(); }
+  });
+});
+
+describe('normalizar: auto declarado', () => {
+  let browser;
+  afterAll(async () => { if (browser) await browser.close(); });
+  it('absoluto com top/left auto NAO ganha posicao em px; margem auto que centraliza continua auto; valor proprio fica', async () => {
+    const { chromium } = await import('playwright-core');
+    browser = await chromium.launch(); const page = await browser.newPage();
+    await page.setContent('<body><div style="position:relative;height:200px"><p style="position:absolute;width:300px;margin:0">bloco solto aqui</p><p style="position:absolute;top:7px;left:9px;width:300px;margin:0">bloco preso aqui</p></div><section style="width:300px;margin:0 auto;height:20px"></section></body>');
+    const r = await page.evaluate(normalizar);
+    const solto = (r.css.match(/#u-[\w-]*-p-bloco-solto[\w-]*\{[^}]*\}/) || [''])[0]; const preso = (r.css.match(/#u-[\w-]*-p-bloco-preso[\w-]*\{[^}]*\}/) || [''])[0];
+    const secao = (r.css.match(/#u-[\w-]*-section-[\w-]*\{[^}]*\}/) || [''])[0];
+    expect(solto).toMatch(/position:absolute/); expect(solto).not.toMatch(/(^|[;{])(top|left|right|bottom):/);
+    expect(preso).toMatch(/top:7px/); expect(preso).toMatch(/left:9px/);
+    expect(secao).toMatch(/margin-left:auto/); expect(secao).toMatch(/margin-right:auto/);
+  });
+});
