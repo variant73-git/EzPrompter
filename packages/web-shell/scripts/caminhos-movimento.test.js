@@ -429,3 +429,47 @@ describe('mapaDaCaptura + mapaDeRemotas: endereco remoto -> arquivo, pelo MAPA q
     expect(Object.keys(mapaDaCaptura('<html><body>sem remendo</body></html>'))).toEqual([]);
   });
 });
+
+// landonorris (2026-10-04): o FUNDO DA PAGINA (cor do <body>) muda com a rolagem — escuro -> bege. A
+// observacao so gravava cor quando o site a escrevia no style do elemento, e o <body> nem era acompanhado.
+describe('observacao: cor de fundo calculada e o <body> acompanhado', () => {
+  it('cor de fundo que muda com a rolagem vira ficha de rolagem com backgroundColor (e o <body> mira #u-pagina)', () => {
+    const am = [0, 1, 2, 3].map((i) => ({ y: i * 100, a: { pagina: st({ bg: i < 2 ? 'rgb(40, 44, 32)' : 'rgb(217, 217, 210)', cor: 'rgb(0, 0, 0)' }) }, b: { pagina: st({ bg: i < 2 ? 'rgb(40, 44, 32)' : 'rgb(217, 217, 210)', cor: 'rgb(0, 0, 0)' }) } }));
+    const { fichas } = fichasPorLeitura({ amostras: am, mapa: { pagina: 'u-pagina' } }, 100);
+    expect(fichas.length).toBe(1); expect(fichas[0].alvo).toBe('#u-pagina');
+    const ultimo = fichas[0].quadros ? fichas[0].quadros[fichas[0].quadros.length - 1] : fichas[0].para;
+    expect(ultimo.backgroundColor).toBe('rgb(217, 217, 210)'); expect(ultimo).not.toHaveProperty('color');
+  });
+  it('difere enxerga a cor de fundo; estado antigo sem o campo nao inventa mudanca', () => {
+    expect(difere(st({ bg: 'rgb(1, 1, 1)' }), st({ bg: 'rgb(2, 2, 2)' }))).toBe(true);
+    expect(difere(st(), st({ bg: 'rgb(2, 2, 2)' }))).toBe(false);
+  });
+  it('medirProprio le a cor de fundo de todos e a cor do texto SO do <body> (raiz da heranca)', async () => {
+    const { chromium } = await import('playwright-core'); const b = await chromium.launch(); const page = await b.newPage();
+    try {
+      await page.setContent('<body data-k="pg" style="background:rgb(40, 44, 32);color:rgb(9, 9, 9)"><p data-k="p" style="background:rgb(1, 2, 3)">x</p></body>');
+      const m = await page.evaluate(medirProprio, 'data-k');
+      expect(m.pg.bg).toBe('rgb(40, 44, 32)'); expect(m.pg.cor).toBe('rgb(9, 9, 9)');
+      expect(m.p.bg).toBe('rgb(1, 2, 3)'); expect(m.p.cor).toBeUndefined();
+    } finally { await b.close(); }
+  });
+});
+
+describe('regua: conferencia de gemeos dispensa SO definicao pura (sem area E sem <use> que a use) que sobra de UM lado', () => {
+  it('coletores marcam definicao pura; svg zerado mas USADO por <use> nao e definicao pura', async () => {
+    const { chromium } = await import('playwright-core'); const b = await chromium.launch(); const page = await b.newPage();
+    try {
+      await page.setContent('<body><div id="u-c"><svg id="u-def" style="width:0;height:0" viewBox="0 0 9 9"><path d="M0 0h9v9z"></path></svg><svg id="u-usada" style="width:0;height:0" viewBox="0 0 9 9"><path d="M0 0h9v9z"></path></svg><svg id="u-ico" width="10" height="10"><use href="#u-usada"></use></svg></div></body>');
+      expect(await page.evaluate(idsDoCorpo)).toEqual([['u-c', 'div', false], ['u-def', 'svg', true], ['u-usada', 'svg', false], ['u-ico', 'svg', false]]);
+      await page.evaluate(() => { for (const [i, e] of [...document.body.querySelectorAll('[id]')].entries()) { e.setAttribute('data-u-id', e.id); e.setAttribute('data-u-rec', String(i)); } });
+      expect((await mapasDaPagina(page)).ids).toEqual([['u-c', 'div', false], ['u-def', 'svg', true], ['u-usada', 'svg', false], ['u-ico', 'svg', false]]);
+    } finally { await b.close(); }
+  });
+  it('comuns casam independente de area; so a definicao PURA que sobra de um lado e dispensada', () => {
+    expect(conferirIds([['u-a', 'div', false], ['u-ico', 'svg', true]], [['u-a', 'div', false], ['u-ico', 'svg', false]]).ok).toBe(true);   // zerado so de um lado: casa
+    expect(conferirIds([['u-a', 'div', false]], [['u-a', 'div', false], ['u-def', 'svg', true]]).ok).toBe(true);    // definicao pura so no clone
+    expect(conferirIds([['u-a', 'div', false], ['u-def', 'svg', true]], [['u-a', 'div', false]]).ok).toBe(true);    // definicao pura so na referencia
+    expect(conferirIds([['u-a', 'div', false]], [['u-a', 'div', false], ['u-usada', 'svg', false]])).toMatchObject({ ok: false, sobram: ['u-usada'] });   // usada: conta
+    expect(conferirIds([['u-a', 'div'], ['u-x', 'svg']], [['u-a', 'div']])).toMatchObject({ ok: false, faltam: ['u-x'] });   // gravacao antiga (sem marca): conta
+  });
+});

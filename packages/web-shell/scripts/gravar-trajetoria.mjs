@@ -69,7 +69,9 @@ export function medirProprio(atributo) {
     // herdada fica com o pai, senao cada descendente ganhava ficha propria, revisao Claude #6);
     // `vef` e a efetiva (o que se ve), usada so para comparar
     const pai = el.parentElement; const pvis = pai ? getComputedStyle(pai).visibility : 'visible';
-    out[k] = { x: e, y: f, sx, sy: sx ? (a * d - b * c) / sx : 0, r: Math.atan2(b, a) * 180 / Math.PI, op: parseFloat(cs.opacity), vis: cs.visibility === 'hidden' && pvis !== 'hidden' ? 0 : 1, vef: cs.visibility === 'hidden' ? 0 : 1, clip: cs.clipPath, tres, ...(css ? { css } : {}) };
+    // cor de fundo CALCULADA de todos (landonorris: o fundo da pagina muda com a rolagem por classe, sem
+    // escrever no style); cor do texto so do <body> — e a raiz da heranca, a dos outros so muda por ele
+    out[k] = { x: e, y: f, sx, sy: sx ? (a * d - b * c) / sx : 0, r: Math.atan2(b, a) * 180 / Math.PI, op: parseFloat(cs.opacity), vis: cs.visibility === 'hidden' && pvis !== 'hidden' ? 0 : 1, vef: cs.visibility === 'hidden' ? 0 : 1, clip: cs.clipPath, tres, bg: cs.backgroundColor, ...(el === document.body ? { cor: cs.color } : {}), ...(css ? { css } : {}) };
   }
   return out;
 }
@@ -88,7 +90,8 @@ export function difere(p, q) {
   if (!p || !q) return Boolean(p) !== Boolean(q);
   if (p.vef === 0 && q.vef === 0) return false;   // dois estados invisiveis sao o mesmo para quem ve
   return cssDifere(p.css, q.css) || Math.abs(p.x - q.x) > LIM.px || Math.abs(p.y - q.y) > LIM.px || Math.abs(p.sx - q.sx) > LIM.esc || Math.abs(p.sy - q.sy) > LIM.esc
-    || Math.abs(p.r - q.r) > LIM.rot || Math.abs(p.op - q.op) > LIM.op || p.vis !== q.vis || p.clip !== q.clip;
+    || Math.abs(p.r - q.r) > LIM.rot || Math.abs(p.op - q.op) > LIM.op || p.vis !== q.vis || p.clip !== q.clip
+    || (p.bg !== undefined && q.bg !== undefined && p.bg !== q.bg) || (p.cor !== undefined && q.cor !== undefined && p.cor !== q.cor);
 }
 
 // quais canais variam entre estados; visibilidade que muda vira autoAlpha (opacidade + visibilidade)
@@ -102,8 +105,11 @@ function canais(estados) {
   if (v((s) => s.r, LIM.rot)) ch.push('rotation');
   if (vis) ch.push('autoAlpha'); else if (v((s) => s.op, LIM.op)) ch.push('opacity');
   if (estados.some((s) => s.clip !== estados[0].clip) && estados.every((s) => s.clip && s.clip !== 'none')) ch.push('clipPath');
+  if (estados.every((s) => s.bg !== undefined) && estados.some((s) => s.bg !== estados[0].bg)) ch.push('backgroundColor');
+  if (estados.every((s) => s.cor !== undefined) && estados.some((s) => s.cor !== estados[0].cor)) ch.push('color');
   const nomes = new Set(); estados.forEach((s) => s.css && Object.keys(s.css).forEach((nm) => nomes.add(nm)));
   for (const nm of nomes) {
+    if ((nm === 'background-color' && ch.includes('backgroundColor')) || (nm === 'color' && ch.includes('color'))) continue;   // ja no canal calculado
     const vals = estados.map((s) => s.css && s.css[nm]).filter((v) => v !== undefined);
     const muda = vals.some((v, i) => i && cssDifere({ [nm]: v }, { [nm]: vals[0] }));
     if (muda) ch.push('css:' + nm);
@@ -116,6 +122,7 @@ function valores(s, ch) {
   for (const c of ch) {
     if (c === 'x') o.x = r3(s.x); else if (c === 'y') o.y = r3(s.y); else if (c === 'scale') o.scale = r3(s.sx);
     else if (c === 'scaleX') o.scaleX = r3(s.sx); else if (c === 'scaleY') o.scaleY = r3(s.sy); else if (c === 'rotation') o.rotation = r3(s.r);
+    else if (c === 'backgroundColor') o.backgroundColor = s.bg; else if (c === 'color') o.color = s.cor;
     else if (c === 'autoAlpha') o.autoAlpha = s.vis ? r3(s.op) : 0; else if (c === 'opacity') o.opacity = r3(s.op); else if (c === 'clipPath') o.clipPath = s.clip;
     else if (c.startsWith('css:')) { const nm = c.slice(4); const g = PROPS_INLINE[nm]; if (g && s.css && s.css[nm] !== undefined) o[g] = s.css[nm]; }
   }

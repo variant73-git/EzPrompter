@@ -402,7 +402,7 @@ export function fichasDeSequencia({ amostras, sequencias, mapa, origem }) {
 async function gravarLeitura(page, passo, deslocamento = 0) {
   const t0 = Date.now();
   await page.evaluate((pi) => { window.__uPropsInline = pi; }, PROPS_INLINE);
-  await page.evaluate(() => { let n = 0; window.__urec = () => { for (const el of document.body.querySelectorAll('*:not([data-u-rec])')) { if (/^(SCRIPT|STYLE|LINK|NOSCRIPT|TEMPLATE|META)$/.test(el.tagName)) continue; el.setAttribute('data-u-rec', String(++n)); } }; window.__urec(); });
+  await page.evaluate(() => { let n = 0; window.__urec = () => { if (!document.body.hasAttribute('data-u-rec')) document.body.setAttribute('data-u-rec', 'pagina'); for (const el of document.body.querySelectorAll('*:not([data-u-rec])')) { if (/^(SCRIPT|STYLE|LINK|NOSCRIPT|TEMPLATE|META)$/.test(el.tagName)) continue; el.setAttribute('data-u-rec', String(++n)); } }; window.__urec(); });
   const amostras = [];
   // deslocamento: grade alternativa (y = d, d+passo, ...) para gravar uma REFERENCIA independente da
   // que gera o caminho 1 — a regua de trajetoria corrige nela (regua-trajetoria.mjs)
@@ -441,6 +441,8 @@ async function gravarLeitura(page, passo, deslocamento = 0) {
 export async function mapasDaPagina(page) {
   return page.evaluate(() => {
     const mapa = Object.fromEntries(Array.from(document.querySelectorAll('[data-u-rec][data-u-id]')).map((e) => [e.getAttribute('data-u-rec'), e.getAttribute('data-u-id')]));
+    // o <body> da canonica se chama `u-pagina` (o fundo da pagina pode mudar com a rolagem — landonorris)
+    if (document.body.hasAttribute('data-u-rec')) mapa[document.body.getAttribute('data-u-rec')] = 'u-pagina';
     const mapaPartes = {};
     // NIVEL de cada parte (r3 #3): linhas, palavras e letras do mesmo texto coexistem quando o site
     // divide em mais de um tipo; a chave leva o nivel (l/w/c) e a ordem DENTRO dele — o tocador
@@ -461,7 +463,11 @@ export async function mapasDaPagina(page) {
     }
     // so DESCENDENTES do corpo (r4): o <body> ganha id na normalizacao mas a canonica e escrita com um
     // <body> nu — com ele na lista a regua recusava toda comparacao
-    const ids = Array.from(document.body.querySelectorAll('[data-u-id]')).map((e) => [e.getAttribute('data-u-id'), e.tagName.toLowerCase()]);
+    // marca DEFINICAO PURA (svg sem area que nenhum <use> usa) — gemeo de idsDoCorpo na regua; a conferencia so a
+    // dispensa quando sobra de um lado (o <use> da pagina viva aponta o id ORIGINAL do svg)
+    const usados = new Set(Array.from(document.querySelectorAll('use')).map((u) => (u.getAttribute('href') || u.getAttribute('xlink:href') || '').replace(/^#/, '')));
+    const pura = (e) => e.tagName.toLowerCase() === 'svg' && !(e.id && usados.has(e.id)) && (() => { const r = e.getBoundingClientRect(); return r.width === 0 || r.height === 0; })();
+    const ids = Array.from(document.body.querySelectorAll('[data-u-id]')).map((e) => [e.getAttribute('data-u-id'), e.tagName.toLowerCase(), pura(e)]);
     return { mapa, mapaPartes, ids };
   });
 }
@@ -551,7 +557,7 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
     const html = `<!doctype html>\n<html lang="${r.lang || 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${r.titulo.replace(/</g, '&lt;')}</title>
 <style id="u-fontes">${r.fontes}</style>
 <style id="u-estilo">${r.css}</style>
-</head><body>${r.corpo}
+</head><body id="u-pagina">${r.corpo}
 <script src="vendor/gsap.min.js"></script><script src="vendor/ScrollTrigger.min.js"></script><script src="vendor/lenis.min.js"></script><script src="vendor/lottie.min.js"></script><script src="vendor/uncraft-motion.js"></script>
 </body></html>`;
     await mkdir(saida, { recursive: true });

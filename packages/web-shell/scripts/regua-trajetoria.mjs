@@ -136,11 +136,19 @@ export function instaveisDoSite(refA, refB, limiar = 0.9) {
 // a menos desloca os sufixos -2/-3 e a regua compararia elementos trocados
 // so o CORPO: o cabecalho da canonica tem <style id="u-fontes"> e <style id="u-estilo"> (r3 #1 — a
 // versao que lia o documento inteiro recusava TODA comparacao)
-export function idsDoCorpo() { return Array.from(document.body.querySelectorAll('[id]')).filter((e) => !/^(STYLE|SCRIPT)$/.test(e.tagName)).map((e) => [e.id, e.tagName.toLowerCase()]); }
+// Cada id leva a marca DEFINICAO PURA: svg sem area que nenhum <use> da pagina usa (a biblioteca de icones do
+// Framer muda de tamanho entre cargas — o uptechsoft era recusado por 6 desenhos que ninguem ve). A conferencia
+// casa os comuns independente da marca e so dispensa a definicao pura que sobra de UM lado (Astra: descartar por
+// area antes de casar recusava gemeo certo e escondia ausencia real). Gemeo de mapasDaPagina (normalizar-clone).
+export function idsDoCorpo() {
+  const usados = new Set(Array.from(document.querySelectorAll('use')).map((u) => (u.getAttribute('href') || u.getAttribute('xlink:href') || '').replace(/^#/, '')));
+  const pura = (e) => e.tagName.toLowerCase() === 'svg' && !usados.has(e.id) && (() => { const r = e.getBoundingClientRect(); return r.width === 0 || r.height === 0; })();
+  return Array.from(document.body.querySelectorAll('[id]')).filter((e) => !/^(STYLE|SCRIPT)$/.test(e.tagName)).map((e) => [e.id, e.tagName.toLowerCase(), pura(e)]);
+}
 export function conferirIds(idsRef, idsCanon) {
-  const c = new Map(idsCanon); const r = new Map(idsRef);
-  const faltam = idsRef.filter(([id]) => !c.has(id)).map(([id]) => id);
-  const sobram = idsCanon.filter(([id]) => /^u-/.test(id) && !r.has(id)).map(([id]) => id);
+  const c = new Map(idsCanon.map(([id, t]) => [id, t])); const r = new Map(idsRef.map(([id, t]) => [id, t]));
+  const faltam = idsRef.filter(([id, , pura]) => !c.has(id) && pura !== true).map(([id]) => id);
+  const sobram = idsCanon.filter(([id, , pura]) => /^u-/.test(id) && !r.has(id) && pura !== true).map(([id]) => id);
   const outraTag = idsRef.filter(([id, t]) => c.has(id) && c.get(id) !== t).map(([id]) => id);
   return { ok: !faltam.length && !sobram.length && !outraTag.length, faltam, sobram, outraTag };
 }

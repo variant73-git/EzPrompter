@@ -1147,7 +1147,7 @@ Imagens: `_verbatim/comparacao-caminhos-2026-10-02/framer-final-*.png` (site | a
 **Limites declarados:** imagem montada em tempo de execução com endereço absoluto do PRÓPRIO site não está no mapa do produtor (Astra r3) — pior caso: não localizada, nunca a errada. Específicos que não se perseguem: etiquetas empilhadas por física e logo do topo do nexusmag; cartões inclinados ao rolar no uptechsoft. Setas de `<select>` no nexusmag viram blocos pretos (não investigado).
 - ⚠️ Lição: **mudar o código no meio de uma rodada de medição invalida a rodada** — a estrutura e as gravações de referência saíram de versões diferentes e a régua recusou (corretamente) o uptechsoft. Rodada em andamento = código congelado.
 
-**Rodada final com o código fechado (uptechsoft refeito):** portão 0,911 / **0,909** (antes 0,909 / 0,899). Régua AINDA recusada — 6 ids a mais no clone, todos da **biblioteca de ícones** escondida do Framer (`<svg>` de definição que o `<use>` referencia), que cresce conforme os componentes renderizam; a contagem varia entre cargas. ⚠️ A explicação "mudei o código no meio da rodada" estava ERRADA (mesmo código em todas as etapas, ainda recusa); o provável gatilho é a rede da normalização servir agora os arquivos capturados (mais componentes carregam). Problema do INSTRUMENTO (a conferência de gêmeos conta definições invisíveis), não do clone — pendente.
+**Rodada final com o código fechado (uptechsoft refeito):** portão 0,911 / **0,909** (antes 0,909 / 0,899). Régua AINDA recusada — 6 ids a mais no clone, todos da **biblioteca de ícones** escondida do Framer (`<svg>` de definição, desenhados 0×0 — medido: NENHUM dos 6 é usado por um `<use>` na canônica), que cresce conforme os componentes renderizam; a contagem varia entre cargas. ⚠️ A explicação "mudei o código no meio da rodada" estava ERRADA (mesmo código em todas as etapas, ainda recusa); o provável gatilho é a rede da normalização servir agora os arquivos capturados (mais componentes carregam). Problema do INSTRUMENTO (a conferência de gêmeos conta definições invisíveis), não do clone — pendente.
 
 ## 175. landonorris.com (pedido do Adilson: "um site que muitos designers experimentarão") — 2026-10-04
 
@@ -1164,3 +1164,19 @@ O que falta (imagens `_verbatim/comparacao-caminhos-2026-10-02/lando-*.png`, sit
 3. **Títulos letra a letra e realces de texto** feitos por código próprio (não GSAP exposto): textos 0/5 na régua.
 4. Logo do canto ausente; linhas topográficas ausentes.
 O final da página (foto grande) sai igual.
+
+## 176. Cor de fundo da página na observação + régua que não recusa por definição invisível — 2026-10-04
+
+Pedido do Adilson: "ok, vamos nessa" (as duas recomendações da §175).
+
+**Diagnóstico antes do conserto:** no site vivo, o `<body>` vai de rgb(40, 44, 32) no topo a rgb(217, 217, 210) em 5400 px. Dos 1.735 elementos, SÓ o `<body>` muda de cor (nenhum texto) — medido no nativo servido como a normalização serve. Achado colateral: sem os arquivos de outros domínios o nativo do landonorris fica PRESO na tela de abertura (o "LOAD NORRIS"); com a rede da normalização servindo da captura (§174) ele funciona.
+
+**Observação (caminho 1):** passa a gravar a cor de fundo CALCULADA de todo elemento acompanhado (antes só a que o site escrevia no `style`) e a cor do texto do `<body>` (raiz da herança). O `<body>` passa a ser acompanhado (`data-u-rec="pagina"`) e a canônica o escreve como `<body id="u-pagina">` — o tocador só aceita alvo `#id`.
+
+**Régua — conferência de gêmeos:** cada id leva a marca DEFINIÇÃO PURA (svg sem área que nenhum `<use>` da página usa); os comuns casam independente da marca e só a definição pura que sobra de UM lado é dispensada (Astra r1: descartar por área antes de casar recusava gêmeo certo e escondia ausência real).
+
+**Medida (mesma gravação do site vivo):**
+- landonorris — portão sem movimento 0,496 · antes 0,542 · **agora 0,674**; o fundo fica bege como no site e o texto volta a ser legível (`lando-cor-006.png`: site | antes | agora). Régua 0,632 (igual: o fundo é 1 de 173 elementos com peso igual — o portão é quem mede a área pintada). Faltam: linhas topográficas, realce verde do texto, logo/menu, títulos letra a letra por código próprio, tela de abertura.
+- uptechsoft — régua volta a medir: sem movimento 0,479 · **nosso 0,931** (controle 1,0); portão 0,903.
+
+**Revisão:** Astra 2 rodadas — r1 1 achado (regra de área antes de casar), corrigido com teste vermelho primeiro; r2 limpa. 145/145.
