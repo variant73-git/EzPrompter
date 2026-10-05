@@ -1224,3 +1224,26 @@ Pedido do Adilson: "faça sua recomendação sobre tailwind e seguimos com (b)".
 3. **Desenho por software não serve para medir isto**: com SwiftShader a foto do landonorris levou 87 s (ou travou); com a placa real (Chromium novo sem janela + Metal) 0,1–0,3 s. Medir WebGL sempre com placa real.
 4. ⭐ **Defeito GERAL do PRODUTOR do nativo — redirecionamento**: o HTML pede `https://unpkg.com/@barba/core`, o unpkg redireciona para `@barba/core@2.10.3/dist/barba.umd.js`; a captura guarda o arquivo pelo endereço FINAL e o HTML continua pedindo o original, fora do mapa → `barba is not defined`, o código do site para e o carrossel nunca é desenhado. Atinge o nativo em qualquer uso (editor de animação incluso); script de CDN sem versão exata (unpkg/jsdelivr) é comum em Webflow.
 5. Sites só-WebGL com rolagem virtual (edolus: 6 dos 14 do Awwwards) NÃO entram no v0 (a roda move a cena com `scrollY` = 0; precisaria repassar a roda). v0 = "planos de rolagem de documento".
+
+## 179. Plano visual nativo CONSTRUÍDO e medido + redirecionamento no produtor — 2026-10-05
+
+Pedido do Adilson: decisão 1 (travar layout nas regiões acopladas ao WebGL). Plano de implementação: `docs/superpowers/plans/2026-10-05-plano-visual-nativo.md` (6 tarefas, executadas).
+
+**Produtor do nativo — redirecionamento (commit 4a5011eb):** referência que redireciona (`unpkg.com/@barba/core` → versão exata) passa a apontar para o arquivo guardado. Apelidos só em posição de MARCAÇÃO, nunca em script/JSON (lá a URL é identidade de chamada); só recurso estático; coletados antes do dedup. Astra 4 rodadas (4 achados com teste vermelho; r4 limpa). Prova: o nativo do bleibtgleich passa a desenhar o carrossel 3D sem internet.
+
+**Plano visual nativo (commits 4b0bb364, 31937056, c61604b2):** modo plano injetado na entrega (gateway `{ plano }`), hospedeiro (origem própria; back/front; pronto com limite; NOVO pronto a cada carregamento — navegação não escapa; aviso de desalinhamento após a página assentar, persistente, reavisa), análise com placa real (cobertura → colocação; caixas mais internas pintadas, inteiras na tela = regiões acopladas para travar; canvas da `sequencia` excluído por assinatura presa ao elemento no load), limpeza grava/apaga `plano.json`, portão `--plano`. Astra 3 rodadas: r1 5 achados (origem exata, posse de canvas, navegação, âncoras, desalinhamento), r2 1 (assinatura posicional), r3 o mesmo tema → PAREI pelo teto e registrei LIMITE: assinatura por posição não distingue histórias de criação após o load (canvas igual criado antes do alvo) — identificador estável vindo da captura fecharia.
+
+| site (gravação do site vivo de antes) | sem plano | com plano | plano.json |
+|---|---|---|---|
+| gilhuybrecht | 0,585 | **0,975** (mín. 0,963; site×site 0,992) | front, 84 regiões acopladas |
+| landonorris | 0,674 | **0,691** (paradas vivas 0→3) | back, viewport |
+| farmminerals | — | — | **nenhum** (os 2 canvas são da `sequencia`) ✓ |
+| bleibtgleich | — | INVÁLIDO | canônica com 17% da altura, não rola |
+
+**Achados no caminho:**
+1. ⭐ **Ciclo de import com `await` no topo TRAVA sem erro**: a normalização importava a análise sob demanda e a análise importava a normalização de volta — 34 min parado, sem CPU. Mapa da captura virou módulo próprio.
+2. ⭐ **Mudar código no meio de uma rodada — TERCEIRA vez**: o farmminerals foi normalizado com a versão por índice e analisado com a por assinatura (nada excluído); e um `plano.json` VELHO sobrevivia quando a análise nova dizia "sem plano".
+3. ⭐ **bleibtgleich: a transição de página (Barba) congelada** — com o redirecionamento corrigido o código do site volta a rodar, a normalização pega o meio da transição (invólucro com `overflow: clip`, `body` 100%) e a canônica não rola. É a TERCEIRA ocorrência da família "tela de abertura / transição presa" (landonorris, tengilemalamala, bleibtgleich) — próxima investigação.
+4. Testes de placa de vídeo saíram da suíte comum (`npm run test:gpu`); juntos derrubavam vizinhos por tempo.
+
+**Pendente (próximo):** a família da transição presa; a trava de layout DENTRO do editor (o v0 entrega `acopladas` + aviso de desalinhamento); sites só-WebGL com rolagem virtual (fora do v0).
