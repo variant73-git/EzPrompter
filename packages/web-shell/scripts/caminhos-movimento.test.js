@@ -1,9 +1,11 @@
 // Unidade das tres pecas sem navegador: o gravador do caminho 1 (fichasPorLeitura), o das
 // sequencias do caminho 3 (fichasDeSequencia) e a regua de trajetoria (comparar), com os
 // controles que a revisao pediu: programa vazio NAO pode ganhar nota nas revelacoes.
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+// testes de navegador real: sob a suite inteira o padrao de 5 s estoura por carga, nao por defeito
+vi.setConfig({ testTimeout: 60000, hookTimeout: 60000 });
 import { fichasPorLeitura, difere, medirProprio } from './gravar-trajetoria.mjs';
-import { fichasDeSequencia, etiquetasQueSeMexem, normalizar, mapasDaPagina, mapaDeRemotas, mapaDaCaptura, remotasNaPagina } from './normalizar-clone.mjs';
+import { fichasDeSequencia, etiquetasQueSeMexem, normalizar, mapasDaPagina, mapaDeRemotas, mapaDaCaptura, remotasNaPagina, assinaturasDeCanvasDaSequencia } from './normalizar-clone.mjs';
 import { runtimeFetchShim } from '../lib/native-clone/runtime-fetch-map.js';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -478,5 +480,13 @@ describe('regua: conferencia de gemeos dispensa SO definicao pura (sem area E se
     expect(conferirIds([['u-a', 'div', false], ['u-def', 'svg', true]], [['u-a', 'div', false]]).ok).toBe(true);    // definicao pura so na referencia
     expect(conferirIds([['u-a', 'div', false]], [['u-a', 'div', false], ['u-usada', 'svg', false]])).toMatchObject({ ok: false, sobram: ['u-usada'] });   // usada: conta
     expect(conferirIds([['u-a', 'div'], ['u-x', 'svg']], [['u-a', 'div']])).toMatchObject({ ok: false, faltam: ['u-x'] });   // gravacao antiga (sem marca): conta
+  });
+});
+
+describe('dono de canvas: o que a ficha sequencia toca nao vai para o plano', () => {
+  it('devolve a ASSINATURA dos canvas que as fichas sequencia tocam', () => {
+    const fichas = [{ tipo: 'sequencia', alvo: '#u-pg-canvas-canvas-2' }, { alvo: '#u-x', de: { opacity: 0 } }];
+    const canvas = [{ id: 'u-pg-canvas-canvas', assinatura: 'div.hero:1 > canvas:1' }, { id: 'u-pg-canvas-canvas-2', assinatura: 'section:2 > canvas:1' }, { id: null, assinatura: 'canvas#oculto' }];
+    expect(assinaturasDeCanvasDaSequencia(fichas, canvas)).toEqual(['section:2 > canvas:1']);
   });
 });

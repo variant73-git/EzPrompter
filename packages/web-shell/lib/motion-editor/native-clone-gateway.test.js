@@ -229,3 +229,16 @@ describe('o clone continua se mexendo enquanto se edita', () => {
     }
   });
 });
+
+describe('injectRuntimeBridge: modo plano (plano visual nativo, 2026-10-05)', () => {
+  it('com { plano } inclui o modo plano e nao inclui o editor completo', () => {
+    const out = injectRuntimeBridge('<!doctype html><html><head></head><body></body></html>', null, { plano: { excluirCanvas: [] }, fullEditor: true });
+    expect(out).toContain('data-u-plano');
+    expect(out).not.toContain('data-uncraft-full-editor');
+  });
+  it('re-injetar nao acumula o modo plano', () => {
+    const uma = injectRuntimeBridge('<!doctype html><html><head></head><body></body></html>', null, { plano: {} });
+    const duas = injectRuntimeBridge(uma, null, { plano: {} });
+    expect(duas.match(/<style data-u-plano>/g).length).toBe(1);
+  });
+});

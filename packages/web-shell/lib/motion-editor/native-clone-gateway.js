@@ -1,6 +1,7 @@
 import { getRuntimeBridgeSource } from './runtime-bridge-source.js';
 import { runtimeCspMeta } from './runtime-csp.js';
 import { leadingDoctypeEnd } from '../native-clone/doctype-anchor.js';
+import { bootstrapDoPlano } from '../native-plane/plane-mode.js';
 
 export { leadingDoctypeEnd };
 
@@ -37,7 +38,10 @@ function removePriorInjection(html) {
     // editor inteiro no documento (mesma classe do resíduo anotado em 2026-08-01).
     .replace(/<script\b[^>]*\bdata-uncraft-full-editor(?:-boot)?\b[^>]*>[\s\S]*?<\/script\s*>/gi, '')
     .replace(/<link\b[^>]*\bdata-uncraft-full-editor\b[^>]*>/gi, '')
-    .replace(/<meta\b[^>]*\bdata-uncraft-runtime-policy\b[^>]*>/gi, '');
+    .replace(/<meta\b[^>]*\bdata-uncraft-runtime-policy\b[^>]*>/gi, '')
+    // modo plano (plano visual nativo): reinjetar nao acumula
+    .replace(/<style\b[^>]*\bdata-u-plano\b[^>]*>[\s\S]*?<\/style\s*>/gi, '')
+    .replace(/<script\b[^>]*\bdata-u-plano\b[^>]*>[\s\S]*?<\/script\s*>/gi, '');
 }
 
 
@@ -134,7 +138,9 @@ function fullEditorTags() {
 
 export function injectRuntimeBridge(html, runtimeConfig = null, options = {}) {
   const source = getRuntimeBridgeSource().replace(/<\/script/gi, '<\\/script');
-  const fullEditor = options.fullEditor ?? fullEditorEnabled();
+  // modo plano: camada so de canvas — sem editor completo (ninguem edita a camada)
+  const plano = options.plano && typeof options.plano === 'object' ? options.plano : null;
+  const fullEditor = plano ? false : (options.fullEditor ?? fullEditorEnabled());
   const script = `<script data-uncraft-runtime-bridge>${source}</script>${fullEditor ? fullEditorTags() : ''}`;
   // A política vem da fonte ÚNICA (runtime-csp.js), a mesma que gera o header
   // — era aqui que a lista à mão tinha DIVERGIDO (faltava worker-src, spec §5).
@@ -144,7 +150,7 @@ export function injectRuntimeBridge(html, runtimeConfig = null, options = {}) {
     : '';
   const cleaned = removePriorInjection(String(html));
   const at = leadingDoctypeEnd(cleaned);
-  const secured = `${cleaned.slice(0, at)}${securityMeta}${config}${cleaned.slice(at)}`;
+  const secured = `${cleaned.slice(0, at)}${securityMeta}${config}${plano ? bootstrapDoPlano(plano) : ''}${cleaned.slice(at)}`;
   if (/<\/body>/i.test(secured)) return secured.replace(/<\/body>/i, `${script}</body>`);
   return `${secured}${script}`;
 }

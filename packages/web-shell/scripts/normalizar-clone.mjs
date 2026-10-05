@@ -24,6 +24,7 @@ import { servir } from './inventario-conteudo.mjs';
 import { medirProprio, difere, fichasPorLeitura, PROPS_INLINE, preencherCss } from './gravar-trajetoria.mjs';
 import { extrairRegistro, resolverNaPagina, fichasDoIx3 } from './ler-ix3.mjs';
 import { lerGsapNaPagina, fichasDoGsap, CONTROLE_GSAP } from './ler-gsap.mjs';
+import { mapaDaCaptura, arquivoCapturado, mapaDeRemotas } from './mapa-da-captura.mjs';
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > -1 ? process.argv[i + 1] : d; };
 
@@ -336,21 +337,9 @@ export function normalizar(opcoes = {}) {
 // largura/altura na query) fica REMOTA, embora a captura tenha guardado o arquivo — e offline quebra
 // (teste as cegas no Framer, 2026-10-04: 15 de 33 imagens no revena; no nexusmag o proprio Framer troca a
 // imagem que falhou por um aviso "Failed to load image").
-// A identidade vem do MAPA que o produtor gravou (caminho emitido -> URL original, ja com os desempates de
-// nome que ele faz quando dois enderecos colidem), embutido na pagina nativa. Nunca se recalcula o nome e se
-// toma "o arquivo existe" como prova (Astra r2: `a%20b.png` e `a_20b.png` dao o mesmo nome; o segundo fica
-// com sufixo, e o recalculo serviria os bytes do primeiro). Sem o mapa: nada e trocado.
-export function mapaDaCaptura(htmlNativo) {
-  const porUrl = Object.create(null);   // sem prototipo: uma URL nunca cai num setter herdado
-  const m = /var ALHEIOS = JSON\.parse\(("(?:[^"\\]|\\.)*")\)/.exec(htmlNativo || '');
-  if (!m) return porUrl;
-  try { for (const [c, u] of Object.entries(JSON.parse(JSON.parse(m[1])))) if (typeof u === 'string' && !(u in porUrl)) porUrl[u] = c; } catch { return Object.create(null); }
-  return porUrl;
-}
-export function arquivoCapturado(porUrl, url) { const u = String(url).split('#')[0]; return Object.prototype.hasOwnProperty.call(porUrl, u) ? porUrl[u] : null; }
-export function mapaDeRemotas(urls, porUrl) {
-  const m = {}; for (const u of new Set(urls)) { const l = arquivoCapturado(porUrl, u); if (l) m[u] = l; } return m;
-}
+// (mapaDaCaptura / arquivoCapturado / mapaDeRemotas vivem em mapa-da-captura.mjs — ver la por que)
+export { mapaDaCaptura, arquivoCapturado, mapaDeRemotas } from './mapa-da-captura.mjs';
+
 // enderecos remotos que o normalizar vai encontrar (atributos, imagem escolhida do srcset, fundo calculado)
 export function remotasNaPagina() {
   const out = new Set(); const add = (u) => { try { const x = new URL(u, location.href); if (/^https?:$/.test(x.protocol) && x.origin !== location.origin) out.add(x.href); } catch { /* nada */ } };
@@ -371,6 +360,15 @@ export function remotasNaPagina() {
 // `sequencia`. Quadros: tudo o que ele desenhou, na ordem do numero do arquivo quando todos tem
 // um (sequencias exportadas sao numeradas), senao na ordem em que apareceram. Rolagem -> quadro:
 // o que estava na tela em cada parada (os PONTOS medidos, nao uma reta suposta).
+// DONO DE CANVAS (plano visual nativo, 2026-10-05): o canvas que uma ficha `sequencia` toca nao pode ser
+// desenhado tambem pelo plano. A pagina nativa nao tem os nossos ids: vale a ASSINATURA do canvas (caminho ate
+// o body, `assinaturaDoCanvas` do modo plano) — o indice na ordem do documento mudava quando o site criava
+// outro canvas antes (Astra r1).
+export function assinaturasDeCanvasDaSequencia(fichas, canvas) {
+  const alvos = new Set(fichas.filter((f) => f.tipo === 'sequencia').map((f) => String(f.alvo).replace(/^#/, '')));
+  return canvas.filter((c) => c.id && alvos.has(c.id)).map((c) => c.assinatura);
+}
+
 export function fichasDeSequencia({ amostras, sequencias, mapa, origem }) {
   const fichas = []; const arquivos = new Set(); const relatorio = { telas: sequencias.length, sequencias: 0, quadros: 0, quadrosFaltando: 0, semId: 0, paradas: 0, outrosDesenhos: 0 };
   const caminho = (u) => { try { const x = new URL(u); return x.origin === origem ? decodeURI(x.pathname).replace(/^\//, '') : null; } catch { return null; } };
@@ -642,7 +640,19 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
       await writeFile(path.join(path.dirname(path.resolve(saida)), 'gravacao-nativa.json'), JSON.stringify({ passo, deslocamento, ids, amostras: gravacaoPorId(gravacao, { ...mapa, ...mapaPartes }) }));
       mov = { ...rm, amostras: gravacao.amostras.length, lacosMedidos: gravacao.lacos.size, lotties: lot.length, segundosGravando: gravacao.segundos };
     }
-    return { ...r.relatorio, movimento: mov, arquivosCopiados: copiados, arquivosFaltando: faltando.length, amostraFaltando: faltando.slice(0, 10), bytesHtml: html.length, bytesCss: r.css.length };
+    // PLANO VISUAL NATIVO (opcao b): cenas em canvas/WebGL viram uma camada do nativo ao lado da canonica
+    let relPlano = null;
+    if (!process.argv.includes('--sem-plano')) {
+      const { analisarPlano } = await import('./plano-nativo.mjs');
+      const { assinaturaDoCanvas } = await import('../lib/native-plane/plane-mode.js');
+      const canvasInfo = await page.evaluate((fonte) => { const assinar = new Function(`return (${fonte})`)(); return Array.from(document.querySelectorAll('canvas')).map((c) => ({ id: c.getAttribute('data-u-id'), assinatura: assinar(c) })); }, assinaturaDoCanvas.toString());
+      let fichasMotion = [];
+      try { fichasMotion = JSON.parse(await readFile(path.join(saida, 'motion.json'), 'utf8')).fichas || []; } catch { fichasMotion = []; }
+      const plano = await analisarPlano({ captura, canonica: saida, excluirCanvas: assinaturasDeCanvasDaSequencia(fichasMotion, canvasInfo) });
+      if (plano) await writeFile(path.join(saida, 'plano.json'), JSON.stringify({ ...plano, nativo: path.resolve(captura) }, null, 1));
+      relPlano = plano ? { colocacao: plano.colocacao, acopladas: plano.acopladas.length } : null;
+    }
+    return { ...r.relatorio, movimento: mov, plano: relPlano, arquivosCopiados: copiados, arquivosFaltando: faltando.length, amostraFaltando: faltando.slice(0, 10), bytesHtml: html.length, bytesCss: r.css.length };
   } finally { await browser.close(); srv.close(); }
 }
 

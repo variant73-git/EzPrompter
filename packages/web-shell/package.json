@@ -14,6 +14,7 @@
     "start": "next start --port 3030",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:gpu": "RUN_GPU_TESTS=1 vitest run scripts/plano-nativo.integration.test.js",
     "test:ui": "vitest --ui",
     "test:refs:promotion-artifacts": "RUN_REFERENCE_PROMOTION_ARTIFACT_TESTS=1 vitest run lib/reference-bank-promotion.artifacts.integration.test.js",
     "e2e:native-motion": "node e2e/native-motion-editing.spec.js",

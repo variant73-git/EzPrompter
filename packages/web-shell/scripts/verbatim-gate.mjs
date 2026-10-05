@@ -54,6 +54,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { computeSsimRgb } from '../lib/clone-similarity.js';
+import { injetarModoPlano } from '../lib/native-plane/plane-mode.js';
+import { fonteDoHost } from '../lib/native-plane/plane-host.js';
+import { mapaDaCaptura, arquivoCapturado } from './mapa-da-captura.mjs';
 
 const VIEWPORT = { width: 1440, height: 1200 };   // a receita: 1440x1200, DPR 1, zoom 100%
 const SETTLE_MS = 3500;      // deixa o preloader e a animação de entrada terminarem
@@ -639,7 +642,7 @@ async function runTrajectory(page, { targets, outDir, allowNetwork, probe, cdp, 
   };
 }
 
-async function measure({ label, outDir, url, serveRoot, trajectory }) {
+async function measure({ label, outDir, url, serveRoot, trajectory, plano = null }) {
   await mkdir(outDir, { recursive: true });
   let served = null;
   const ownOriginMisses = [];
@@ -647,7 +650,16 @@ async function measure({ label, outDir, url, serveRoot, trajectory }) {
   const target = serveRoot ? `${served.origin}/index.html` : url;
   const allowPrefix = serveRoot ? served.origin : null;
 
-  const browser = await chromium.launch({ headless: true, channel: 'chrome' });
+  // PLANO VISUAL NATIVO (--plano): o nativo em modo plano, de OUTRA origem (outro processo), ao lado da
+  // canonica; WebGL so com a placa de video real (SwiftShader travava). Pedido de fora do plano so e atendido
+  // a partir do MAPA da propria captura (fechamento offline); o resto e abortado e contado.
+  let planoCtx = null;
+  if (plano) {
+    const nativoSrv = await serveDirectory(plano.nativo, { onRequest: () => {} });
+    const htmlNativo = await readFile(path.join(plano.nativo, 'index.html'), 'utf8');
+    planoCtx = { srv: nativoSrv.server, origem: nativoSrv.origin.replace('127.0.0.1', 'localhost'), htmlNativo, porUrl: mapaDaCaptura(htmlNativo), servidosDaCaptura: 0, externosAbortados: 0 };
+  }
+  const browser = await chromium.launch(plano ? { headless: true, channel: 'chromium', args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] } : { headless: true, channel: 'chrome' });
   // Service workers bloqueados: a interceptação comum tem buraco para eles.
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1, serviceWorkers: 'block' });
 
@@ -660,9 +672,28 @@ async function measure({ label, outDir, url, serveRoot, trajectory }) {
   if (allowPrefix) {
     await context.route('**/*', async (route, request) => {
       const u = request.url();
-      if (u.startsWith(allowPrefix) || u.startsWith('data:') || u.startsWith('blob:') || u === 'about:blank') {
+      // ORIGEM EXATA (Astra r1: prefixo de texto deixava passar outra porta local); toda pagina HTML do nativo
+      // entra em modo plano, nao so a entrada (uma navegacao nao escapa para a pagina inteira)
+      let origemDoPedido = null; try { origemDoPedido = new URL(u).origin; } catch { origemDoPedido = null; }
+      if (planoCtx && origemDoPedido === planoCtx.origem && request.resourceType() === 'document') {
+        const rel = decodeURIComponent(new URL(u).pathname).replace(/^\/+/, '') || 'index.html'; const arq = path.resolve(plano.nativo, rel);
+        if (arq.startsWith(path.resolve(plano.nativo)) && existsSync(arq)) { await route.fulfill({ contentType: 'text/html', body: injetarModoPlano(await readFile(arq, 'utf8'), { excluirCanvas: plano.excluirCanvas || [] }) }); return; }
+      }
+      if (planoCtx && u === target) {
+        const cfg = { src: `${planoCtx.origem}/index.html`, origemPlano: planoCtx.origem, colocacao: plano.colocacao, acopladas: plano.acopladas || [] };
+        const canon = await readFile(path.join(serveRoot, 'index.html'), 'utf8');
+        const tags = `<script type="application/json" data-u-plano-config>${JSON.stringify(cfg).replace(/</g, '\\u003c')}</script><script>${fonteDoHost().replace(/<\/script/gi, '<\\/script')}</script>`;
+        await route.fulfill({ contentType: 'text/html', body: /<\/body>/i.test(canon) ? canon.replace(/<\/body>/i, `${tags}</body>`) : `${canon}${tags}` });
+        return;
+      }
+      if (origemDoPedido === allowPrefix || (planoCtx && origemDoPedido === planoCtx.origem) || u.startsWith('data:') || u.startsWith('blob:') || u === 'about:blank') {
         await route.continue();
         return;
+      }
+      if (planoCtx) {
+        const l = arquivoCapturado(planoCtx.porUrl, u);
+        if (l && existsSync(path.join(plano.nativo, l))) { planoCtx.servidosDaCaptura += 1; await route.fulfill({ path: path.join(plano.nativo, l) }); return; }
+        planoCtx.externosAbortados += 1;
       }
       externalAttempts.push(u);
       await route.abort();
@@ -681,6 +712,10 @@ async function measure({ label, outDir, url, serveRoot, trajectory }) {
     pageErrors.push(`navigation: ${String(e?.message || e).slice(0, 160)}`);
   });
 
+  let planoEstado = null;
+  if (planoCtx) {
+    planoEstado = await page.waitForFunction(() => window.__uPlano && window.__uPlano.estado !== 'montando' ? window.__uPlano : null, null, { timeout: 25000 }).then((h) => h.jsonValue()).catch(() => ({ estado: 'sem-resposta' }));
+  }
   let targets = trajectory?.targets;
   let trajetoriaInfo = trajectory ? { herdadaDe: 'trajectory.json' } : null;
   if (!targets) {
@@ -720,6 +755,7 @@ async function measure({ label, outDir, url, serveRoot, trajectory }) {
   const report = {
     label,
     target,
+    ...(planoCtx ? { plano: { colocacao: plano.colocacao, estado: planoEstado && planoEstado.estado, motivo: planoEstado && planoEstado.motivo, servidosDaCaptura: planoCtx.servidosDaCaptura, externosAbortados: planoCtx.externosAbortados } } : {}),
     viewport: VIEWPORT,
     trajectoryTargets: targets,
     trajetoria: trajetoriaInfo,
@@ -742,6 +778,7 @@ async function measure({ label, outDir, url, serveRoot, trajectory }) {
 
   await context.close(); await browser.close();
   if (served) await new Promise((d) => served.server.close(d));
+  if (planoCtx) await new Promise((d) => planoCtx.srv.close(d));
   return report;
 }
 
@@ -1094,7 +1131,10 @@ async function main() {
       const root = path.resolve(value);
       const assets = existsSync(path.join(root, 'assets')) ? path.join(root, 'assets') : root;
       if (!(await stat(assets).catch(() => null))) throw new Error(`bundle não encontrado: ${assets}`);
-      const r = await measure({ label: `candidate bundle ${path.basename(root)}`, outDir: out, serveRoot: assets, trajectory });
+      const planoFile = path.join(assets, 'plano.json');
+      const plano = process.argv.includes('--plano') && existsSync(planoFile) ? JSON.parse(await readFile(planoFile, 'utf8')) : null;
+      const r = await measure({ label: `candidate bundle ${path.basename(root)}`, outDir: out, serveRoot: assets, trajectory, plano });
+      if (plano) console.log(JSON.stringify({ plano: r.plano }));
       console.log(JSON.stringify({ label: r.label, geometry: r.geometry, independence: r.independence, errors: r.errors }, null, 2));
       return;
     }
