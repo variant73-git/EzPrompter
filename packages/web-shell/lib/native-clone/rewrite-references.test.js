@@ -216,3 +216,15 @@ describe('corpo JSON (dado consumido em runtime)', () => {
     expect(o.b).toBe('__UNCRAFT_ORIGIN__/_ext/cdn.outro.com/x.js');
   });
 });
+
+describe('<style> e <script> (apelidos de redirect, Astra 2026-10-05)', () => {
+  const base = { kind: 'html', resourceUrl: 'https://s.test/index.html', assetPath: 'index.html', map: new Map(), apelidos: new Map([['https://s.test/lib/core', 'lib/core.js']]) };
+  it('um "<style>" SEM fechamento dentro de script nao engole a folha VERDADEIRA que vem depois', () => {
+    const text = '<script>const x="<style>";</script><style>body{background:url(https://s.test/lib/core)}</style>';
+    expect(rewriteDocumentReferences({ ...base, text })).toContain('url(./lib/core.js)');
+  });
+  it('um <style> completo que so existe como texto dentro de script continua intocado', () => {
+    const text = '<script>const x="<style>a{background:url(https://s.test/lib/core)}</style>";</script>';
+    expect(rewriteDocumentReferences({ ...base, text })).toBe(text);
+  });
+});

@@ -605,6 +605,9 @@ export async function captureNativeBundle(url, opts = {}) {
   const browser = emprestada ? session.browser : await abrirNavegador(chromium);
   const fecharSePropria = async () => { if (!emprestada) await browser.close().catch(() => {}); };
   const recursos = new Map();   // url absoluta -> { bytes, contentType }
+  // url FINAL guardada -> urls dos SALTOS de redirect que levaram a ela (so para reescrever MARCACAO)
+  const apelidosDeRedirect = new Map();
+  const TIPOS_DE_APELIDO = new Set(['document', 'stylesheet', 'script', 'image', 'font', 'media', 'manifest', 'texttrack']);
   // UMA porta para os bytes: interceptação e repescagem reservam pela mesma
   // contabilidade, então o teto global não pode ser furado por corrida entre
   // as duas (achado do Sol).
@@ -1284,6 +1287,15 @@ export async function captureNativeBundle(url, opts = {}) {
           // asset (midia, tamanho declarado) saiam antes de `marcarHop` e a cadeia ficava
           // incompleta — o terminal sozinho passava na validacao CORS.
           if (ehHop(res) && ehChamadaDeFetch(req)) marcarHop(req, res);
+          // ⭐ SALTOS que levaram a esta resposta (2026-10-05): o HTML referencia a URL PEDIDA
+          // (`unpkg.com/@barba/core`), o arquivo e guardado pela FINAL (`@barba/core@2.10.3/...`); sem o
+          // apelido a referencia ficava fora do pacote, o script nao carregava e o codigo do site parava.
+          // Registrado AQUI, antes do dedup (Astra r1 #2: destino ja guardado ou dois apelidos convergentes
+          // se perdiam), e so para recurso ESTATICO (chamada fetch/XHR tem identidade propria no replay).
+          if (!ehHop(res) && TIPOS_DE_APELIDO.has(req.resourceType())) {
+            const saltos = []; for (let r = req.redirectedFrom(); r; r = r.redirectedFrom()) saltos.push(r.url());
+            if (saltos.length) { const conj = apelidosDeRedirect.get(u) || new Set(); for (const x of saltos) conj.add(x); apelidosDeRedirect.set(u, conj); }
+          }
           const documentoPrincipal = req.resourceType() === 'document' && req.isNavigationRequest() && req.frame() === page.mainFrame();
           if (documentoPrincipal && !ehHop(res)) navegacaoPendente = respostaQueViraDocumento(res);   // o commit e o `framenavigated` que segue (sincrono, antes de qualquer await)
           // So um substituto que PODE COMMITAR substitui o documento capturado (Astra B70):
@@ -1991,6 +2003,15 @@ export async function captureNativeBundle(url, opts = {}) {
       mapa.set(entradaOriginal, `${dir}index.html`);
     }
     const entryPath = mapa.get(entradaOriginal);
+    // APELIDOS (salto -> caminho do destino), a parte do mapa de identidade: proveniencias, remendo de fetch
+    // e replay usam a identidade EXATA; o apelido so entra na reescrita de MARCACAO. URL que ja e um recurso
+    // proprio nunca vira apelido. Destino fora do pacote final = sem apelido.
+    const apelidos = new Map();
+    for (const [u, saltos] of apelidosDeRedirect) {
+      const caminho = mapa.get(u); if (!caminho) continue;
+      for (const salto of saltos) if (!mapa.has(salto) && !apelidos.has(salto)) apelidos.set(salto, caminho);
+    }
+    const apelidosAplicados = apelidos.size;
 
     // Mapa das respostas que só existem em tempo de execução (fetch/XHR) e o script
     // que as redireciona para o pacote. Vazio => nada é injetado.
@@ -2054,6 +2075,7 @@ export async function captureNativeBundle(url, opts = {}) {
           resourceUrl: u,
           assetPath: caminho,
           map: mapa,
+          apelidos,
         });
         // ⚠️ Reescrever o conteúdo invalida o hash de `integrity=`, e o browser
         // passa a BLOQUEAR o próprio arquivo que acabamos de preservar — a
@@ -2161,6 +2183,7 @@ export async function captureNativeBundle(url, opts = {}) {
         // Quantas IDENTIDADES de chamada de runtime o clone consegue responder do
         // pacote, e quantos envelopes ao todo (a mesma chamada pode ter várias).
         chamadasDeRuntimeMapeadas: Object.keys(manifestoDeReplay).length,
+        apelidosDeRedirect: apelidosAplicados,
         envelopesDeReplay: arquivosDeReplay.length,
         // Ocorrências repetidas de fetch/XHR cujo corpo não chegou no teto: NOMEADAS.
         envelopesPerdidos: perdasDaEntrada.slice(0, 20),

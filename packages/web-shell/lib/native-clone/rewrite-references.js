@@ -227,6 +227,11 @@ function htmlTokens(html) {
   }
   const styleTagRe = /<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi;
   while ((m = styleTagRe.exec(html))) {
+    // um "<style>" dentro de script/comentario e TEXTO (ex.: corpo de um POST), nao folha (Astra, 2026-10-05).
+    // Retoma do FIM daquele trecho: o casamento ja consumiu ate o primeiro </style>, que pode ser o de uma
+    // folha VERDADEIRA depois do script — pular o casamento inteiro a perderia (Astra r3).
+    const dentro = skip.find(([a, b]) => m.index >= a && m.index < b);
+    if (dentro) { styleTagRe.lastIndex = dentro[1]; continue; }
     tokens.push(...cssTokens(m[1], m.index + m[0].indexOf(m[1])));
   }
   return tokens;
@@ -293,7 +298,7 @@ function tokensFor(text, kind) {
  * @param {Map<string,string>} input.map captured absolute URL → bundle path
  * @returns {string}
  */
-export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, map, marcadorDeOrigem = '__UNCRAFT_ORIGIN__' }) {
+export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, map, apelidos = null, marcadorDeOrigem = '__UNCRAFT_ORIGIN__' }) {
   // A document's references resolve against its <base href>, not against the
   // file's own URL — resolving with the wrong base means the lookup misses and
   // the reference is left pointing at the live site. The tag itself is dropped
@@ -339,7 +344,10 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
     if (!withoutHash || withoutHash.startsWith('data:') || withoutHash.startsWith('#')) continue;
     let absolute;
     try { absolute = new URL(withoutHash, resolveBase).href; } catch { continue; }
-    const target = map.get(absolute);
+    // APELIDO de redirect (2026-10-05): so em posicao de MARCACAO (atributo, url() de CSS/SVG) — nunca dentro
+    // de script nem de JSON, onde a URL e identidade de uma chamada (Astra: `fetch('/api')` que redireciona
+    // virava `fetch('./result')` e o replay deixava de casar).
+    const target = map.get(absolute) || (apelidos && !token.inScript && kind !== 'json' ? apelidos.get(absolute) : undefined);
     // data-* só aponta para asset estático reconhecido; alvo documento ou
     // sem extensão pode ser identidade para o script do site — fica absoluto.
     if (target && token.apenasAsset && !DATA_ATTR_ASSET_EXT.test(target)) continue;
