@@ -1180,3 +1180,22 @@ Pedido do Adilson: "ok, vamos nessa" (as duas recomendações da §175).
 - uptechsoft — régua volta a medir: sem movimento 0,479 · **nosso 0,931** (controle 1,0); portão 0,903.
 
 **Revisão:** Astra 2 rodadas — r1 1 achado (regra de área antes de casar), corrigido com teste vermelho primeiro; r2 limpa. 145/145.
+
+## 177. Teste às cegas em sites premiados (Awwwards "Site of the Day") — os padrões que se repetem — 2026-10-04
+
+Pedido do Adilson: "ok, faça" (repetir em 2-3 sites do estilo do landonorris). Código da §176, nada alterado.
+
+**Sondagem de 14 sites do dia (Awwwards):** **8 não rolam a página** (altura do documento = altura da tela). Em 6 deles a página é um **canvas WebGL de tela cheia** — a roda do mouse muda a tela com `scrollY` parado em 0; 1 rola o conteúdo por código (sem canvas); 1 não reage à roda. Nada disso tem estrutura de página para normalizar.
+
+**Três que rolam, testados inteiros:**
+
+| site | motor | portão: site×site / sem mov. / nosso | régua nosso | o que falta |
+|---|---|---|---|---|
+| bleibtgleich.dev | Webflow + GSAP + Lenis | 0,992 / 0,944 / **0,948** | 0,982 (11 elem.) | carrossel 3D em WebGL; título "Work 24-26" que se abre |
+| tengilemalamala.com | Next.js + Lenis | 0,946 / 0,436 / **0,436** | — (nada mediu) | **camada de transição de página** (verde, fixa, z 100000) nunca sai no clone e cobre tudo |
+| gilhuybrecht.com | Tailwind + Lenis | 0,992 / 0,399 / **0,399** | 1,0 (9 elem.) | **contorno em todo elemento** + miniaturas desenhadas em WebGL (0 `<img>`) |
+
+**Padrões que se repetem (o que a rodada queria saber):**
+1. **WebGL** domina o segmento premiado: 6 dos 14 são cena WebGL inteira; e mesmo nos que rolam há WebGL (carrossel do bleibtgleich, miniaturas do gilhuybrecht, provavelmente as linhas do landonorris). A estrutura não reproduz canvas 3D — o caminho natural é o clone nativo (oráculo/fallback da decisão de movimento). **Decisão de produto pendente.**
+2. **Tela de abertura / transição que nunca sai no clone** — landonorris e tengilemalamala. No tengilemalamala não há erro nenhum na reprodução; abrir em `/` em vez de `/index.html` NÃO resolve (hipótese do roteador refutada). Causa não achada.
+3. ⭐ **Tailwind: borda sólida de espessura zero** — 487 de 492 regras do gilhuybrecht gravam `border-style: solid` SEM a espessura: a espessura calculada (0) é igual ao padrão da tag (que é 0 só PORQUE o padrão não tem borda), é pulada, e na canônica a borda sólida volta com a espessura padrão (3 px). Todo site Tailwind (o reset `*{border:0 solid}`) sai com contorno em tudo. Geral e barato.
