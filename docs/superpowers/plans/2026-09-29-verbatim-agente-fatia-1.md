@@ -1199,3 +1199,28 @@ Pedido do Adilson: "ok, faça" (repetir em 2-3 sites do estilo do landonorris). 
 1. **WebGL** domina o segmento premiado: 6 dos 14 são cena WebGL inteira; e mesmo nos que rolam há WebGL (carrossel do bleibtgleich, miniaturas do gilhuybrecht, provavelmente as linhas do landonorris). A estrutura não reproduz canvas 3D — o caminho natural é o clone nativo (oráculo/fallback da decisão de movimento). **Decisão de produto pendente.**
 2. **Tela de abertura / transição que nunca sai no clone** — landonorris e tengilemalamala. No tengilemalamala não há erro nenhum na reprodução; abrir em `/` em vez de `/index.html` NÃO resolve (hipótese do roteador refutada). Causa não achada.
 3. ⭐ **Tailwind: borda sólida de espessura zero** — 487 de 492 regras do gilhuybrecht gravam `border-style: solid` SEM a espessura: a espessura calculada (0) é igual ao padrão da tag (que é 0 só PORQUE o padrão não tem borda), é pulada, e na canônica a borda sólida volta com a espessura padrão (3 px). Todo site Tailwind (o reset `*{border:0 solid}`) sai com contorno em tudo. Geral e barato.
+
+## 178. Opção (b) — PLANO VISUAL NATIVO: experimento decisivo (Tailwind corrigido antes) — 2026-10-05
+
+Pedido do Adilson: "faça sua recomendação sobre tailwind e seguimos com (b)".
+
+**Tailwind (commit b8f20cb3):** espessura de borda/contorno gravada sempre que o estilo não é none/hidden (elemento e pseudo). No gilhuybrecht os contornos somem. Astra: nada.
+
+**Advise do Codex antes de construir (resumo do que foi adotado):** uma iframe só, mas como PLANO configurável (`back|front`, nunca `behind` fixo; sem `z-index:-1`); o plano é montado pelo quadro do editor como camada IRMÃ, não dentro da canônica (a canônica em repouso no canvas roda sem `allow-scripts`); o "esconder tudo menos canvas" é um modo DERIVADO na entrega (gateway), sem alterar o pacote; handshake de pronto; um dono por canvas (plano × `sequencia`); não relaxar CSP; o risco maior é de PRODUTO — cena acoplada ao layout não acompanha edição. Experimento decisivo proposto: gilhuybrecht + espaço de 160 px.
+
+**Experimento** (`_plano/harness.mjs`: quadro com o nativo em modo plano — só canvas, fundo transparente, servido de OUTRA origem — e a canônica; rolagem da canônica empurrada ao plano por mensagem; placa de vídeo real):
+
+| site | colocação | semelhança: só estrutura → estrutura + plano | leitura |
+|---|---|---|---|
+| gilhuybrecht (y 0/900/1800) | front | 0,73/0,54/0,50 → **0,96/0,98/0,97** | miniaturas WebGL no lugar certo (site×site 0,992) |
+| gilhuybrecht | back | → 0,35 | blocos pretos da canônica cobrem a cena — colocação é POR SITE |
+| gilhuybrecht + espaço 160 px | front | → 0,95/0,97/0,96 | ⭐ legendas descem 160 px, miniaturas FICAM — cena presa ao layout ESCONDIDO do nativo; o SSIM quase não vê |
+| landonorris (y 0/5400) | back | 0,37/0,83 → 0,70/0,81 | linhas topográficas + menu (Rive) aparecem, conteúdo por cima |
+| bleibtgleich (y 0/2700) | front | 0,87/0,95 → 0,91/0,95 | herói ajuda; carrossel NÃO aparece (abaixo) |
+
+**Achados:**
+1. ⭐ **Edição desalinha cena acoplada ao layout** (previsto pelo Codex, provado): o WebGL do gilhuybrecht posiciona as miniaturas pelo DOM escondido do nativo. Editar o layout na canônica (inserir/remover/redimensionar) não move a cena. **Decisão de produto:** como tratar regiões presas a WebGL (travar a edição de layout nelas? invalidar o plano após edição? só aceitar cenas de fundo/viewport?).
+2. **Plano tem que vir de OUTRA origem** (outro processo): na mesma origem o nativo pesado travou a canônica. O produto já serve o nativo numa origem por sessão (lease B).
+3. **Desenho por software não serve para medir isto**: com SwiftShader a foto do landonorris levou 87 s (ou travou); com a placa real (Chromium novo sem janela + Metal) 0,1–0,3 s. Medir WebGL sempre com placa real.
+4. ⭐ **Defeito GERAL do PRODUTOR do nativo — redirecionamento**: o HTML pede `https://unpkg.com/@barba/core`, o unpkg redireciona para `@barba/core@2.10.3/dist/barba.umd.js`; a captura guarda o arquivo pelo endereço FINAL e o HTML continua pedindo o original, fora do mapa → `barba is not defined`, o código do site para e o carrossel nunca é desenhado. Atinge o nativo em qualquer uso (editor de animação incluso); script de CDN sem versão exata (unpkg/jsdelivr) é comum em Webflow.
+5. Sites só-WebGL com rolagem virtual (edolus: 6 dos 14 do Awwwards) NÃO entram no v0 (a roda move a cena com `scrollY` = 0; precisaria repassar a roda). v0 = "planos de rolagem de documento".
