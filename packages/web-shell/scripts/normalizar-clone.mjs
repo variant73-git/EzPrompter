@@ -16,7 +16,7 @@
 //     conteúdo levam `data-u-conteudo` (a mesma chave do inventário).
 // v0: layout reproduzido na largura de 1440 px; tablet/celular são etapa seguinte.
 // Uso: node scripts/normalizar-clone.mjs --captura <assets-nativa> --saida <pasta-assets-canonica>
-import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
@@ -649,7 +649,10 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
       let fichasMotion = [];
       try { fichasMotion = JSON.parse(await readFile(path.join(saida, 'motion.json'), 'utf8')).fichas || []; } catch { fichasMotion = []; }
       const plano = await analisarPlano({ captura, canonica: saida, excluirCanvas: assinaturasDeCanvasDaSequencia(fichasMotion, canvasInfo) });
+      // sem plano: um plano.json de rodada ANTERIOR na mesma pasta nao pode sobreviver (o farmminerals mostrava a
+      // camada velha depois que a exclusao certa passou a dizer 'sem plano')
       if (plano) await writeFile(path.join(saida, 'plano.json'), JSON.stringify({ ...plano, nativo: path.resolve(captura) }, null, 1));
+      else await rm(path.join(saida, 'plano.json'), { force: true });
       relPlano = plano ? { colocacao: plano.colocacao, acopladas: plano.acopladas.length } : null;
     }
     return { ...r.relatorio, movimento: mov, plano: relPlano, arquivosCopiados: copiados, arquivosFaltando: faltando.length, amostraFaltando: faltando.slice(0, 10), bytesHtml: html.length, bytesCss: r.css.length };
