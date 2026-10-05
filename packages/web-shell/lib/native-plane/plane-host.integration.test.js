@@ -55,8 +55,9 @@ describe('montarPlano', () => {
     await p.close();
   });
   it('a camada que NAVEGA depois do pronto tem que anunciar de novo — sem anuncio, sai', async () => {
-    const p = await abrir(`http://localhost:${porta}/navega`, { origemPlano: `http://localhost:${porta}`, colocacao: 'front', tempoLimiteMs: 1000 });
-    await p.waitForFunction(() => window.__uPlano && window.__uPlano.estado === 'pronto', null, { timeout: 10000 });
+    // limite de 6 s: sob a suite inteira o PRIMEIRO pronto pode passar de 1 s; a navegacao vem 1,2 s depois do load
+    const p = await abrir(`http://localhost:${porta}/navega`, { origemPlano: `http://localhost:${porta}`, colocacao: 'front', tempoLimiteMs: 6000 });
+    await p.waitForFunction(() => window.__uPlano && window.__uPlano.estado === 'pronto', null, { timeout: 30000 });
     await p.waitForFunction(() => window.__uPlano.estado === 'sem-plano', null, { timeout: 30000 });
     expect(await p.evaluate(() => [window.__uPlano.motivo, document.querySelectorAll('iframe[data-u-plano]').length])).toEqual(['navegou', 0]);
     await p.close();
