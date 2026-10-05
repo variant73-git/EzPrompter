@@ -66,6 +66,11 @@ export function normalizar(opcoes = {}) {
     try { return vals.every((x) => { pai.style.setProperty(p, x, 'important'); return getComputedStyle(el).getPropertyValue(p) === getComputedStyle(pai).getPropertyValue(p); }); }
     finally { restaurar(pai, p, prev, prio); getComputedStyle(el).getPropertyValue(p); [pai, el].forEach((e, i) => restaurar(e, 'transition', tr[i][0], tr[i][1])); }
   };
+  // espessura de borda/contorno: o padrao da tag e 0 SO porque o padrao nao tem borda (estilo none); com estilo
+  // solid a espessura padrao e `medium` (3 px). Tailwind declara `*{border:0 solid}`: o 0 era pulado por igual ao
+  // padrao e a canonica desenhava 3 px em tudo (gilhuybrecht, 2026-10-04). Com estilo visivel, grava sempre.
+  const LARGURA_DO_ESTILO = { 'border-top-width': 'border-top-style', 'border-right-width': 'border-right-style', 'border-bottom-width': 'border-bottom-style', 'border-left-width': 'border-left-style', 'outline-width': 'outline-style' };
+  const larguraComEstilo = (c, p) => LARGURA_DO_ESTILO[p] && !/^(none|hidden)$/.test(c.getPropertyValue(LARGURA_DO_ESTILO[p]));
   const AUTO_POSSIVEL = new Set(['top', 'right', 'bottom', 'left', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left']);
   const SEGUEM_COR = new Set(['-webkit-text-fill-color', '-webkit-text-stroke-color', 'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color', 'outline-color', 'text-decoration-color', 'text-emphasis-color', 'caret-color', 'column-rule-color']);
   const HERDAVEIS = new Set(['color', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align', 'text-transform', 'white-space', 'word-break', 'list-style-type', 'cursor', 'visibility', 'text-indent', 'word-spacing', 'fill', 'stroke', 'stroke-width']);
@@ -199,6 +204,7 @@ export function normalizar(opcoes = {}) {
       // uma animacao de cor do pai; um valor fixo o congelaria)
       // (Astra r1: igual nao prova dependencia — so `inherit` se o filho ACOMPANHA uma troca no pai)
       if (HERDAVEIS.has(p)) { if (pad.__herda[p]) { if (pcs && pcs.getPropertyValue(p) === v) continue; if (!pcs && pad[p] === v) continue; } else if (pcs && pcs.getPropertyValue(p) === v && segueOPai(el, pai, p)) { out.push(`${p}:inherit`); continue; } }
+      else if (larguraComEstilo(cs, p)) { out.push(`${p}:${v}`); continue; }
       else if (pad[p] === v) continue;
       if ((p === 'background-image' || p === 'mask-image') && v !== 'none') v = v.replace(/url\("?(.*?)"?\)/g, (m, u) => { try { const x = new URL(u, location.href); if (x.origin === location.origin) return `url("${decodeURI(x.pathname).replace(/^\//, '')}${x.hash}")`; const l = remotas[x.href] || remotas[u]; if (l) { arquivos.add(l); return `url("${l}${x.hash}")`; } return m; } catch { return m; } });
       out.push(`${p}:${v}`);
@@ -296,7 +302,7 @@ export function normalizar(opcoes = {}) {
     for (const pseudo of ['::before', '::after']) {
       const pcs = getComputedStyle(el, pseudo); const c = pcs.content;
       if (!c || c === 'none' || c === 'normal') continue;
-      const pd = []; for (const p of PROPS) { if (p === 'content') continue; const v = pcs.getPropertyValue(p); if (SEGUEM_COR.has(p)) { if (v === pcs.color && segueCor(el, p, pseudo)) continue; pd.push(`${p}:${v}`); continue; } const base = HERDAVEIS.has(p) ? cs.getPropertyValue(p) : pseudoPadrao[p]; if (v && v !== base || ['display', 'position', 'width', 'height', 'top', 'left', 'right', 'bottom', 'background-color', 'background-image'].includes(p)) pd.push(`${p}:${v}`); }
+      const pd = []; for (const p of PROPS) { if (p === 'content') continue; const v = pcs.getPropertyValue(p); if (SEGUEM_COR.has(p)) { if (v === pcs.color && segueCor(el, p, pseudo)) continue; pd.push(`${p}:${v}`); continue; } if (larguraComEstilo(pcs, p)) { pd.push(`${p}:${v}`); continue; } const base = HERDAVEIS.has(p) ? cs.getPropertyValue(p) : pseudoPadrao[p]; if (v && v !== base || ['display', 'position', 'width', 'height', 'top', 'left', 'right', 'bottom', 'background-color', 'background-image'].includes(p)) pd.push(`${p}:${v}`); }
       pd.push(`width:${pcs.width}`, `height:${pcs.height}`);
       regras.push(`#${id}${pseudo}{content:${c};${pd.join(';')}}`); rel.pseudo += 1;
     }

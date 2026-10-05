@@ -402,6 +402,13 @@ describe('normalizar: classes gerais achadas no teste as cegas (Framer)', () => 
     const r = await site.evaluate(normalizar, { remotas }); await site.close();
     expect(r.css).toContain('url("_ext/cdn.test/m.svg#logo")'); expect(r.arquivos).toContain('_ext/cdn.test/m.svg');
   });
+  it('Tailwind: borda SOLIDA de espessura ZERO (e contorno e ::after) continua zero na canonica — a espessura padrao so e 0 porque o padrao nao tem borda', async () => {
+    const v = await canonica('<head><style>*,::before,::after{border:0 solid rgb(229, 231, 235)}a::after{content:"x"}</style></head><body><div style="outline:0 solid red">caixa</div><a href="#">link</a></body>', () => {
+      const d = getComputedStyle(document.querySelector('div')); const pa = getComputedStyle(document.querySelector('a'), '::after');
+      return { borda: d.borderTopWidth, estilo: d.borderTopStyle, contorno: d.outlineWidth, pseudo: pa.borderTopWidth };
+    });
+    expect(v).toEqual({ borda: '0px', estilo: 'solid', contorno: '0px', pseudo: '0px' });
+  });
   it('icone por <use href="#id"> continua achando o desenho (o id original nao pode ser trocado sem levar a referencia)', async () => {
     const v = await canonica('<body><svg id="ic" width="10" height="10" viewBox="0 0 10 10"><rect width="10" height="10" fill="red"></rect></svg><div style="width:20px;height:20px"><svg style="width:100%;height:100%" viewBox="0 0 10 10"><use href="#ic"></use></svg></div><a href="#fim">ir</a><section id="fim">fim</section></body>', () => {
       const u = document.querySelector('use'); const alvo = document.getElementById(u.getAttribute('href').slice(1));
