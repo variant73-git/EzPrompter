@@ -46,6 +46,8 @@ const FAILURE_CODES = Object.freeze({
   unsupported_patch: FAILURE_CLASSES.UNSUPPORTED_CAPABILITY,
   unsupported_value: FAILURE_CLASSES.UNSUPPORTED_CAPABILITY,
   scope_mismatch: FAILURE_CLASSES.UNSUPPORTED_CAPABILITY,
+  // trava de layout da copia canonica com cena WebGL: o controle nao vale aqui — so desligar, nunca recarregar
+  layout_locked: FAILURE_CLASSES.UNSUPPORTED_CAPABILITY,
 
   runtime_exception: FAILURE_CLASSES.FATAL_RUNTIME,
   runtime_unavailable: FAILURE_CLASSES.FATAL_RUNTIME,

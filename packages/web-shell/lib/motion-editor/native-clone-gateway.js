@@ -98,7 +98,7 @@ export function fullEditorEnabled(env = process.env) {
   return valor === '1' || valor === 'on' || valor === 'true';
 }
 
-function fullEditorTags() {
+export function fullEditorTags() {
   // Origem opaca: `localStorage` LANÇA. O editor usa isso para auto-save e
   // paleta, e três chamadas dele não têm proteção — um SecurityError ali mataria
   // a edição inteira. O substituto guarda em memória: perde entre recargas,

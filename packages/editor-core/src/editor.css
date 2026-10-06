@@ -523,6 +523,19 @@ body.rb-ed-floating #rb-editor-root { left:0; width:100vw; }
 #rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="stroke"] { display:none; }
 #rb-editor-inspector.rb-insp-ghost .rb-insp-sec[data-rb-sec="effects"] { display:none; }
 
+/* Layout lock — box bound to a WebGL scene drawn by the native plane (canonical clone).
+   Position/size controls are off; text, color and font stay live. */
+#rb-editor-inspector .rb-insp-locked .rb-insp-sec-body > :not(.rb-insp-lock-note),
+#rb-editor-inspector .rb-insp-locked .rb-insp-adv-btn,
+#rb-editor-inspector .rb-insp-locked-btn { opacity:0.35; pointer-events:none; }
+#rb-editor-inspector .rb-insp-lock-note {
+  font:400 11px/1.4 'Instrument Sans',sans-serif; color:rgba(239,238,235,0.78);
+  background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.28);
+  border-radius:6px; padding:6px 8px; margin-bottom:6px;
+}
+body.rb-ed-light #rb-editor-inspector .rb-insp-lock-note { color:#3d2e0a; background:rgba(245,158,11,0.10); border-color:rgba(180,110,0,0.30); }
+.rb-sel-box.rb-sel-locked .rb-sel-handle { display:none !important; }
+
 /* Ghost placeholder image button */
 .rb-insp-ghost-img-placeholder {
   width:26px; height:26px; border:1px solid rgba(255,255,255,0.15);

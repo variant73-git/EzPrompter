@@ -88,6 +88,39 @@ export async function analisarPlano({ captura, canonica, excluirCanvas = [], ys 
     // so o MAIS INTERNO: caixa que so contem outras ancoras (a grade inteira) nao e ancora (Astra r1)
     const internas = colocacao === 'back' ? [] : await pc.evaluate((ids) => ids.filter((id) => { const e = document.getElementById(id); return e && !ids.some((o) => o !== id && e.contains(document.getElementById(o))); }), [...acopladas]);
     const lista = internas.sort();
-    return { versao: 1, colocacao, cobertura: Math.round(cobertura * 1000) / 1000, canvas: nCanvas, excluirCanvas, acoplamento: lista.length ? 'ancoras' : 'viewport', acopladas: lista, prontoMs, externosAbortados };
+    // QUEM MOVE CADA ANCORA decide o que trava (Astra r1 #4: a secao mais proxima, sem limite, travava a pagina
+    // inteira no bleibtgleich). No FLUXO, os irmaos a deslocam: a regiao e a secao/cartao que a contem, desde que
+    // JUSTO (<= 4x a area da ancora); senao o pai, se justo; senao nenhuma. ABSOLUTA tambem ganha regiao: presa
+    // por bottom/right ou em %, ela anda quando um irmao faz o cartao crescer (Astra r5). FIXA na tela (sem
+    // ancestral que vire bloco de contencao): nem irmaos nem pais a movem — so ela trava ('fixa' nao prende
+    // quem a contem).
+    const { regioes, fixas } = !lista.length ? { regioes: [], fixas: [] } : await pc.evaluate((ids) => {
+      const area = (x) => { const q = x.getBoundingClientRect(); return q.width * q.height; };
+      const fixaNaTela = (e) => {
+        if (getComputedStyle(e).position !== 'fixed') return false;
+        for (let a = e.parentElement; a && a !== document.documentElement; a = a.parentElement) {
+          const cs = getComputedStyle(a);
+          // qualquer criador de bloco de contencao para fixed (Astra r3: translate/rotate/scale avulsos tambem)
+          if (cs.transform !== 'none' || cs.translate !== 'none' || cs.rotate !== 'none' || cs.scale !== 'none'
+            || cs.filter !== 'none' || cs.perspective !== 'none' || cs.backdropFilter !== 'none' || cs.transformStyle === 'preserve-3d'
+            || /paint|layout|strict|content/.test(cs.contain) || (cs.containerType && cs.containerType !== 'normal')
+            || (cs.contentVisibility && cs.contentVisibility !== 'visible')
+            || /transform|translate|rotate|scale|filter|perspective|contain/.test(cs.willChange)) return false;
+        }
+        return true;
+      };
+      const reg = new Set(); const fix = [];
+      for (const id of ids) {
+        const e = document.getElementById(id); const p = e && e.parentElement; if (!p) continue;
+        if (fixaNaTela(e)) { fix.push(id); continue; }
+        const limite = 4 * Math.max(1, area(e));
+        const justa = (r) => r && r !== document.body && r !== document.documentElement && area(r) <= limite;
+        const sem = p.closest('section,header,footer,nav,article,aside');
+        const r = justa(sem) ? sem : (justa(p) ? p : null);
+        if (r && r.id && !ids.includes(r.id)) reg.add(r.id);
+      }
+      return { regioes: [...reg].sort(), fixas: fix.sort() };
+    }, lista);
+    return { versao: 1, colocacao, cobertura: Math.round(cobertura * 1000) / 1000, canvas: nCanvas, excluirCanvas, acoplamento: lista.length ? 'ancoras' : 'viewport', acopladas: lista, regioes, fixas, prontoMs, externosAbortados };
   } finally { await b.close(); srv.close(); canon.srv.close(); }
 }

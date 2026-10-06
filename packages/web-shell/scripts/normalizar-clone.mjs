@@ -365,6 +365,35 @@ export function remotasNaPagina() {
 // desenhado tambem pelo plano. A pagina nativa nao tem os nossos ids: vale a ASSINATURA do canvas (caminho ate
 // o body, `assinaturaDoCanvas` do modo plano) — o indice na ordem do documento mudava quando o site criava
 // outro canvas antes (Astra r1).
+// TRAVA DE LAYOUT (decisao 1 do Adilson, 2026-10-05): as caixas que a cena WebGL usa como ancora levam
+// `data-u-trava="layout"` na canonica — o editor recusa mudar posicao/tamanho delas (e de quem as contem);
+// texto, cor e fonte continuam editaveis. So dentro de TAG (texto que parece atributo nao e tocado).
+// A REGIAO (secao que contem as ancoras) leva `data-u-trava="regiao"`: mexer na margem de um irmao da ancora
+// tambem a desloca, entao o editor trava tudo dentro da regiao, nao so a caixa pintada.
+// Ancora FIXA na tela leva `data-u-trava="fixa"`: trava so ela (nenhum pai ou vizinho a move).
+export function marcarTravas(html, ids, regioes, fixas) {
+  const tipo = new Map(); for (const id of regioes || []) tipo.set(id, 'regiao'); for (const id of ids || []) tipo.set(id, 'layout');
+  for (const id of fixas || []) if (tipo.get(id) === 'layout') tipo.set(id, 'fixa');
+  if (!tipo.size) return html;
+  return html.replace(/<[a-zA-Z][^>]*>/g, (tag) => {
+    if (tag.includes('data-u-trava')) return tag;
+    return tag.replace(/(\sid="([^"]+)")/, (m, attr, id) => (tipo.has(id) ? `${attr} data-u-trava="${tipo.get(id)}"` : m));
+  });
+}
+
+// Grava o resultado da analise na pasta da canonica: plano.json (ou APAGA um de rodada anterior quando nao ha
+// plano) e as marcas de trava no index.html. As duas decisoes sao independentes — um plano de fundo sem ancoras
+// grava plano.json e nao marca nada (um else pendurado no `if` errado apagava o plano.json recem-gravado).
+export async function gravarPlano(saida, plano, captura) {
+  const arquivo = path.join(saida, 'plano.json');
+  if (plano) await writeFile(arquivo, JSON.stringify({ ...plano, nativo: path.resolve(captura) }, null, 1));
+  else await rm(arquivo, { force: true });
+  if (plano && plano.acopladas.length) {
+    const ip = path.join(saida, 'index.html');
+    await writeFile(ip, marcarTravas(await readFile(ip, 'utf8'), plano.acopladas, plano.regioes, plano.fixas));
+  }
+}
+
 export function assinaturasDeCanvasDaSequencia(fichas, canvas) {
   const alvos = new Set(fichas.filter((f) => f.tipo === 'sequencia').map((f) => String(f.alvo).replace(/^#/, '')));
   return canvas.filter((c) => c.id && alvos.has(c.id)).map((c) => c.assinatura);
@@ -652,8 +681,7 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
       const plano = await analisarPlano({ captura, canonica: saida, excluirCanvas: assinaturasDeCanvasDaSequencia(fichasMotion, canvasInfo) });
       // sem plano: um plano.json de rodada ANTERIOR na mesma pasta nao pode sobreviver (o farmminerals mostrava a
       // camada velha depois que a exclusao certa passou a dizer 'sem plano')
-      if (plano) await writeFile(path.join(saida, 'plano.json'), JSON.stringify({ ...plano, nativo: path.resolve(captura) }, null, 1));
-      else await rm(path.join(saida, 'plano.json'), { force: true });
+      await gravarPlano(saida, plano, captura);
       relPlano = plano ? { colocacao: plano.colocacao, acopladas: plano.acopladas.length } : null;
     }
     return { ...r.relatorio, movimento: mov, plano: relPlano, arquivosCopiados: copiados, arquivosFaltando: faltando.length, amostraFaltando: faltando.slice(0, 10), bytesHtml: html.length, bytesCss: r.css.length };

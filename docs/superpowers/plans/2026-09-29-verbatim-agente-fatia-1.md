@@ -1266,3 +1266,28 @@ Pedido do Adilson: "faça" (investigar a família que quebrava o clone inteiro).
 
 - ⭐ Lição: **"família" pelo sintoma esconde causas diferentes** — mesmo efeito visível (abertura que não sai), três mecanismos (nosso substituto de biblioteca, nossa reescrita de endereços, rede offline). Cada um só apareceu com uma sonda própria; consertar "a família" por um caminho só teria errado dois.
 - ⭐ Lição: **nossas peças de instrumentação são parte do sistema medido** — a Lenis falsa e a reescrita para relativo eram decisões NOSSAS, antigas e razoáveis, que quebravam o site sem erro nenhum. Antes de culpar o site, desligar cada peça nossa.
+
+## 181. Trava de layout nas regiões da cena 3D — editor e ponte (decisão 1) — 2026-10-06
+
+Pedido do Adilson: "prossiga" (implementar a decisão 1: travar posição e tamanho nas regiões ligadas ao WebGL; texto, cor e fonte seguem editáveis).
+
+**O que trava (a análise decide, `plano-nativo.mjs`, por COMO cada âncora é posicionada):**
+- âncora no fluxo ou absoluta → a seção/cartão que a contém vira **região** (`data-u-trava="regiao"`), só se for JUSTA (≤ 4× a área da âncora); senão o pai, se justo; senão nenhuma. Absoluta também ganha região: presa por `bottom`/`%`, anda quando um irmão faz o cartão crescer (Astra r5).
+- âncora **fixa na tela** (nenhum ancestral vira bloco de contenção: transform/translate/rotate/scale avulsos, filter, perspective, contain, container-type, content-visibility, will-change, preserve-3d) → `data-u-trava="fixa"`: trava só ela.
+- Medido com placa de vídeo real: **gilhuybrecht 84 âncoras → 84 cartões** (1,1–2,3× a âncora); **bleibtgleich 2 âncoras fixas → 0 regiões** (a regra anterior pegava o `main` = página inteira travada).
+- `gravarPlano` separa plano.json e marcas (um `else` pendurado no `if` errado apagava o plano.json de um fundo sem âncoras — achado meu, teste vermelho antes).
+
+**As duas portas de edição, com a MESMA regra (teste de paridade):**
+- **editor-core** (`editor.js`): `applyStyle` + todo caminho que escreve direto (alças, guias, setas, arrasto, soltar, aba de seções, Delete, recortar, colar na região, link, alinhamentos, borda, efeito em caixa estática, imagem). Inspector: seção Container travada com o aviso em inglês; sem alças; sem guias.
+- **ponte** (`runtime-bridge-source.js`): `applyPatchOrThrow` (painéis de fora, validação e reaplicação do salvo) e a consulta do editor-core recusam com `layout_locked`; ferramenta Mover não começa o arrasto. `failure-codes`: `layout_locked` = capacidade não suportada (só desliga o controle, nunca recarrega).
+- Regra: caixa travada aceita só a **lista do que PODE** (texto, fonte, cor, aparência pura); todo o resto é recusado, inclusive o imprevisto e variáveis CSS. Quem CONTÉM uma âncora não pode virar bloco de contenção dela nem receber variável CSS/animação. Estrutura (apagar/mover/embrulhar) trava com qualquer marca dentro ou em volta, inclusive a fixa. Imagem dentro da região não troca de `src`.
+
+**Auditoria Astra: 5 rodadas (teto), 12 achados (4+1+2+4+1), todos reproduzidos e corrigidos com teste + controle** (Mover sem guarda; borda; efeito que tornava a caixa `relative`; região do tamanho da página; pai da fixa com transform; translate avulso; tamanhos lógicos; invólucro da fixa apagável; animação e filtro na lista do que pode; variável CSS por tabela; src de imagem; absoluta presa embaixo). ⭐ Lição: **rodadas seguidas achando propriedades fora da lista do que NÃO pode = trocar para lista do que PODE** — a de "não pode" nunca fecha no CSS; a de "pode" falha fechando. Controles: sem as marcas, 14 de 16 testes de trava caem (só os 2 de "fora da região" passam); lista divergente entre editor e ponte derruba a paridade.
+
+**Medido no programa:** foto do gilhuybrecht com a cena 3D montada e o editor por cima — cartão selecionado travado, alinhado com a miniatura da cena, sem alças, aviso no painel; opacidade, fonte e cor livres.
+
+**Resíduos nomeados (aceitos pela decisão ou fora do v0):**
+- edição FORA das regiões e mudança de fonte/texto DENTRO podem deslocar âncoras (a decisão aceita; o host do plano avisa com `u-plano-desalinhado`);
+- o limite "região justa ≤ 4×" é heurística; âncora num cartão maior que isso trava só ela e os pais;
+- **para a ligação no produto**: (a) o host do plano precisa rodar com o `<body>` pronto (injetado no `<head>` ele quebrava — `appendChild` em null); (b) nada pode mudar a janela da página sem mover o plano junto — o editor DENTRO da página encaixa os painéis com margem no `body` (224/248 px) e desalinha a cena; com os painéis flutuando (ou fora da página, como no produto desde 22/09) fica alinhado;
+- edição de MOVIMENTO (fichas) numa caixa travada ainda não passa pela trava — a decidir quando o clone canônico entrar no fluxo de Edit.

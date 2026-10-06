@@ -60,6 +60,26 @@ function nativeMotionRuntimeBridge() {
   // Webflow attributes, and site-authored classes like "gsap_split_line" —
   // clicking those lines must climb to the text block, never select a
   // transient fragment (found live: "most fertilizers…" was unselectable).
+  // TRAVA DE LAYOUT (decisao 1 do Adilson, 2026-10-05): na copia canonica com cena WebGL, as caixas que
+  // a cena usa como ancora (data-u-trava="layout") e a secao que as contem (data-u-trava="regiao") nao
+  // mudam de posicao nem de tamanho — a cena e desenhada por outra camada e desalinharia. Texto, cor e
+  // fonte seguem livres. Travado = dentro de uma trava OU contendo uma. MESMAS listas do editor-core
+  // (editor.js PROPS_LIVRES_NA_TRAVA / PROPS_DE_CONTENCAO) — um teste confere que nao divergem.
+  const TRAVA_SEL = '[data-u-trava]';
+  // quem CONTEM uma destas tambem trava; a ancora 'fixa' (presa a tela) nao prende os pais
+  const TRAVA_QUE_PRENDE_O_PAI = '[data-u-trava="layout"],[data-u-trava="regiao"]';
+  // na caixa travada vale a LISTA DO QUE PODE (texto, cor, fonte, aparencia pura); todo o resto e recusado
+  const PROPS_LIVRES_NA_TRAVA = /^(?:color|opacity|visibility|z-index|cursor|pointer-events|isolation|mix-blend-mode|box-shadow|text-shadow|filter|clip-path|caret-color|accent-color|fill(?:-opacity|-rule)?|stroke(?:-[a-z]+)*|image-rendering|white-space|word-break|overflow-wrap|hyphens|letter-spacing|word-spacing|line-height|font(?:-[a-z]+)*|text-[a-z-]+|-webkit-text-[a-z-]+|-webkit-background-clip|background(?:-[a-z]+)*|outline(?:-[a-z]+)*|mask(?:-[a-z]+)*|-webkit-mask(?:-[a-z]+)*|transition(?:-[a-z]+)*|object-fit|object-position|border(?:-(?:top|right|bottom|left|block|inline)(?:-(?:start|end))?)?-color|border(?:-(?:top|bottom)-(?:left|right)|-(?:start|end)-(?:start|end))?-radius)$/;
+  const layoutTravado = (el) => !!(el && el.nodeType === 1 && (el.closest(TRAVA_SEL) || el.querySelector(TRAVA_QUE_PRENDE_O_PAI)));
+  // quem CONTEM uma ancora nao vira bloco de contencao dela (arrasta a fixa, reposiciona a absoluta — Astra
+  // r2/r4) nem recebe o que chega la por tabela: variavel CSS (var() alimenta transform) e animacao.
+  const PROPS_DE_CONTENCAO = new Set(['transform','translate','rotate','scale','filter','backdrop-filter',
+    '-webkit-backdrop-filter','perspective','contain','will-change','container','container-type','content-visibility','transform-style']);
+  const contemAncora = (el) => !!(el && el.nodeType === 1 && el.querySelector('[data-u-trava="layout"],[data-u-trava="fixa"]'));
+  const capturaAncora = (el, cssName) => (PROPS_DE_CONTENCAO.has(cssName) || /^--|^animation/.test(cssName)) && contemAncora(el);
+  const escritaTravada = (el, cssName) => (layoutTravado(el) && !PROPS_LIVRES_NA_TRAVA.test(cssName)) || capturaAncora(el, cssName);
+  // imagem/poster novos podem ter outro tamanho natural: dentro da regiao travada, nao trocam (Astra r4)
+  const atributoTravado = (el, attr) => /^(src|srcset|sizes|poster)$/i.test(String(attr || '')) && !!(el && el.nodeType === 1 && el.closest(TRAVA_SEL));
   const SPLIT_TOKEN = '.char,.word,.line,[data-split-text],[data-split-type],[text-split],[text-split-delay],[class*="split_line"],[class*="split-line"],[class*="split_word"],[class*="split-word"],[class*="split_char"],[class*="split-char"]';
   let mode = 'edit';
   // ⭐ INTERAÇÃO DO CLONE (2026-09-29, pedido do Adilson). Duas coisas que o clone faz
@@ -7666,8 +7686,15 @@ function nativeMotionRuntimeBridge() {
     if (!element) throw bridgeError('target_missing', 'The target element is no longer present.');
     try {
       if (patch.kind === 'style') {
+        const nomeCss = String(patch.property || '').replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`).toLowerCase();
+        if (escritaTravada(element, nomeCss)) {
+          throw bridgeError('layout_locked', 'Layout locked: this area is bound to an animated 3D scene.');
+        }
         element.style.setProperty(patch.property, patch.value ?? '');
       } else if (patch.kind === 'attribute') {
+        if (atributoTravado(element, patch.property)) {
+          throw bridgeError('layout_locked', 'Layout locked: this area is bound to an animated 3D scene.');
+        }
         if (patch.value === '' || patch.value == null) element.removeAttribute(patch.property);
         else element.setAttribute(patch.property, patch.value);
       } else if (patch.kind === 'text') {
@@ -8836,6 +8863,16 @@ function nativeMotionRuntimeBridge() {
       event.preventDefault();
       event.stopPropagation();
       select(element);
+      // a ferramenta Mover escreve `translate` direto: caixa travada nem comeca o arrasto (Astra r1 #1).
+      // O aviso vai pelo canal de recusa que o host ja mostra; id novo = nada a tirar do historico.
+      // Mover escreve `translate`: tambem prende uma ancora fixa de dentro
+      if (escritaTravada(element, 'translate')) {
+        emit('patch-rejected', {
+          patch: { id: randomIdentity('patch'), elementId: ensureElementId(element), kind: 'style', property: 'translate', before: null, value: null },
+          error: 'Layout locked: this area is bound to an animated 3D scene.',
+        });
+        return;
+      }
       dragState = {
         element,
         elementId: ensureElementId(element),
@@ -9216,8 +9253,9 @@ function nativeMotionRuntimeBridge() {
     // (o caso do UNDO restaurando o srcset ORIGINAL do site — que nunca é
     // tokenizado); com url de sessão dentro, exige o parser de candidatos
     // (lição 185) e recusa até existir um.
-    function validarAtributo(property, valor) {
+    function validarAtributo(property, valor, element) {
       const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
+      if (atributoTravado(element, property)) return recusa('layout_locked', String(property));
       const ATRIBUTOS_PERMITIDOS = ['src', 'srcset', 'href', 'alt', 'poster'];
       if (!property) return recusa('missing_property');
       if (ATRIBUTOS_PERMITIDOS.indexOf(String(property).toLowerCase()) === -1) {
@@ -9269,6 +9307,7 @@ function nativeMotionRuntimeBridge() {
       const propriedadeCss = property.startsWith('--')
         ? property
         : property.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+      if (escritaTravada(element, propriedadeCss.toLowerCase())) return recusa('layout_locked', propriedadeCss);
       const idn = validarIdentidade(element);
       if (!idn.ok) return idn;
       const elementId = idn.elementId;
@@ -9315,7 +9354,7 @@ function nativeMotionRuntimeBridge() {
       const property = edit.property == null ? null : String(edit.property);
       if (kind === 'style' && !property) return recusa('missing_property');
       if (kind === 'attribute') {
-        const va = validarAtributo(property, edit.value);
+        const va = validarAtributo(property, edit.value, element);
         if (!va.ok) return va;
       }
       if (kind === 'text' && property) return recusa('unsupported_kind', 'text nao tem property');
@@ -9455,7 +9494,7 @@ function nativeMotionRuntimeBridge() {
           membro = { elementId: v.elementId, propriedadeCss: v.propriedadeCss };
         } else if (kindE === 'attribute' || kindE === 'text') {
           if (kindE === 'attribute') {
-            const va = validarAtributo(e.property, e.value);
+            const va = validarAtributo(e.property, e.value, e.element);
             if (!va.ok) return recusa('batch_member_refused', `${i}:${va.reason || 'unknown'}`);
           }
           if (kindE === 'text' && e.property) return recusa('batch_member_refused', `${i}:unsupported_kind`);

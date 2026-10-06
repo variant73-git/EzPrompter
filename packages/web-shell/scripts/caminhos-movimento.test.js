@@ -5,9 +5,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 // testes de navegador real: sob a suite inteira o padrao de 5 s estoura por carga, nao por defeito
 vi.setConfig({ testTimeout: 60000, hookTimeout: 60000 });
 import { fichasPorLeitura, difere, medirProprio } from './gravar-trajetoria.mjs';
-import { fichasDeSequencia, etiquetasQueSeMexem, normalizar, mapasDaPagina, mapaDeRemotas, mapaDaCaptura, remotasNaPagina, assinaturasDeCanvasDaSequencia } from './normalizar-clone.mjs';
+import { fichasDeSequencia, etiquetasQueSeMexem, normalizar, mapasDaPagina, mapaDeRemotas, mapaDaCaptura, remotasNaPagina, assinaturasDeCanvasDaSequencia, marcarTravas, gravarPlano } from './normalizar-clone.mjs';
 import { runtimeFetchShim } from '../lib/native-clone/runtime-fetch-map.js';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { comparar, conferirIds, idsDoCorpo } from './regua-trajetoria.mjs';
@@ -528,5 +528,46 @@ describe('lenisSemSuavizacao com a Lenis REAL (Astra r2)', () => {
       await p.goto('http://lenis-real.test/');
       expect(await p.evaluate(() => window.__r)).toBe('500:500:500:undefined');
     } finally { await b.close(); }
+  });
+});
+
+describe('gravarPlano: plano.json e marcas sao decisoes INDEPENDENTES', () => {
+  const pasta = () => { const d = mkdtempSync(join(tmpdir(), 'plano-')); writeFileSync(join(d, 'index.html'), '<div id="u-a"></div><section id="u-s"></section>'); return d; };
+  const base = { versao: 1, cobertura: 0.9, canvas: 1, excluirCanvas: [], prontoMs: 1, externosAbortados: 0 };
+  it('fundo SEM ancoras: grava plano.json e nao marca nada (o else pendurado apagava o arquivo)', async () => {
+    const d = pasta();
+    await gravarPlano(d, { ...base, colocacao: 'back', acoplamento: 'viewport', acopladas: [], regioes: [] }, d);
+    expect(existsSync(join(d, 'plano.json'))).toBe(true);
+    expect(readFileSync(join(d, 'index.html'), 'utf8')).not.toContain('data-u-trava');
+  });
+  it('frente COM ancoras: grava plano.json e marca ancora e regiao', async () => {
+    const d = pasta();
+    await gravarPlano(d, { ...base, colocacao: 'front', acoplamento: 'ancoras', acopladas: ['u-a'], regioes: ['u-s'], fixas: [] }, d);
+    expect(existsSync(join(d, 'plano.json'))).toBe(true);
+    expect(readFileSync(join(d, 'index.html'), 'utf8')).toBe('<div id="u-a" data-u-trava="layout"></div><section id="u-s" data-u-trava="regiao"></section>');
+  });
+  it('sem plano: apaga o plano.json de rodada anterior', async () => {
+    const d = pasta(); writeFileSync(join(d, 'plano.json'), '{}');
+    await gravarPlano(d, null, d);
+    expect(existsSync(join(d, 'plano.json'))).toBe(false);
+  });
+});
+
+describe('marcarTravas: regioes acopladas a cena WebGL levam data-u-trava="layout" (decisao 1)', () => {
+  it('marca exatamente os ids da lista, sem tocar em id parecido nem em texto', () => {
+    const html = '<div id="u-a"><div id="u-a-2">texto id="u-a"</div><img id="u-b" src="x.png"></div>';
+    const out = marcarTravas(html, ['u-a', 'u-b']);
+    expect(out).toBe('<div id="u-a" data-u-trava="layout"><div id="u-a-2">texto id="u-a"</div><img id="u-b" data-u-trava="layout" src="x.png"></div>');
+  });
+  it('ancora FIXA na tela leva data-u-trava="fixa" (trava so ela, nao os pais)', () => {
+    expect(marcarTravas('<div id="u-f"></div><div id="u-a"></div>', ['u-f', 'u-a'], [], ['u-f'])).toBe('<div id="u-f" data-u-trava="fixa"></div><div id="u-a" data-u-trava="layout"></div>');
+  });
+  it('a REGIAO (secao que contem as ancoras) leva data-u-trava="regiao"', () => {
+    const out = marcarTravas('<section id="u-s1-section-bloco"><div id="u-s1-div-a"></div></section>', ['u-s1-div-a'], ['u-s1-section-bloco']);
+    expect(out).toBe('<section id="u-s1-section-bloco" data-u-trava="regiao"><div id="u-s1-div-a" data-u-trava="layout"></div></section>');
+  });
+  it('lista vazia: nada muda; e nao duplica a marca', () => {
+    expect(marcarTravas('<p id="u-x">a</p>', [])).toBe('<p id="u-x">a</p>');
+    expect(marcarTravas('<p id="u-x" data-u-trava="layout">a</p>', ['u-x'])).toBe('<p id="u-x" data-u-trava="layout">a</p>');
   });
 });

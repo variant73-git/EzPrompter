@@ -385,6 +385,70 @@
     return jsProp.replace(/([A-Z])/g, '-$1').toLowerCase();
   }
 
+  // ⭐ TRAVA DE LAYOUT (decisão 1 do Adilson, 2026-10-05). Na cópia canônica de um site
+  // com cena WebGL, a cena é desenhada por OUTRA camada (o plano nativo), alinhada às
+  // caixas da página. As caixas que a cena usa como âncora levam data-u-trava="layout"
+  // e a seção que as contém, data-u-trava="regiao". Mudar posição ou tamanho delas
+  // desalinharia a cena, então o editor recusa; texto, cor e fonte seguem editáveis.
+  // Travado = dentro de uma trava OU contendo uma (o pai que cresce também a move).
+  // Fora das regiões a edição é livre — o host do plano avisa se algo desalinhar.
+  var TRAVA_SEL = '[data-u-trava]';
+  // quem CONTEM uma destas tambem trava; a ancora 'fixa' (presa a tela) nao prende os pais
+  var TRAVA_QUE_PRENDE_O_PAI = '[data-u-trava="layout"],[data-u-trava="regiao"]';
+  var TRAVA_MSG = 'Layout locked: this area is bound to an animated 3D scene. Text, color and font can still be edited.';
+  // Na caixa travada vale LISTA DO QUE PODE (Astra r1/r3 acharam, em rodadas seguidas, propriedades de layout
+  // fora de uma lista do que NAO pode — o CSS tem muitas): texto, cor e fonte (a decisao) e aparencia pura
+  // (opacidade, fundo, sombra, raio e cor da borda, contorno, mascara, efeitos). Todo o resto e recusado,
+  // inclusive o que ninguem previu e variaveis CSS (que podem alimentar tamanho via var()).
+  var PROPS_LIVRES_NA_TRAVA = /^(?:color|opacity|visibility|z-index|cursor|pointer-events|isolation|mix-blend-mode|box-shadow|text-shadow|filter|clip-path|caret-color|accent-color|fill(?:-opacity|-rule)?|stroke(?:-[a-z]+)*|image-rendering|white-space|word-break|overflow-wrap|hyphens|letter-spacing|word-spacing|line-height|font(?:-[a-z]+)*|text-[a-z-]+|-webkit-text-[a-z-]+|-webkit-background-clip|background(?:-[a-z]+)*|outline(?:-[a-z]+)*|mask(?:-[a-z]+)*|-webkit-mask(?:-[a-z]+)*|transition(?:-[a-z]+)*|object-fit|object-position|border(?:-(?:top|right|bottom|left|block|inline)(?:-(?:start|end))?)?-color|border(?:-(?:top|bottom)-(?:left|right)|-(?:start|end)-(?:start|end))?-radius)$/;
+  // Quem CONTEM uma ancora nao pode virar bloco de contencao dela (transform/filter/contain/... arrastam a fixa
+  // e reposicionam a absoluta — Astra r2/r4), nem recebe o que chega la por TABELA: variavel CSS (var() pode
+  // alimentar um transform) e animacao (keyframes podem mover). Vale para a fixa e para a ancora comum.
+  var PROPS_DE_CONTENCAO = new Set(['transform','translate','rotate','scale','filter','backdrop-filter',
+    '-webkit-backdrop-filter','perspective','contain','will-change','container','container-type','content-visibility','transform-style']);
+  function capturaAncora(el, cssName) {
+    if (!(PROPS_DE_CONTENCAO.has(cssName) || /^--|^animation/.test(cssName))) return false;
+    return !!(el && el.nodeType === 1 && el.querySelector('[data-u-trava="layout"],[data-u-trava="fixa"]'));
+  }
+  // a pergunta unica das portas de estilo: esta escrita muda o que a cena 3D usa como ancora?
+  function escritaTravada(el, cssName) {
+    return (layoutTravado(el) && !PROPS_LIVRES_NA_TRAVA.test(cssName)) || capturaAncora(el, cssName);
+  }
+  function dentroDaTrava(el) {
+    return !!(el && el.nodeType === 1 && el.closest(TRAVA_SEL));
+  }
+  function layoutTravado(el) {
+    if (!el || el.nodeType !== 1) return false;
+    return !!(el.closest(TRAVA_SEL) || el.querySelector(TRAVA_QUE_PRENDE_O_PAI));
+  }
+  var _avisoDeTravaEm = 0;
+  function avisarTrava() {
+    // um aviso por gesto: o arrasto chama a guarda a cada passo
+    var agora = Date.now();
+    if (agora - _avisoDeTravaEm < 1500) return;
+    _avisoDeTravaEm = agora;
+    try {
+      var t = showToast(TRAVA_MSG, 'warning');
+      setTimeout(function() { if (t && t.parentNode && t.textContent.indexOf(TRAVA_MSG) >= 0) t.remove(); }, 6000);
+    } catch (e) { console.warn('[uncraft] ' + TRAVA_MSG); }
+  }
+  // ESTRUTURA (apagar, recortar, mover, reordenar, embrulhar): qualquer trava dentro ou em volta conta, inclusive
+  // a fixa — apagar o invólucro dela apaga a ancora (Astra r4).
+  function estruturaTravada(el) {
+    if (!el || el.nodeType !== 1) return false;
+    return !!(el.closest(TRAVA_SEL) || el.querySelector(TRAVA_SEL));
+  }
+  function recusarEstrutura(el) {
+    if (!estruturaTravada(el)) return false;
+    avisarTrava();
+    return true;
+  }
+  function recusarSeTravado(el) {
+    if (!layoutTravado(el)) return false;
+    avisarTrava();
+    return true;
+  }
+
   // ---- Text-wrapper detection & cascade helpers ----
   // Rationale: sites using split-text animations (GSAP SplitText, Framer, etc.)
   // delegate text to nested wrappers with their own inline styles. Selecting the
@@ -569,6 +633,7 @@
   // Wrap `el` in a new <a href>. Returns the anchor. Pushes an undo entry of
   // type '__linkWrap' so undo unwraps it cleanly.
   function wrapInLink(el, href) {
+    if (recusarEstrutura(el)) return null;
     // Anchor wraps a site element — must live in the target document.
     var a = (el.ownerDocument || targetDoc).createElement('a');
     a.setAttribute('href', href);
@@ -584,6 +649,7 @@
   function unwrapLink(a) {
     var parent = a.parentNode;
     if (!parent) return;
+    if (recusarEstrutura(a)) return;
     var firstChild = a.firstChild;
     while (a.firstChild) parent.insertBefore(a.firstChild, a);
     parent.removeChild(a);
@@ -2992,6 +3058,7 @@
       card.classList.remove('rb-section-drop-above', 'rb-section-drop-below');
       var draggedEl = window.__rbDragSection;
       if (!draggedEl || draggedEl === el) return;
+      if (estruturaTravada(draggedEl) || dentroDaTrava(el.parentElement)) { avisarTrava(); return; }
       var rect = card.getBoundingClientRect();
       var midY = rect.top + rect.height / 2;
       // Move the actual DOM element
@@ -5580,6 +5647,20 @@
     return body;
   }
 
+  // Container travado: aviso no topo e campos desligados (a guarda de verdade é o applyStyle).
+  function trancarSecaoDeLayout(body) {
+    var sec = body.parentElement || body;
+    sec.classList.add('rb-insp-locked');
+    var nota = mk('div', 'rb-insp-lock-note');
+    nota.setAttribute('role', 'note');
+    nota.textContent = TRAVA_MSG;
+    body.insertBefore(nota, body.firstChild);
+    Array.prototype.forEach.call(sec.querySelectorAll('input,button,select'), function(c) {
+      c.disabled = true;
+      c.setAttribute('aria-disabled', 'true');
+    });
+  }
+
   function addRow(parent, label, content) {
     var row = mk('div', 'rb-insp-row');
     if (label) {
@@ -6002,6 +6083,7 @@
       btn.title = a.title;
       if (a.state === posAlignState) btn.classList.add('active');
       btn.addEventListener('click', function() {
+        if (recusarSeTravado(el)) return;
         a.fn();
         updateSelBox(el);
         updateSpacingGuides(el);
@@ -6129,6 +6211,9 @@
       spacingRow.appendChild(field);
     });
     addRow(posSec, 'Spacing', spacingRow);
+    // a vista GERAL (body, antes de selecionar) contém as travas por definição — aviso ali seria ruído;
+    // a guarda do applyStyle continua protegendo o body
+    if (layoutTravado(el) && el !== targetDoc.body && el !== targetDoc.documentElement) trancarSecaoDeLayout(posSec);
 
     // ---- APPEARANCE ----
     var appSec = addSection('Appearance', false);
@@ -6522,10 +6607,12 @@
         btn.classList.add('active');
       }
       btn.addEventListener('click', function() {
+        if (recusarSeTravado(el)) return;
         va.fn();
         taRow.querySelectorAll('.rb-insp-align-btn.rb-ta-v').forEach(function(b) { b.classList.remove('active'); });
         btn.classList.add('active');
       });
+      if (layoutTravado(el)) { btn.disabled = true; btn.classList.add('rb-insp-locked-btn'); btn.title = TRAVA_MSG; }
       taRow.appendChild(btn);
     });
     addRow(typSec, 'Alignment', taRow);
@@ -6678,6 +6765,9 @@
             bgEyeBtn.style.display = '';
           },
           applyEffect: function(targetEl, fx) {
+            // o efeito torna a caixa estatica `position:relative` — vira bloco de contencao e pode mover a
+            // ancora absoluta de dentro (Astra r1 #3); caixa ja posicionada nao muda nada
+            if (getCS(targetEl).position === 'static' && recusarSeTravado(targetEl)) return;
             pushUndo({el: targetEl, prop: '__rb-fx', old: targetEl.getAttribute('data-rb-fx-css') || ''});
             targetEl.classList.add('rb-fx-active');
             // Ensure element has an ID for the ::before selector
@@ -6836,6 +6926,8 @@
               // Replace existing img src (no clone: transação primeiro)
               if (!trocarSrcDaImagem(visualEl, dataUrl)) return;
             } else {
+              // uma <img> nova muda a altura da caixa
+              if (recusarSeTravado(targetEl)) return;
               // Insert a new <img> inside the div — site element, target doc.
               var newImg = (targetEl.ownerDocument || targetDoc).createElement('img');
               newImg.src = dataUrl;
@@ -6885,6 +6977,9 @@
     imgMinusBtn.style.display = hasImage ? '' : 'none';
     imgMinusBtn.addEventListener('mousedown', function(e) {
       e.stopImmediatePropagation();
+      // tirar a imagem da caixa (ou esconder o svg) muda o layout; só trocar o src não muda
+      // tirar a imagem, esconder o svg ou trocar o src por um vazio muda o tamanho dentro da regiao
+      if (visualEl && recusarEstrutura(visualEl)) return;
       if (visualEl && visualEl.tagName === 'IMG') {
         pushUndo({el: visualEl, prop: 'src', old: visualEl.src});
         // Remove the img element if it was inserted by us, otherwise clear src
@@ -7385,6 +7480,7 @@
       addStrokeBtn.title = 'Add stroke';
       addStrokeBtn.addEventListener('mousedown', function(e) {
         e.stopImmediatePropagation();
+        if (recusarSeTravado(el)) return;
         applyStyle(el, 'borderWidth', '1px');
         applyStyle(el, 'borderStyle', 'solid');
         applyStyle(el, 'borderColor', isLight() ? '#333' : '#EFEEEB');
@@ -7397,6 +7493,7 @@
       rmStrokeBtn.title = 'Remove stroke';
       rmStrokeBtn.addEventListener('mousedown', function(e) {
         e.stopImmediatePropagation();
+        if (recusarSeTravado(el)) return;
         applyStyle(el, 'borderWidth', '0');
         applyStyle(el, 'borderStyle', 'none');
         updateInspector(el);
@@ -7408,6 +7505,8 @@
       var strkOriginal = {w: cs.borderWidth, s: cs.borderStyle, c: cs.borderColor};
       eyeStroke.addEventListener('mousedown', function(e) {
         e.stopImmediatePropagation();
+        // esconder a borda com `border:none` muda o tamanho da caixa
+        if (recusarSeTravado(el)) return;
         strkHidden = !strkHidden;
         if (strkHidden) {
           el.style.setProperty('border', 'none', 'important');
@@ -7509,6 +7608,7 @@
   // Mensagem por motivo — o usuário precisa saber POR QUE não pegou, na hora.
   var RECUSA_DO_CLONE = {
     motion_owned: 'This property is driven by an animation — edit it in the Motion tab.',
+    layout_locked: TRAVA_MSG,
     unsupported_kind: 'This kind of change cannot be saved on a cloned site yet.',
     unsupported_attribute: 'Only an existing image or link can be changed this way.',
     no_identity: 'This element has no stable identity, so the change could not be saved.',
@@ -7572,6 +7672,8 @@
   }
 
   function trocarSrcDaImagem(imgEl, novoSrc) {
+    // imagem nova pode ter outro tamanho natural e mexer na regiao travada (Astra r4)
+    if (dentroDaTrava(imgEl)) { avisarTrava(); return false; }
     if (typeof targetWin.__uncraftEditorCommit !== 'function') {
       pushUndo({el: imgEl, prop: '__src', old: imgEl.src});
       imgEl.src = novoSrc;
@@ -7603,6 +7705,7 @@
   }
 
   function applyStyle(el, prop, value) {
+    if (escritaTravada(el, cssProp(prop))) { avisarTrava(); return; }
     // Range-scoped typography: if the user selected a word/phrase while in text
     // edit mode, route typography writes to that range only (wrap in a <span>).
     // Falls through to the element-level apply if the range is stale or invalid.
@@ -7766,7 +7869,7 @@
 
     // Auto-resize for typography changes
     var typoProps = ['fontSize','fontFamily','fontWeight','lineHeight','letterSpacing'];
-    if (typoProps.indexOf(prop) !== -1) {
+    if (typoProps.indexOf(prop) !== -1 && !layoutTravado(el)) {
       el.style.width = '';
       el.style.height = '';
     }
@@ -8141,6 +8244,7 @@
 
   function clipCut() {
     if (!selectedEl) return false;
+    if (recusarEstrutura(selectedEl)) return false;
     clipCopy();
     var parent = selectedEl.parentElement;
     var next = selectedEl.nextElementSibling;
@@ -8172,6 +8276,8 @@
     // Insert as sibling after the selected element
     var parent = target.parentElement;
     if (!parent) return false;
+    // colar DENTRO de uma região travada empurra a âncora
+    if (dentroDaTrava(parent)) { avisarTrava(); return false; }
     parent.insertBefore(newEl, target.nextSibling);
 
     // Push an undo entry so Cmd+Z removes the pasted element
@@ -8649,6 +8755,8 @@
         }).slice(0, 1).join('.')
       : '';
     selLabel.textContent = Math.round(r.width) + ' \u00d7 ' + Math.round(r.height);
+    // caixa travada não oferece alças de redimensionar
+    selBox.classList.toggle('rb-sel-locked', layoutTravado(el));
   }
 
   function updateHoverBox(el) {
@@ -8859,6 +8967,7 @@
       var prop = guideProps[key];
       var targetEl = guideTargetEl(key);
       if (!targetEl) return;
+      if (recusarSeTravado(targetEl)) return;
       var cs = getCS(targetEl);
       var curPx = parseFloat(cs[prop]) || 0;
       var iconSpan = widget.querySelector('.rb-spacing-icon');
@@ -8940,6 +9049,7 @@
       var prop = guideProps[key];
       var targetEl = guideTargetEl(key);
       if (!targetEl) return;
+      if (recusarSeTravado(targetEl)) return;
 
       var cs = getCS(targetEl);
       dragStartValue = parseFloat(cs[prop]) || 0;
@@ -9069,6 +9179,7 @@
       if (!selectedEl) return;
       e.preventDefault();
       e.stopPropagation();
+      if (recusarSeTravado(selectedEl)) return;
       var cfg = cornerConfig[ckey];
       var cs = getCS(selectedEl);
       var startY = parseFloat(cs[cfg.props[0]]) || 0;
@@ -9140,7 +9251,7 @@
   }
 
   function updateSpacingGuides(el) {
-    if (!el || !guidesVisible) {
+    if (!el || !guidesVisible || layoutTravado(el)) {
       Object.keys(spacingGuides).forEach(function(k) { spacingGuides[k].style.display = 'none'; });
       Object.keys(cornerGuides).forEach(function(k) { cornerGuides[k].style.display = 'none'; });
       return;
@@ -9912,6 +10023,13 @@
       removeDragGhost(el);
       return;
     }
+    // troca de coordenadas move o ALVO também; inserção põe o elemento dentro do pai do alvo
+    if (estruturaTravada(el) || (useCoordSwap ? estruturaTravada(lastDropTarget) : dentroDaTrava(lastDropTarget.parentElement))) {
+      avisarTrava();
+      hideDropIndicator();
+      removeDragGhost(el);
+      return;
+    }
 
     if (useCoordSwap) {
       // Absolute/canvas layout: swap visual positions
@@ -10235,6 +10353,7 @@
 
       if (!dragThreshold) {
         if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+          if (recusarEstrutura(selectedEl)) { dragStart = null; return; }
           dragThreshold = true;
           isDragging = true;
           hostDoc.body.classList.add('rb-ed-dragging');
@@ -10383,6 +10502,7 @@
       if (!_inEditable && activeGuideKey && selectedEl && guidesVisible &&
           (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         var _targ = guideTargetEl(activeGuideKey);
+        if (_targ && recusarSeTravado(_targ)) { e.preventDefault(); return; }
         if (_targ) {
           var _prop = guideProps[activeGuideKey];
           var _cs = getCS(_targ);
@@ -10490,6 +10610,7 @@
         if (_tag === 'INPUT' || _tag === 'TEXTAREA' || _tag === 'SELECT' || (_del_t && _del_t.isContentEditable)) return;
         if (selectedEl && selectedEl.contentEditable !== 'true') {
           e.preventDefault();
+          if (recusarEstrutura(selectedEl)) return;
           var parent = selectedEl.parentElement;
           var next = selectedEl.nextElementSibling;
           pushUndo({el: selectedEl, prop: '__removed', parent: parent, next: next});
@@ -10620,6 +10741,7 @@
         if (!selectedEl) return;
         e.preventDefault();
         e.stopPropagation();
+        if (recusarSeTravado(selectedEl)) return;
         var dir = d;
         var startR = selectedEl.getBoundingClientRect();
         var sx = e.clientX, sy = e.clientY;
