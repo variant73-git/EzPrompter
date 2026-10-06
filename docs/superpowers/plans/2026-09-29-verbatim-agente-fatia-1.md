@@ -1247,3 +1247,22 @@ Pedido do Adilson: decisão 1 (travar layout nas regiões acopladas ao WebGL). P
 4. Testes de placa de vídeo saíram da suíte comum (`npm run test:gpu`); juntos derrubavam vizinhos por tempo.
 
 **Pendente (próximo):** a família da transição presa; a trava de layout DENTRO do editor (o v0 entrega `acopladas` + aviso de desalinhamento); sites só-WebGL com rolagem virtual (fora do v0).
+
+## 180. A família "abertura/transição presa" — três causas diferentes, nenhuma do site — 2026-10-05
+
+Pedido do Adilson: "faça" (investigar a família que quebrava o clone inteiro). Diagnóstico por sonda antes de cada conserto; o que parecia UMA família eram três causas, todas NOSSAS:
+
+1. **bleibtgleich — a Lenis de MENTIRA da gravação** (commit 1e053cf1). Para rolar exato, a gravação trocava a Lenis global do site por um construtor falso (on/raf/scrollTo). O site lê `lenis.dimensions.naiveDimensions` → erro → a transição de entrada (Barba) nunca terminava → canônica com 1.200 px, sem rolar. Agora a Lenis VERDADEIRA fica inteira, só sem suavização: `duration`/`easing` removidos, roda nativa e TODO `scrollTo` (inclusive do site) forçado `immediate`. Astra 3 rodadas (`lerp: 1` sozinho não é instantâneo — duração tem prioridade; o teste tem que usar a Lenis REAL 1.3.26: sem o conserto 0, com ele 500 no mesmo instante).
+2. **tengilemalamala — o PRODUTOR reescrevia a raiz como relativa** (commit 7c18cfea). `<script src="/_next/…">` virava `./_next/…`; o carregador do Next/Turbopack (e o do webpack) procura o script já presente pelo TEXTO do atributo e, sem achar, o app nunca ativava (`window.next` ausente, 17 de 32 scripts) — a camada de transição era só o HTML do servidor sem React. Agora a referência escrita na raiz cujo arquivo vive num diretório que o gateway traduz fica na raiz: casa servida na raiz e, sob o prefixo do produto (`/api/rt/<sessão>`), o gateway reescreve o atributo E a base `"/_next/"` do carregador para o mesmo caminho. Regra única `prefixoTraduzivel` (produtor e gateway; Astra: diretório com ponto escapava do prefixo). Simulação do gateway: antes não ativava, depois ativa, zero pedidos fora do prefixo.
+3. **landonorris — já resolvido na §174**: a tela de abertura presa era o nativo sem os arquivos de outros domínios; com a rede da normalização servindo da captura ele funciona. O que sobra no topo é a gravação do site VIVO pegando a abertura no carregamento (momento, não defeito do clone).
+
+**Medida (gravação do site vivo de antes):**
+
+| site | antes | agora | site×site |
+|---|---|---|---|
+| tengilemalamala | 0,436 (tela verde) | **0,901** (11/13 ≥ 0,85) | 0,946 |
+| bleibtgleich | inválido (17% da altura) | **0,952** sem plano · **0,953** com plano (pior parada 0,871 → 0,910: o carrossel 3D) | 0,992 |
+| gilhuybrecht (controle) | 0,975 | 0,969 | 0,992 |
+
+- ⭐ Lição: **"família" pelo sintoma esconde causas diferentes** — mesmo efeito visível (abertura que não sai), três mecanismos (nosso substituto de biblioteca, nossa reescrita de endereços, rede offline). Cada um só apareceu com uma sonda própria; consertar "a família" por um caminho só teria errado dois.
+- ⭐ Lição: **nossas peças de instrumentação são parte do sistema medido** — a Lenis falsa e a reescrita para relativo eram decisões NOSSAS, antigas e razoáveis, que quebravam o site sem erro nenhum. Antes de culpar o site, desligar cada peça nossa.
