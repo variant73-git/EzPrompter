@@ -228,3 +228,30 @@ describe('<style> e <script> (apelidos de redirect, Astra 2026-10-05)', () => {
     expect(rewriteDocumentReferences({ ...base, text })).toBe(text);
   });
 });
+
+describe('referencia da RAIZ preserva a forma da raiz quando o alvo esta num diretorio (tengilemalamala, 2026-10-05)', () => {
+  // O carregador do Next/Turbopack procura o script ja presente pelo TEXTO do atributo (`script[src="/_next/..."]`);
+  // reescrito como `./_next/...` ele nao achava, e o app nunca ativava (a camada de transicao ficava na tela).
+  // A forma da raiz casa na pagina servida na raiz E sob o prefixo do gateway (que reescreve atributo e JS juntos).
+  const base = { kind: 'html', resourceUrl: 'https://s.test/index.html', assetPath: 'index.html' };
+  it('/_next/x.js fica /_next/x.js; arquivo solto na raiz (/hero.png) segue relativo; URL completa e relativa seguem relativas', () => {
+    const map = new Map([['https://s.test/_next/static/chunks/a.js', '_next/static/chunks/a.js'], ['https://s.test/hero.png', 'hero.png'], ['https://s.test/img/b.png', 'img/b.png']]);
+    const out = rewriteDocumentReferences({ ...base, map, text: '<script src="/_next/static/chunks/a.js"></script><img src="/hero.png"><img src="https://s.test/img/b.png"><img src="img/b.png">' });
+    expect(out).toContain('src="/_next/static/chunks/a.js"');
+    expect(out).toContain('src="./hero.png"');
+    expect(out).toContain('src="./img/b.png"');
+  });
+  it('referencia de raiz cujo arquivo no pacote tem outro nome (query) sai na forma da raiz com o nome do pacote', () => {
+    const map = new Map([['https://s.test/_next/data/x.json?slug=a', '_next/data/x.a1b2c3d4.json']]);
+    const out = rewriteDocumentReferences({ ...base, map, text: '<link rel="preload" href="/_next/data/x.json?slug=a">' });
+    expect(out).toContain('href="/_next/data/x.a1b2c3d4.json"');
+  });
+});
+
+describe('forma da raiz SO quando o gateway sabe traduzir o diretorio (Astra, 2026-10-05)', () => {
+  it('diretorio com ponto (static.v1, .well-known) segue relativo; /_next/ fica na raiz', () => {
+    const map = new Map([['https://s.test/static.v1/app.js', 'static.v1/app.js'], ['https://s.test/.well-known/x.json', '.well-known/x.json'], ['https://s.test/_next/a.js', '_next/a.js']]);
+    const out = rewriteDocumentReferences({ kind: 'html', resourceUrl: 'https://s.test/index.html', assetPath: 'index.html', map, text: '<script src="/static.v1/app.js"></script><link href="/.well-known/x.json"><script src="/_next/a.js"></script>' });
+    expect(out).toContain('src="./static.v1/app.js"'); expect(out).toContain('href=".well-known/x.json"');   // relativo (o produtor nao poe ./ em quem ja comeca por ponto) expect(out).toContain('src="/_next/a.js"');
+  });
+});

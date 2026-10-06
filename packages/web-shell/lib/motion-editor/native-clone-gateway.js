@@ -2,6 +2,7 @@ import { getRuntimeBridgeSource } from './runtime-bridge-source.js';
 import { runtimeCspMeta } from './runtime-csp.js';
 import { leadingDoctypeEnd } from '../native-clone/doctype-anchor.js';
 import { bootstrapDoPlano } from '../native-plane/plane-mode.js';
+import { prefixoTraduzivel } from '../native-clone/prefixo-de-runtime.js';
 
 export { leadingDoctypeEnd };
 
@@ -11,7 +12,7 @@ export function rewriteRuntimePaths(source, prefixes = ['assets'], runtimeBase =
   // a path that escapes the gateway resolves against the Next app, 404s, and
   // kills the site's boot script. The caller passes the bundle's REAL top-level
   // directory names, so this never guesses.
-  const names = [...new Set(prefixes)].filter((name) => /^[a-zA-Z0-9_-]+$/.test(name));
+  const names = [...new Set(prefixes)].filter(prefixoTraduzivel);   // mesma regra do produtor (prefixo-de-runtime.js)
   if (!names.length) return source;
   const base = String(runtimeBase || '').replace(/\/+$/, '');
   if (!base) throw new TypeError('A runtime base path is required');

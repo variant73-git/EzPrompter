@@ -1,4 +1,5 @@
 import { posix } from 'node:path';
+import { prefixoTraduzivel } from './prefixo-de-runtime.js';
 
 /**
  * Reference rewriting for the native clone — by URL POSITION, not by blind
@@ -381,10 +382,17 @@ export function rewriteDocumentReferences({ text, kind, resourceUrl, assetPath, 
     // identidade, não só referência (Astra). O marcador `__UNCRAFT_ORIGIN__` é
     // trocado por `location.origin` por quem SERVE o envelope (o remendo de replay),
     // então o site recebe uma URL absoluta http da origem local.
+    // ⭐ FORMA DA RAIZ PRESERVADA (2026-10-05): uma referencia que o site escreveu na raiz (`/_next/x.js`) e cujo
+    // arquivo vive num DIRETORIO do pacote continua na raiz. Medido no tengilemalamala: o carregador do
+    // Next/Turbopack procura o script ja presente pelo TEXTO do atributo (`script[src="/_next/..."]`); reescrito
+    // como `./_next/...` nao achava e o app nunca ativava. Na raiz, a pagina servida na raiz casa, e o gateway
+    // reescreve atributo E codigo (`"/_next/"` do carregador) para o mesmo prefixo. Arquivo SOLTO na raiz segue
+    // relativo (o gateway so traduz caminho que comeca por diretorio do pacote — item 185).
+    const raizOriginal = kind !== 'json' && /^\/(?!\/)/.test(withoutHash) && target.includes('/') && prefixoTraduzivel(target.split('/')[0]);
     let relative = kind === 'json'
       ? `${marcadorDeOrigem}/${target}`
-      : posix.relative(fromDir === '.' ? '' : fromDir, target);
-    if (kind !== 'json' && !relative.startsWith('.')) relative = `./${relative}`;
+      : raizOriginal ? `/${target}` : posix.relative(fromDir === '.' ? '' : fromDir, target);
+    if (kind !== 'json' && !relative.startsWith('.') && !relative.startsWith('/')) relative = `./${relative}`;
     const replacement = `${relative}${hash}`;
     // Inside a script body the text is not markup: entities are not decoded
     // there, so encoding one would write the escape sequence into the string.
