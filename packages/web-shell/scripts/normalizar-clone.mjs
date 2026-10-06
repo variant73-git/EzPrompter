@@ -25,6 +25,7 @@ import { medirProprio, difere, fichasPorLeitura, PROPS_INLINE, preencherCss } fr
 import { extrairRegistro, resolverNaPagina, fichasDoIx3 } from './ler-ix3.mjs';
 import { lerGsapNaPagina, fichasDoGsap, CONTROLE_GSAP } from './ler-gsap.mjs';
 import { mapaDaCaptura, arquivoCapturado, mapaDeRemotas } from './mapa-da-captura.mjs';
+import { lenisSemSuavizacao } from './lenis-instantanea.mjs';
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > -1 ? process.argv[i + 1] : d; };
 
@@ -512,10 +513,10 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
       let contentType; try { contentType = JSON.parse(await readFile(path.join(captura, `${l}.uncraft-meta.json`), 'utf8')).contentType; } catch { contentType = undefined; }
       return r.fulfill({ path: path.join(captura, l), contentType });
     });
+    // rolagem exata por posicao para a gravacao: a Lenis VERDADEIRA sem suavizacao (lenis-instantanea.mjs —
+    // a de mentira quebrava o codigo do site e congelava transicoes)
+    if (movimento) await page.addInitScript(lenisSemSuavizacao);
     if (movimento) await page.addInitScript(() => {
-      // rolagem exata por posicao para a gravacao (a suave do site interpolaria)
-      const Falso = function () { this.on = () => {}; this.raf = () => {}; this.destroy = () => {}; this.start = () => {}; this.stop = () => {}; this.scrollTo = (y) => window.scrollTo(0, typeof y === 'number' ? y : 0); this.resize = () => {}; };
-      Object.defineProperty(window, 'Lenis', { configurable: true, get: () => Falso, set: () => {} });
       // CAMINHO 3: o que cada <canvas> desenha (sequencia de quadros comandada pela rolagem, por
       // qualquer codigo do site). So imagens com endereco; o resto (video, outro canvas) e contado.
       const des = (window.__uDes = new WeakMap());

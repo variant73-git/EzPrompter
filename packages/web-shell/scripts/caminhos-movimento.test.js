@@ -490,3 +490,43 @@ describe('dono de canvas: o que a ficha sequencia toca nao vai para o plano', ()
     expect(assinaturasDeCanvasDaSequencia(fichas, canvas)).toEqual(['section:2 > canvas:1']);
   });
 });
+
+// bleibtgleich (2026-10-05): a Lenis de MENTIRA da gravacao nao tinha `dimensions`; o codigo do site lia
+// `lenis.dimensions.naiveDimensions`, dava erro, a transicao de entrada (Barba) nunca terminava e a canonica
+// saia com a altura da tela, sem rolar. A rolagem exata vem da Lenis VERDADEIRA sem suavizacao.
+describe('lenisSemSuavizacao: a Lenis do site continua inteira, so sem suavizacao', () => {
+  it('o site le a interface completa da Lenis verdadeira e a suavizacao vem desligada', async () => {
+    const { lenisSemSuavizacao } = await import('./lenis-instantanea.mjs');
+    const { chromium } = await import('playwright-core'); const b = await chromium.launch(); const p = await b.newPage();
+    try {
+      await p.addInitScript(lenisSemSuavizacao);   // init script so roda em NAVEGACAO (setContent nao o executa)
+      await p.route('http://lenis.test/', (r) => r.fulfill({ contentType: 'text/html', body: `<body><script>window.Lenis = class { constructor(o) { this.options = Object.assign({ lerp: 0.1, smoothWheel: true }, o); this.dimensions = { naiveDimensions: 7 }; } scrollTo(t, ops) { window.__ops = ops; } on() {} raf() {} };
+        const l = new window.Lenis({ lerp: 0.08, duration: 1.2, easing: (t) => t }); document.title = [l.dimensions.naiveDimensions, l.options.lerp, l.options.smoothWheel, l instanceof window.Lenis, 'duration' in l.options, typeof l.options.easing].join(':');
+        window.__ops = null; l.scrollTo(500, { duration: 2 }); document.title += ':' + (window.__ops && window.__ops.immediate);</script></body>` }));
+      await p.goto('http://lenis.test/');
+      // Astra: lerp 1 sozinho nao e instantaneo (duration+easing tem prioridade; e scrollTo do site anima)
+      expect(await p.title()).toBe('7:1:false:true:false:undefined:true');
+    } finally { await b.close(); }
+  });
+  it('site sem Lenis: nada muda (window.Lenis continua indefinido)', async () => {
+    const { lenisSemSuavizacao } = await import('./lenis-instantanea.mjs');
+    const { chromium } = await import('playwright-core'); const b = await chromium.launch(); const p = await b.newPage();
+    try { await p.addInitScript(lenisSemSuavizacao); await p.route('http://vazio.test/', (r) => r.fulfill({ contentType: 'text/html', body: '<body></body>' })); await p.goto('http://vazio.test/'); expect(await p.evaluate(() => typeof window.Lenis)).toBe('undefined'); } finally { await b.close(); }
+  });
+});
+
+describe('lenisSemSuavizacao com a Lenis REAL (Astra r2)', () => {
+  it('scrollTo do proprio site com duration chega na posicao NO MESMO instante; duration fica sem valor', async () => {
+    const { lenisSemSuavizacao } = await import('./lenis-instantanea.mjs');
+    const { readFileSync } = await import('node:fs');
+    const lenisJs = readFileSync(`${process.cwd()}/node_modules/lenis/dist/lenis.min.js`, 'utf8');
+    const { chromium } = await import('playwright-core'); const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 800, height: 600 } });
+    try {
+      await p.addInitScript(lenisSemSuavizacao);
+      await p.route('http://lenis-real.test/', (r) => r.fulfill({ contentType: 'text/html', body: '<body style="height:5000px;margin:0"><script src="/lenis.js"></script><script>const l = new Lenis({ duration: 2, easing: (t) => t }); l.scrollTo(500, { duration: 2 }); window.__r = [Math.round(scrollY), Math.round(l.animatedScroll), Math.round(l.targetScroll), String(l.options.duration)].join(":");</script></body>' }));
+      await p.route('http://lenis-real.test/lenis.js', (r) => r.fulfill({ contentType: 'text/javascript', body: lenisJs }));
+      await p.goto('http://lenis-real.test/');
+      expect(await p.evaluate(() => window.__r)).toBe('500:500:500:undefined');
+    } finally { await b.close(); }
+  });
+});

@@ -15,6 +15,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
+import { lenisSemSuavizacao } from './lenis-instantanea.mjs';
 import { servir } from './inventario-conteudo.mjs';
 import { coletarMarcando } from './compilar-movimento.mjs';
 
@@ -199,13 +200,10 @@ export async function gravar({ captura, extrator, canonico, passo = 100 }) {
   const canonSrv = await servir(path.resolve(canonico));
   const browser = await chromium.launch();
   try {
-    // captura VIVA, com a rolagem suave trocada por uma de mentira (rolagem exata por posição)
+    // captura VIVA, com a Lenis do site sem suavizacao (rolagem exata por posicao)
     const page = await browser.newPage({ viewport: { width: 1440, height: 1200 } });
     await page.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
-    await page.addInitScript(() => {
-      const Falso = function () { this.on = () => {}; this.raf = () => {}; this.destroy = () => {}; this.start = () => {}; this.stop = () => {}; this.scrollTo = (y) => window.scrollTo(0, typeof y === 'number' ? y : 0); this.resize = () => {}; };
-      Object.defineProperty(window, 'Lenis', { configurable: true, get: () => Falso, set: () => {} });
-    });
+    await page.addInitScript(lenisSemSuavizacao);   // Lenis verdadeira sem suavizacao (ver lenis-instantanea.mjs)
     await page.goto(`${origem}/index.html`, { waitUntil: 'load', timeout: 60000 }).catch(() => {});
     await page.waitForTimeout(3000);
     await page.evaluate(`window.__marca = (el, k) => { try { el.setAttribute('data-u-chave', k); } catch (e) {} return k; }; (${corpo.replace(/__marca\(/g, 'window.__marca(')})(${JSON.stringify(origem)}); true`);
