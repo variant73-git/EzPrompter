@@ -680,7 +680,7 @@ async function measure({ label, outDir, url, serveRoot, trajectory, plano = null
         if (arq.startsWith(path.resolve(plano.nativo)) && existsSync(arq)) { await route.fulfill({ contentType: 'text/html', body: injetarModoPlano(await readFile(arq, 'utf8'), { excluirCanvas: plano.excluirCanvas || [] }) }); return; }
       }
       if (planoCtx && u === target) {
-        const cfg = { src: `${planoCtx.origem}/index.html`, origemPlano: planoCtx.origem, colocacao: plano.colocacao, acopladas: plano.acopladas || [] };
+        const cfg = { src: `${planoCtx.origem}/index.html`, origemPlano: planoCtx.origem, colocacao: plano.colocacao };
         const canon = await readFile(path.join(serveRoot, 'index.html'), 'utf8');
         const tags = `<script type="application/json" data-u-plano-config>${JSON.stringify(cfg).replace(/</g, '\\u003c')}</script><script>${fonteDoHost().replace(/<\/script/gi, '<\\/script')}</script>`;
         await route.fulfill({ contentType: 'text/html', body: /<\/body>/i.test(canon) ? canon.replace(/<\/body>/i, `${tags}</body>`) : `${canon}${tags}` });

@@ -21,11 +21,12 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
 import { servir } from './inventario-conteudo.mjs';
-import { medirProprio, difere, fichasPorLeitura, PROPS_INLINE, preencherCss } from './gravar-trajetoria.mjs';
+import { medirProprio, leitorComMemoria, difere, fichasPorLeitura, PROPS_INLINE, preencherCss } from './gravar-trajetoria.mjs';
 import { extrairRegistro, resolverNaPagina, fichasDoIx3 } from './ler-ix3.mjs';
 import { lerGsapNaPagina, fichasDoGsap, CONTROLE_GSAP } from './ler-gsap.mjs';
 import { mapaDaCaptura, arquivoCapturado, mapaDeRemotas } from './mapa-da-captura.mjs';
 import { lenisSemSuavizacao } from './lenis-instantanea.mjs';
+import { gravarRastro } from './rastro-gravacao.mjs';
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > -1 ? process.argv[i + 1] : d; };
 
@@ -435,9 +436,16 @@ export function fichasDeSequencia({ amostras, sequencias, mapa, origem }) {
 
 async function gravarLeitura(page, passo, deslocamento = 0) {
   const t0 = Date.now();
+  // CRONOMETRO (2026-10-06): onde vai o tempo da gravacao — espera fixa x medir x lacos
+  const tempos = { paradas: 0, esperaMs: 0, medirMs: 0, rolarMs: 0, lacos: 0, lacosMs: 0, paradasSemMudanca: 0 };
+  const cron = async (campo, fn) => { const t = Date.now(); const r = await fn(); tempos[campo] += Date.now() - t; return r; };
   await page.evaluate((pi) => { window.__uPropsInline = pi; }, PROPS_INLINE);
   await page.evaluate(() => { let n = 0; window.__urec = () => { if (!document.body.hasAttribute('data-u-rec')) document.body.setAttribute('data-u-rec', 'pagina'); for (const el of document.body.querySelectorAll('*:not([data-u-rec])')) { if (/^(SCRIPT|STYLE|LINK|NOSCRIPT|TEMPLATE|META)$/.test(el.tagName)) continue; el.setAttribute('data-u-rec', String(++n)); } }; window.__urec(); });
   const amostras = [];
+  // o que cada canvas mostra vai na MESMA ida a pagina, logo depois de medir (antes: outra ida, ~100 ms cada
+  // numa pagina ocupada — 32 s no landonorris)
+  const lerTelas = () => Object.fromEntries(Array.from(document.querySelectorAll('canvas[data-u-rec]')).map((c) => { const r = window.__uDes && window.__uDes.get(c); return [c.getAttribute('data-u-rec'), r && r.ultimo ? r.ultimo.src : null]; }));
+  const medir = leitorComMemoria(page, 'data-u-rec', lerTelas);
   // deslocamento: grade alternativa (y = d, d+passo, ...) para gravar uma REFERENCIA independente da
   // que gera o caminho 1 — a regua de trajetoria corrige nela (regua-trajetoria.mjs)
   // a 1a amostra e SEMPRE y=0, fresca (r3 #4): o "topo" e o mesmo em qualquer grade, e quem se mexe
@@ -446,12 +454,24 @@ async function gravarLeitura(page, passo, deslocamento = 0) {
   for (let i = 0, y = 0; ; i += 1) {
     const max0 = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
     const lista = ys(max0); if (i >= lista.length) break; y = lista[i];
-    await page.evaluate((v) => { window.scrollTo(0, v); window.__urec(); }, y);
-    const lerTelas = () => page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll('canvas[data-u-rec]')).map((c) => { const r = window.__uDes && window.__uDes.get(c); return [c.getAttribute('data-u-rec'), r && r.ultimo ? r.ultimo.src : null]; })));
-    await page.waitForTimeout(300); const a = await page.evaluate(medirProprio, 'data-u-rec'); const telasA = await lerTelas();
-    await page.waitForTimeout(800); const b = await page.evaluate(medirProprio, 'data-u-rec'); const telas = await lerTelas();
+    await cron('rolarMs', () => page.evaluate((v) => { window.scrollTo(0, v); window.__urec(); }, y));
+    const tRolou = Date.now(); tempos.paradas += 1;
+    await cron('esperaMs', () => page.waitForTimeout(300)); const [a] = await cron('medirMs', medir);
+    // o canvas da 1a leitura sai a 0,5 s DA ROLAGEM: na gravacao antiga ele vinha depois de medir tudo (300 ms +
+    // ~200 ms no farmminerals) e e ele que decide se uma sequencia de quadros e rolagem suave. Lido junto com a
+    // medicao rapida (~325 ms) ele pegava o canvas ainda trocando de quadro e a sequencia do farmminerals virava
+    // `arrasto: 1` (comparacao com rastro completo, 2026-10-06)
+    await cron('esperaMs', () => page.waitForTimeout(Math.max(0, tRolou + 500 - Date.now()))); const telasA = await cron('medirMs', () => page.evaluate(lerTelas));
+    // a 2a leitura sai a 1,35 s DA ROLAGEM (relogio, nao "800 ms depois da 1a"): era o que a gravacao antiga
+    // fazia na pratica — 300 + o tempo de medir (~200 ms no farmminerals) + 800. Com a medicao rapida ela saia
+    // 185 ms antes e pegava revelacoes lentas no meio (2 do farmminerals disparavam uma parada depois)
+    await cron('esperaMs', () => page.waitForTimeout(Math.max(0, tRolou + 1350 - Date.now()))); const [b, telas] = await cron('medirMs', medir);
+    if (Object.keys(b).every((k) => !a[k] || !difere(a[k], b[k]))) tempos.paradasSemMudanca += 1;
     amostras.push({ y, a, b, telasA, telas });
   }
+  // TESTE DE LACO exatamente como sempre: cada suspeito na SUA parada do meio. Agrupar (Astra r1) e pular quem
+  // nao vira ficha (Astra r2) mudam o TRAJETO da pagina — e o historico de desenho dos canvas, lido depois
+  // daqui, depende dele.
   const suspeitos = new Map();   // y da parada do meio -> etiquetas
   const chaves = new Set(); amostras.forEach((s) => Object.keys(s.b).forEach((k) => chaves.add(k)));
   for (const k of chaves) {
@@ -460,13 +480,15 @@ async function gravarLeitura(page, passo, deslocamento = 0) {
     const y = amostras[t[Math.floor(t.length / 2)]].y; if (!suspeitos.has(y)) suspeitos.set(y, []); suspeitos.get(y).push(k);
   }
   const lacos = new Set();
+  const tLacos = Date.now(); tempos.lacos = suspeitos.size;
   for (const [y, ks] of suspeitos) {
     await page.evaluate((v) => window.scrollTo(0, v), y); await page.waitForTimeout(2500);
     const r1 = await page.evaluate(medirProprio, 'data-u-rec'); await page.waitForTimeout(700); const r2 = await page.evaluate(medirProprio, 'data-u-rec');
     for (const k of ks) if (difere(r1[k], r2[k])) lacos.add(k);
   }
+  tempos.lacosMs = Date.now() - tLacos;
   const sequencias = await page.evaluate(() => Array.from(document.querySelectorAll('canvas[data-u-rec]')).map((c) => { const r = window.__uDes && window.__uDes.get(c); return r ? { rec: c.getAttribute('data-u-rec'), ordem: r.ordem, outros: r.outros, ultimo: r.ultimo } : null; }).filter(Boolean));
-  return { amostras, lacos, sequencias, segundos: Math.round((Date.now() - t0) / 1000) };
+  return { amostras, lacos, sequencias, segundos: Math.round((Date.now() - t0) / 1000), tempos };
 }
 
 // etiqueta da gravacao -> id canonico (mesma pagina, mesmo objeto); as PARTES de um texto que o
@@ -619,6 +641,7 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
       // As sequencias de quadros (caminho 3) e as Lottie entram em todos.
       const modo = movimento === true ? 'leitura' : String(movimento);
       const leit = fichasPorLeitura({ ...gravacao, mapa }, passo);
+      if (process.env.UNCRAFT_RASTRO) await gravarRastro(process.env.UNCRAFT_RASTRO, gravacao, mapa);
       let ix = null; let relIx = null;
       if (modo.includes('ix3') || modo.includes('decl') || modo === 'todos') {   // Astra: `decl` chamado sozinho nao lia o IX3
         const fontes = await page.evaluate(() => Array.from(document.scripts).map((x) => (x.src ? { src: x.src } : { texto: x.textContent })));
@@ -668,7 +691,7 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
       // a gravacao do SITE por id canonico, ao lado do pacote: e a regua de trajetoria (o estado de
       // cada elemento em cada parada) contra a qual qualquer programa de movimento se compara
       await writeFile(path.join(path.dirname(path.resolve(saida)), 'gravacao-nativa.json'), JSON.stringify({ passo, deslocamento, ids, amostras: gravacaoPorId(gravacao, { ...mapa, ...mapaPartes }) }));
-      mov = { ...rm, amostras: gravacao.amostras.length, lacosMedidos: gravacao.lacos.size, lotties: lot.length, segundosGravando: gravacao.segundos };
+      mov = { ...rm, amostras: gravacao.amostras.length, lacosMedidos: gravacao.lacos.size, lotties: lot.length, segundosGravando: gravacao.segundos, temposGravando: gravacao.tempos };
     }
     // PLANO VISUAL NATIVO (opcao b): cenas em canvas/WebGL viram uma camada do nativo ao lado da canonica
     let relPlano = null;

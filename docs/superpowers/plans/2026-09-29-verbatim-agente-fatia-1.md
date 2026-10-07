@@ -1291,3 +1291,25 @@ Pedido do Adilson: "prossiga" (implementar a decisão 1: travar posição e tama
 - o limite "região justa ≤ 4×" é heurística; âncora num cartão maior que isso trava só ela e os pais;
 - **para a ligação no produto**: (a) o host do plano precisa rodar com o `<body>` pronto (injetado no `<head>` ele quebrava — `appendChild` em null); (b) nada pode mudar a janela da página sem mover o plano junto — o editor DENTRO da página encaixa os painéis com margem no `body` (224/248 px) e desalinha a cena; com os painéis flutuando (ou fora da página, como no produto desde 22/09) fica alinhado;
 - edição de MOVIMENTO (fichas) numa caixa travada ainda não passa pela trava — a decidir quando o clone canônico entrar no fluxo de Edit.
+
+## 182. Gravação mais curta — o que dá para cortar SEM mudar o resultado (e o que não dá) — 2026-10-06/07
+
+Pedido do Adilson: "dá pra encurtar isso? vamos nessa" (custo de tempo da cópia editável; IA = zero, conferido arquivo por arquivo). Decisão anterior no mesmo dia: **sem aviso de desalinhamento** — o detector (cada âncora medida a cada quadro, ninguém escutava) saiu do host do plano.
+
+**Onde ia o tempo (cronômetro novo no relatório, `temposGravando`):** farmminerals 7,3 min = 198 paradas × espera fixa (219 s) + medir (83 s) + 36 testes de laço (132 s); landonorris 4,9 min; gilhuybrecht 61 s (o "~2 min" dito antes valia só para o gil — corrigido na hora).
+
+**Entregue (resultado igual ao antigo, provado):**
+- leitura com memória (a página devolve só o que mudou; objetos novos a cada leitura) — medir 83 s → 9 s no farm;
+- **horários das leituras ancorados no relógio da rolagem**: A 300 ms, canvas-A 500 ms, B + canvas-B 1350 ms. ⭐ Descoberta: na gravação antiga esses horários dependiam de QUANTO DEMORAVA MEDIR (300 + medir + 800…) — o resultado dependia da velocidade da máquina. Ao medir rápido, uma sequência de canvas do farm virou "rolagem suave" e duas revelações dispararam 100 px depois; ancorar no relógio devolveu o resultado e tirou a dependência da máquina;
+- fase de laço IDÊNTICA à antiga (agrupar e filtrar foram tentados e retirados — mudam o trajeto da página e o histórico de desenho dos canvas, Astra r1/r2);
+- `comparar-gravacoes.mjs` + rastro completo (`UNCRAFT_RASTRO`): valores das fichas com tolerância só nos canais de pixel/visuais DENTRO dos valores animados (resto exato), as duas leituras, canvas por parada, laços, histórico de desenho com último quadro, página montada.
+- Prova: 2 rodadas do código ORIGINAL (cópia congelada) × 2 do novo, 3 sites: **zero valores de animação diferentes** em todas as 18 comparações; canvas, laços e sequências iguais; páginas iguais (diferenças só onde o original já varia contra si mesmo).
+- Tempo: farm 453–456 → 420–424 s (−7%); lando 302–318 → 263–275 s (−13%); gil 71–80 → 64 s (−15%).
+
+**Diferença declarada (não é "ruído"):** um elemento da abertura do landonorris fica invisível e PISCA ao acaso; a ficha dele só existe se alguma leitura pega uma piscada. Piscadas capturadas: original 1, 1, 2, 2; novo 0, 5, 28, 11, 0, 8 — a medição lenta antiga travava a página ~170 ms duas vezes por parada e moldava a amostragem. Nenhuma versão grava algo com sentido para um efeito aleatório.
+
+**Rejeitado com evidência:** relógio virtual do Chromium (`Emulation.setVirtualTimePolicy`) — no farm a página recebe **0 quadros de animação** em 1350 ms virtuais (162 em tempo real); no gil saíram 10 fichas espúrias. Gravar em várias abas — cada aba reconstrói a história da página do seu jeito (revelações de uma vez só, ordem dos quadros de canvas), sem como garantir o mesmo resultado (advise do Codex).
+
+**O que sobra é o protocolo:** 198 paradas × ~1,4 s + 3,6 s por suspeito de laço. Cortar mais exige MUDAR o protocolo e validar contra o site vivo (régua visual), não contra a gravação antiga — decisão de produto: (a) testar laços em posições compartilhadas (farm −1,5 min); (b) passo de 150 px (−⅓ das paradas, menos precisão nas animações presas à rolagem); (c) assentar em 1,0 s (revelações lentas podem ser cortadas).
+
+Auditoria Astra: 4 rodadas, 6 achados, todos procedentes (agrupamento de laço não equivalente; comparador fraco; filtro de laço muda o trajeto; ficha sumida não é ruído; tolerância padrão de 1; tolerância pelo nome em vez do caminho). ⭐ Lição: **a régua de equivalência é o produto mais delicado da tarefa** — três dos seis achados foram no próprio comparador; um "zero diferenças" de régua fraca fez eu anunciar −26% que não era igual.

@@ -391,7 +391,7 @@
   // e a seção que as contém, data-u-trava="regiao". Mudar posição ou tamanho delas
   // desalinharia a cena, então o editor recusa; texto, cor e fonte seguem editáveis.
   // Travado = dentro de uma trava OU contendo uma (o pai que cresce também a move).
-  // Fora das regiões a edição é livre — o host do plano avisa se algo desalinhar.
+  // Fora das regiões a edição é livre, sem aviso (decisão do Adilson, 2026-10-06).
   var TRAVA_SEL = '[data-u-trava]';
   // quem CONTEM uma destas tambem trava; a ancora 'fixa' (presa a tela) nao prende os pais
   var TRAVA_QUE_PRENDE_O_PAI = '[data-u-trava="layout"],[data-u-trava="regiao"]';

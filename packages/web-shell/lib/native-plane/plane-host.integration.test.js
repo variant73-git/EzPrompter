@@ -62,13 +62,4 @@ describe('montarPlano', () => {
     expect(await p.evaluate(() => [window.__uPlano.motivo, document.querySelectorAll('iframe[data-u-plano]').length])).toEqual(['navegou', 0]);
     await p.close();
   });
-  it('regiao acoplada que se MOVE avisa desalinhamento; e avisa de novo se mover mais', async () => {
-    const p = await abrir(`http://localhost:${porta}/nativo`, { origemPlano: `http://localhost:${porta}`, colocacao: 'front', acopladas: ['u-alvo'] });
-    await p.waitForFunction(() => window.__uPlano && window.__uPlano.estado === 'pronto', null, { timeout: 10000 });
-    const evs = await p.evaluate(() => new Promise((ok) => { const n = []; document.addEventListener('u-plano-desalinhado', (e) => n.push(e.detail));
-      const d = document.createElement('div'); d.style.height = '160px'; document.body.insertBefore(d, document.body.firstChild);
-      setTimeout(() => { d.style.height = '200px'; }, 1200); setTimeout(() => ok(n), 2600); }));
-    expect(evs.map((e) => e.dy)).toEqual([160, 200]);
-    await p.close();
-  });
 });

@@ -4,10 +4,11 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 // testes de navegador real: sob a suite inteira o padrao de 5 s estoura por carga, nao por defeito
 vi.setConfig({ testTimeout: 60000, hookTimeout: 60000 });
-import { fichasPorLeitura, difere, medirProprio } from './gravar-trajetoria.mjs';
+import { leitorComMemoria, fichasPorLeitura, difere, medirProprio } from './gravar-trajetoria.mjs';
 import { fichasDeSequencia, etiquetasQueSeMexem, normalizar, mapasDaPagina, mapaDeRemotas, mapaDaCaptura, remotasNaPagina, assinaturasDeCanvasDaSequencia, marcarTravas, gravarPlano } from './normalizar-clone.mjs';
 import { runtimeFetchShim } from '../lib/native-clone/runtime-fetch-map.js';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { compararFichas, compararRastros, diferencaDeValor } from './comparar-gravacoes.mjs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { comparar, conferirIds, idsDoCorpo } from './regua-trajetoria.mjs';
@@ -528,6 +529,76 @@ describe('lenisSemSuavizacao com a Lenis REAL (Astra r2)', () => {
       await p.goto('http://lenis-real.test/');
       expect(await p.evaluate(() => window.__r)).toBe('500:500:500:undefined');
     } finally { await b.close(); }
+  });
+});
+
+describe('gravacao mais curta (2026-10-06): mesmo resultado, menos tempo', () => {
+  it('leitor com memoria devolve EXATAMENTE a leitura completa, mudanca a mudanca (inclusive elemento novo, que some e reordenado)', async () => {
+    const { chromium } = await import('playwright-core'); const b = await chromium.launch(); const page = await b.newPage();
+    try {
+      await page.setContent('<body data-k="pg"><div data-k="a" style="width:10px">a</div><div data-k="b">b</div><p data-k="c">c</p></body>');
+      const ler = leitorComMemoria(page, 'data-k'); const completa = () => page.evaluate(medirProprio, 'data-k');
+      const passos = [
+        () => {},
+        (d) => { d.querySelector('[data-k=a]').style.transform = 'translateX(30px)'; },
+        (d) => { d.querySelector('[data-k=b]').style.opacity = '0.4'; d.querySelector('[data-k=a]').style.width = '20px'; },
+        (d) => { const n = d.createElement('span'); n.setAttribute('data-k', 'novo'); n.textContent = 'n'; d.body.insertBefore(n, d.body.firstChild); },
+        (d) => { d.querySelector('[data-k=c]').style.display = 'none'; },
+        (d) => { d.querySelector('[data-k=b]').remove(); },
+        (d) => { d.body.appendChild(d.querySelector('[data-k=a]')); },
+      ];
+      let enviados = 0;
+      for (const passo of passos) {
+        await page.evaluate(`(${passo.toString()})(document)`);
+        const r = await ler(); const c = await completa();
+        expect(Object.keys(r)).toEqual(Object.keys(c));   // MESMA ordem (as fichas sao numeradas nela)
+        expect(r).toEqual(c);
+        enviados += 1;
+      }
+      expect(enviados).toBe(passos.length);
+    } finally { await b.close(); }
+  });
+  it('leitor: objetos NOVOS a cada leitura (preencher um nao mexe no outro) e o extra roda na mesma ida', async () => {
+    const { chromium } = await import('playwright-core'); const b = await chromium.launch(); const page = await b.newPage();
+    try {
+      await page.setContent('<body data-k="pg"><canvas data-k="c"></canvas><div data-k="a">a</div></body>');
+      const ler = leitorComMemoria(page, 'data-k', () => document.querySelectorAll('canvas').length);
+      const [r1, x1] = await ler(); const [r2, x2] = await ler();
+      expect(x1).toBe(1); expect(x2).toBe(1);
+      expect(r2.a).toEqual(r1.a); expect(r2.a).not.toBe(r1.a);
+      r1.a.css = { width: '9px' };
+      const [r3] = await ler(); expect(r3.a.css).toBeUndefined();
+    } finally { await b.close(); }
+  });
+});
+
+describe('comparador de gravacoes: enxerga VALOR, nao so alvo e janela (Astra/Codex)', () => {
+  const f = (over = {}) => ({ id: 'm-leit-001', alvo: '#u-a', quadros: [{ x: 0, opacity: 0, ease: 'none' }, { x: 40, opacity: 1, ease: 'none' }], curva: 'none', motor: { tipo: 'rolagem', inicio: 100, fim: 300, arrasto: true }, ...over });
+  it('igual (e numeracao diferente) = sem diferenca; dentro da tolerancia = sem diferenca', () => {
+    expect(compararFichas([f()], [f({ id: 'm-leit-009' })]).valoresDiferentes).toEqual([]);
+    expect(compararFichas([f()], [f({ quadros: [{ x: 0.6, opacity: 0.005, ease: 'none' }, { x: 40, opacity: 1, ease: 'none' }] })]).valoresDiferentes).toEqual([]);
+  });
+  it('mesmo alvo e janela com VALORES diferentes e acusado; quadro a mais tambem; janela diferente vira so-num-lado', () => {
+    expect(compararFichas([f()], [f({ quadros: [{ x: 0, opacity: 0, ease: 'none' }, { x: 400, opacity: 1, ease: 'none' }] })]).valoresDiferentes.length).toBe(1);
+    expect(compararFichas([f()], [f({ quadros: [{ x: 0, opacity: 0 }, { x: 20, opacity: 0.5 }, { x: 40, opacity: 1 }] })]).valoresDiferentes.length).toBe(1);
+    expect(compararFichas([f()], [f({ curva: 'power2.out' })]).valoresDiferentes.length).toBe(1);
+    // numero fora dos canais de pixel e EXATO (Astra r3): duracao 0,8 x 1,2 nao pode passar
+    expect(compararFichas([f({ duracao: 0.8 })], [f({ duracao: 1.2 })]).valoresDiferentes.length).toBe(1);
+    expect(compararFichas([f({ duracao: 0.8 })], [f({ duracao: 0.8 })]).valoresDiferentes.length).toBe(0);
+    const r = compararFichas([f()], [f({ motor: { tipo: 'rolagem', inicio: 200, fim: 300, arrasto: true } })]);
+    expect([r.soA.length, r.soB.length]).toEqual([1, 1]);
+    expect(diferencaDeValor('120px', '121px', 'width', true)).toBeNull(); expect(diferencaDeValor('120px', '130px', 'width', true)).not.toBeNull();
+    // folga SO dentro dos valores animados (Astra r4): um x fora deles (ponto de curva, parametro) e exato
+    expect(compararFichas([f({ pontos: [{ x: 0, y: 0 }] })], [f({ pontos: [{ x: 1, y: 1 }] })]).valoresDiferentes.length).toBe(1);
+    expect(compararFichas([f({ quadros: [{ x: 0, opacity: 0, ease: 'none' }, { x: 40.8, opacity: 1, ease: 'none' }] })], [f()]).valoresDiferentes.length).toBe(0);
+  });
+  it('rastro: compara a leitura A (que separa revelacao de rolagem), canvas, lacos e historico de desenho', () => {
+    const st = (x) => ({ x, y: 0, sx: 1, sy: 1, r: 0, op: 1, vis: 1, vef: 1, clip: 'none', tres: false, bg: 'rgba(0, 0, 0, 0)' });
+    const R = (ax, tela, lacos = []) => ({ amostras: [{ y: 0, a: { 'u-a': st(ax) }, b: { 'u-a': st(0) }, telasA: { 'u-c': tela }, telas: { 'u-c': tela } }], lacos, sequencias: [] });
+    expect(compararRastros(R(0, 'f1.png'), R(0, 'f1.png'))).toMatchObject({ aDiferente: 0, bDiferente: 0, telasDiferentes: 0, lacosIguais: true });
+    expect(compararRastros(R(0, 'f1.png'), R(30, 'f1.png')).aDiferente).toBe(1);
+    expect(compararRastros(R(0, 'f1.png'), R(0, 'f2.png')).telasDiferentes).toBe(2);
+    expect(compararRastros(R(0, 'f1.png'), R(0, 'f1.png', ['u-a'])).lacosIguais).toBe(false);
   });
 });
 

@@ -77,6 +77,36 @@ export function medirProprio(atributo) {
   return out;
 }
 
+// LEITOR COM MEMORIA (2026-10-06, gravacao mais curta): a pagina guarda o texto da ultima leitura de cada
+// etiqueta e devolve so as que mudaram (e a ordem, quando muda); o Node remonta a leitura INTEIRA na ordem do
+// documento, com OBJETOS NOVOS a cada leitura (como medirProprio: quem preenche um estado depois nao mexe no
+// de outra parada). Mesmo resultado, uma fracao do trafego — mandar milhares de estados iguais era boa parte
+// do tempo de medir (farmminerals: 83 s em 7 min). `extra` (opcional) roda na MESMA ida a pagina, LOGO DEPOIS
+// de medir, e o seu valor volta junto: [leitura, extra]. Numa pagina ocupada cada ida custa ~100 ms.
+export function leitorComMemoria(page, atributo, extra = null) {
+  let ultima = {};
+  return async () => {
+    const d = await page.evaluate(([fonte, at, fonteExtra]) => {
+      const mem = (window.__uMem ||= {}); const m = (mem[at] ||= { fn: new Function(`return (${fonte})`)(), prev: new Map(), ordem: '' });
+      const atual = m.fn(at);
+      const ext = fonteExtra ? new Function(`return (${fonteExtra})`)()() : undefined;
+      const mudou = {}; const vivos = new Set();
+      for (const k of Object.keys(atual)) { vivos.add(k); const txt = JSON.stringify(atual[k]); if (m.prev.get(k) !== txt) { m.prev.set(k, txt); mudou[k] = atual[k]; } }
+      for (const k of [...m.prev.keys()]) if (!vivos.has(k)) m.prev.delete(k);
+      const chaves = Object.keys(atual); const ordem = chaves.join('\u0001');
+      const novaOrdem = ordem !== m.ordem; m.ordem = ordem;
+      return { mudou, ordem: novaOrdem ? chaves : null, ext };
+    }, [medirProprio.toString(), atributo, extra ? extra.toString() : null]);
+    const chaves = d.ordem || Object.keys(ultima);
+    const nova = {};
+    for (const k of chaves) nova[k] = Object.prototype.hasOwnProperty.call(d.mudou, k) ? d.mudou[k] : structuredClone(ultima[k]);
+    ultima = nova;
+    // a memoria fica com a sua PROPRIA copia: quem receber `nova` pode preencher campos (preencherCss)
+    const devolvida = {}; for (const k of chaves) devolvida[k] = structuredClone(nova[k]);
+    return extra ? [devolvida, d.ext] : devolvida;
+  };
+}
+
 const LIM = { px: 1, esc: 0.005, rot: 0.5, op: 0.01 };
 function cssDifere(u, v) {
   if (!u || !v) return false;   // o canal nasce na 1a leitura inline; antes dela vale o primeiro valor visto
