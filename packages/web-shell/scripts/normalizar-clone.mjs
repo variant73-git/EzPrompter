@@ -434,10 +434,35 @@ export function fichasDeSequencia({ amostras, sequencias, mapa, origem }) {
   return { fichas, arquivos: [...arquivos], relatorio };
 }
 
+// PROTOCOLO DA GRAVACAO (decisao do Adilson, 2026-10-07, pela bateria custo x qualidade: 5 sites x 8
+// combinacoes, regua de trajetoria contra o site vivo — plano §183). Padrao = laco agrupado + leitura assentada
+// a 1,0 s: -30% de tempo em media (-22% a -36%) sem perda medivel (elementos fieis iguais nos 5 sites). O passo
+// 150 px foi REPROVADO (perde ate 1/3 da fidelidade de movimento). Chaves:
+//   UNCRAFT_ASSENTAR_MS=<ms>     hora da leitura assentada depois da rolagem (padrao 1000; antes 1350)
+//   UNCRAFT_LACOS_AGRUPADOS=0    volta a testar cada suspeito de laco na sua parada do meio (padrao: agrupados
+//                                numa parada onde todos mudaram, cobertura gulosa)
+//   --passo                      distancia entre paradas (padrao 100)
+// Protocolo antigo, para comparar: UNCRAFT_ASSENTAR_MS=1350 UNCRAFT_LACOS_AGRUPADOS=0.
+const ASSENTAR_MS = Number(process.env.UNCRAFT_ASSENTAR_MS) || 1000;
+const LACOS_AGRUPADOS = process.env.UNCRAFT_LACOS_AGRUPADOS !== '0';
+export const PROTOCOLO_GRAVACAO = { assentarMs: ASSENTAR_MS, lacosAgrupados: LACOS_AGRUPADOS };
+export function coberturaDeLacos(cand, ys) {
+  const suspeitos = new Map(); const restantes = new Set(cand.keys());
+  while (restantes.size) {
+    const conta = new Map();
+    for (const k of restantes) for (const i of cand.get(k)) conta.set(i, (conta.get(i) || 0) + 1);
+    let melhor = -1; let n = -1;
+    for (const [i, c] of conta) if (c > n || (c === n && i < melhor)) { melhor = i; n = c; }
+    const ks = [...restantes].filter((k) => cand.get(k).includes(melhor));
+    suspeitos.set(ys[melhor], ks); ks.forEach((k) => restantes.delete(k));
+  }
+  return suspeitos;
+}
+
 async function gravarLeitura(page, passo, deslocamento = 0) {
   const t0 = Date.now();
   // CRONOMETRO (2026-10-06): onde vai o tempo da gravacao — espera fixa x medir x lacos
-  const tempos = { paradas: 0, esperaMs: 0, medirMs: 0, rolarMs: 0, lacos: 0, lacosMs: 0, paradasSemMudanca: 0 };
+  const tempos = { paradas: 0, esperaMs: 0, medirMs: 0, rolarMs: 0, lacos: 0, lacosMs: 0, paradasSemMudanca: 0, protocolo: { ...PROTOCOLO_GRAVACAO, passo } };
   const cron = async (campo, fn) => { const t = Date.now(); const r = await fn(); tempos[campo] += Date.now() - t; return r; };
   await page.evaluate((pi) => { window.__uPropsInline = pi; }, PROPS_INLINE);
   await page.evaluate(() => { let n = 0; window.__urec = () => { if (!document.body.hasAttribute('data-u-rec')) document.body.setAttribute('data-u-rec', 'pagina'); for (const el of document.body.querySelectorAll('*:not([data-u-rec])')) { if (/^(SCRIPT|STYLE|LINK|NOSCRIPT|TEMPLATE|META)$/.test(el.tagName)) continue; el.setAttribute('data-u-rec', String(++n)); } }; window.__urec(); });
@@ -465,20 +490,23 @@ async function gravarLeitura(page, passo, deslocamento = 0) {
     // a 2a leitura sai a 1,35 s DA ROLAGEM (relogio, nao "800 ms depois da 1a"): era o que a gravacao antiga
     // fazia na pratica — 300 + o tempo de medir (~200 ms no farmminerals) + 800. Com a medicao rapida ela saia
     // 185 ms antes e pegava revelacoes lentas no meio (2 do farmminerals disparavam uma parada depois)
-    await cron('esperaMs', () => page.waitForTimeout(Math.max(0, tRolou + 1350 - Date.now()))); const [b, telas] = await cron('medirMs', medir);
+    await cron('esperaMs', () => page.waitForTimeout(Math.max(0, tRolou + ASSENTAR_MS - Date.now()))); const [b, telas] = await cron('medirMs', medir);
     if (Object.keys(b).every((k) => !a[k] || !difere(a[k], b[k]))) tempos.paradasSemMudanca += 1;
     amostras.push({ y, a, b, telasA, telas });
   }
   // TESTE DE LACO exatamente como sempre: cada suspeito na SUA parada do meio. Agrupar (Astra r1) e pular quem
   // nao vira ficha (Astra r2) mudam o TRAJETO da pagina — e o historico de desenho dos canvas, lido depois
   // daqui, depende dele.
-  const suspeitos = new Map();   // y da parada do meio -> etiquetas
+  let suspeitos = new Map();   // y da parada do meio -> etiquetas
   const chaves = new Set(); amostras.forEach((s) => Object.keys(s.b).forEach((k) => chaves.add(k)));
+  const cand = new Map();
   for (const k of chaves) {
     const t = amostras.map((s, i) => (s.a[k] && s.b[k] && difere(s.a[k], s.b[k]) ? i : -1)).filter((i) => i >= 0);
     if (t.length < 3) continue;
+    cand.set(k, t);
     const y = amostras[t[Math.floor(t.length / 2)]].y; if (!suspeitos.has(y)) suspeitos.set(y, []); suspeitos.get(y).push(k);
   }
+  if (LACOS_AGRUPADOS) suspeitos = coberturaDeLacos(cand, amostras.map((s) => s.y));
   const lacos = new Set();
   const tLacos = Date.now(); tempos.lacos = suspeitos.size;
   for (const [y, ks] of suspeitos) {

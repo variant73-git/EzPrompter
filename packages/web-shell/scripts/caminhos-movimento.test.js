@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 // testes de navegador real: sob a suite inteira o padrao de 5 s estoura por carga, nao por defeito
 vi.setConfig({ testTimeout: 60000, hookTimeout: 60000 });
 import { leitorComMemoria, fichasPorLeitura, difere, medirProprio } from './gravar-trajetoria.mjs';
-import { fichasDeSequencia, etiquetasQueSeMexem, normalizar, mapasDaPagina, mapaDeRemotas, mapaDaCaptura, remotasNaPagina, assinaturasDeCanvasDaSequencia, marcarTravas, gravarPlano } from './normalizar-clone.mjs';
+import { fichasDeSequencia, etiquetasQueSeMexem, normalizar, mapasDaPagina, mapaDeRemotas, mapaDaCaptura, remotasNaPagina, assinaturasDeCanvasDaSequencia, marcarTravas, gravarPlano, coberturaDeLacos, PROTOCOLO_GRAVACAO } from './normalizar-clone.mjs';
 import { runtimeFetchShim } from '../lib/native-clone/runtime-fetch-map.js';
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { compararFichas, compararRastros, diferencaDeValor } from './comparar-gravacoes.mjs';
@@ -569,6 +569,21 @@ describe('gravacao mais curta (2026-10-06): mesmo resultado, menos tempo', () =>
       r1.a.css = { width: '9px' };
       const [r3] = await ler(); expect(r3.a.css).toBeUndefined();
     } finally { await b.close(); }
+  });
+});
+
+describe('protocolo da gravacao (decisao 2026-10-07: laco agrupado + assentar a 1,0 s)', () => {
+  it('padrao e o protocolo decidido (o antigo so por chave)', () => {
+    if (process.env.UNCRAFT_ASSENTAR_MS || process.env.UNCRAFT_LACOS_AGRUPADOS) return;
+    expect(PROTOCOLO_GRAVACAO).toEqual({ assentarMs: 1000, lacosAgrupados: true });
+  });
+  it('laco agrupado: cada suspeito cai numa parada onde ele MUDOU, e varios dividem a mesma', () => {
+    const ys = [0, 100, 200, 300, 400, 500, 600, 700, 800, 900];
+    const cand = new Map([['a', [1, 2, 3]], ['b', [3, 4, 5]], ['c', [7, 8, 9]], ['d', [2, 3, 8]]]);
+    const s = coberturaDeLacos(cand, ys);
+    expect([...s.entries()]).toEqual([[300, ['a', 'b', 'd']], [700, ['c']]]);
+    for (const [y, ks] of s) for (const k of ks) expect(cand.get(k)).toContain(ys.indexOf(y));
+    expect(coberturaDeLacos(new Map(), ys).size).toBe(0);
   });
 });
 

@@ -1313,3 +1313,23 @@ Pedido do Adilson: "dá pra encurtar isso? vamos nessa" (custo de tempo da cópi
 **O que sobra é o protocolo:** 198 paradas × ~1,4 s + 3,6 s por suspeito de laço. Cortar mais exige MUDAR o protocolo e validar contra o site vivo (régua visual), não contra a gravação antiga — decisão de produto: (a) testar laços em posições compartilhadas (farm −1,5 min); (b) passo de 150 px (−⅓ das paradas, menos precisão nas animações presas à rolagem); (c) assentar em 1,0 s (revelações lentas podem ser cortadas).
 
 Auditoria Astra: 4 rodadas, 6 achados, todos procedentes (agrupamento de laço não equivalente; comparador fraco; filtro de laço muda o trajeto; ficha sumida não é ruído; tolerância padrão de 1; tolerância pelo nome em vez do caminho). ⭐ Lição: **a régua de equivalência é o produto mais delicado da tarefa** — três dos seis achados foram no próprio comparador; um "zero diferenças" de régua fraca fez eu anunciar −26% que não era igual.
+
+## 183. Protocolo da gravação: custo × qualidade medido — laço agrupado + assentar a 1,0 s — 2026-10-07/08
+
+Pedido do Adilson: "depende do quanto ganha de tempo vs perda de qualidade… descubra qual a melhor combinação". Decisão dele no fim: **1,0 s (seguro)**.
+
+**Método:** 5 sites fixos (farmminerals IX3+GSAP; gsap.com; landonorris Rive+WebGL; uptechsoft Framer; bleibtgleich Barba+GSAP) × as 8 combinações de L (suspeitos de laço testados juntos, cobertura gulosa), A (leitura assentada a 1,0 s em vez de 1,35 s) e P (passo 150 px); protocolo antigo rodado 2× (variação natural) + piso "sem animação". Qualidade = régua de trajetória contra uma gravação de referência independente (grade deslocada 37 px), e — depois da auditoria — comparação ANIMAÇÃO A ANIMAÇÃO (`comparar-gravacoes.mjs`), mais sensível.
+
+| combinação | tempo médio | fidelidade mantida (pior site) | elementos fiéis |
+|---|---|---|---|
+| L | −10% | 100% | iguais |
+| A | −17% | 95% | iguais |
+| **L+A (adotado)** | **−30%** (−22..−36%) | 92% (gsap.com; ruído dele 95–105%) | iguais (lando 108 × 109) |
+| P | −26% | 67% | caem (16→7, 112→85) |
+| L+P / P+A / L+P+A | −38% / −41% / −48% | 67% | caem |
+
+Espera menor (com L): 0,8 s → −40%, régua sem perda, 8–10 de 150 animações do farm e 8 de 175 do lando disparam uma parada depois; 0,6 s → −48%, perde no bleibtgleich (16→13 fiéis) e desloca 30–33 de 150 no farm. **1,0 s: 4–6 de 150 (farm) e 4 de 175 (lando, ruído 2) disparam ~100 px depois, estado final igual.** L sozinho não mudou NENHUMA animação no farm (0 diferenças), nem as sequências de canvas, nem os laços onde o site não é ruidoso.
+
+**Padrão novo:** `UNCRAFT_ASSENTAR_MS` 1000 e laços agrupados; protocolo antigo por `UNCRAFT_ASSENTAR_MS=1350 UNCRAFT_LACOS_AGRUPADOS=0`; o relatório grava o protocolo usado. Régua ganhou `UNCRAFT_REGUA_TOLERAR_IDS=<n>` (uptechsoft varia a estrutura entre cargas: um texto `<p>`/`<span>`; elemento da referência ausente no clone continua contando como erro). Tempo no node: farm 7 → 4,5 min; lando 4,5 → 3,5; sites pequenos ~1,5 → ~1 min.
+
+**Auditoria Astra (1 rodada, sem defeito de código):** a prova tinha 1 rodada por braço, a régua mede um instante por parada e o laço agrupado muda o trajeto — respondido com a comparação animação a animação acima e com o efeito real declarado. ⭐ Lição: **meu palpite errou o sinal** — achei a espera menor a mais arriscada e o passo maior quase de graça; foi o contrário. Lição 2: **a régua de trajetória quase não vê disparo atrasado em 100 px** (0,760 → 0,757 com 30 deslocadas) — para decidir protocolo, comparar as animações geradas, não só a nota. ⚠️ O disco do Mac encheu durante a bateria (rascunhos de ~200 MB por site × combinação); limpar o rascunho ao fim de cada bateria.

@@ -197,7 +197,13 @@ if (process.argv[1] && process.argv[1].endsWith('regua-trajetoria.mjs')) {
   const prog = programa || path.join(arg('--canonico'), 'motion.json');
   const hashProg = (await import('node:crypto')).createHash('sha1').update(await readFile(prog)).digest('hex').slice(0, 12);
   const ids = gravacao.ids ? conferirIds(gravacao.ids, medida.idsCanon) : { ok: false, faltam: ['referencia sem lista de ids'] };
+  // UNCRAFT_REGUA_TOLERAR_IDS=<n> (2026-10-07, bateria custo x qualidade): site cuja estrutura varia um pouco
+  // entre cargas (uptechsoft: um texto <p> numa, <span> na outra) — aceita ate n nomes divergentes e julga o
+  // que existe nos dois; elemento da referencia ausente no clone conta como ERRO (nunca some da conta)
+  const tolerar = Number(process.env.UNCRAFT_REGUA_TOLERAR_IDS) || 0;
+  const divergentes = ids.ok ? 0 : ids.faltam.length + ids.sobram.length + ids.outraTag.length;
+  if (!ids.ok && divergentes <= tolerar) { ids.ok = true; ids.tolerados = divergentes; }
   if (!ids.ok) { console.log(JSON.stringify({ veredito: 'RECUSADA: os ids da referencia nao sao os do clone', faltam: ids.faltam.slice(0, 10), sobram: ids.sobram.slice(0, 10), outraTag: ids.outraTag.slice(0, 10), contagem: [ids.faltam.length, ids.sobram.length, ids.outraTag.length] }, null, 1)); process.exit(2); }
   if (arg('--salvar')) await (await import('node:fs/promises')).writeFile(arg('--salvar'), JSON.stringify(medida));
-  console.log(JSON.stringify({ programa: path.basename(prog), hashPrograma: hashProg, ...comparar(gravacao, medida), deslocamento: gravacao.deslocamento ?? 0, segundos: Math.round((Date.now() - t0) / 1000) }, null, 1));
+  console.log(JSON.stringify({ programa: path.basename(prog), hashPrograma: hashProg, ...comparar(gravacao, medida), deslocamento: gravacao.deslocamento ?? 0, ...(ids.tolerados ? { idsToleradas: ids.tolerados } : {}), segundos: Math.round((Date.now() - t0) / 1000) }, null, 1));
 }
