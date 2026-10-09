@@ -16,7 +16,7 @@ vi.mock('./motion-editor/NativeEditViewport.jsx', () => ({
   ),
 }));
 vi.mock('./NodeProgressRing.jsx', () => ({
-  NodeProgressRing: () => null,
+  NodeProgressRing: ({ pct }) => <div data-testid="progress-ring" data-pct={pct} />,
   useGenerationProgress: () => 0,
 }));
 vi.mock('../lib/thumb-queue.js', () => ({
@@ -96,6 +96,21 @@ describe('CanvasNode native editor routing', () => {
       reason: 'runtime-unavailable',
       code: 'runtime_session_unavailable',
     });
+  });
+
+  it('preparando a cópia: node borrado, número e anel com a porcentagem real', () => {
+    const { container } = renderNode({}, { editing: false, canonicalPrep: { status: 'running', pct: 42 } });
+    expect(container.querySelector('.cnode.canonical-prep')).not.toBeNull();
+    expect(screen.getByRole('progressbar', { name: 'Preparing editable copy' })).toHaveAttribute('aria-valuenow', '42');
+    expect(screen.getByTestId('progress-ring')).toHaveAttribute('data-pct', '42');
+  });
+
+  it('falha da cópia: escolhas no node, sem anel', () => {
+    const onCanonicalOpenLive = vi.fn();
+    renderNode({}, { editing: false, canonicalPrep: { status: 'failed', pct: 57, errorCode: 'recording_failed' }, onCanonicalOpenLive });
+    expect(screen.queryByTestId('progress-ring')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open live clone instead' }));
+    expect(onCanonicalOpenLive).toHaveBeenCalledTimes(1);
   });
 });
 

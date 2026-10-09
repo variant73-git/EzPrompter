@@ -6,6 +6,7 @@ import CanvasEditorCore from './editor/CanvasEditorCore.jsx';
 import NativeEditViewport from './motion-editor/NativeEditViewport.jsx';
 import { nodeOrigin } from '../lib/node-origin.js';
 import { NodeProgressRing, useGenerationProgress } from './NodeProgressRing.jsx';
+import CanonicalPrepOverlay from './CanonicalPrepOverlay.jsx';
 import { estimatedDurationMs } from '../lib/generation-progress.js';
 import MdPreviewBody from './node-bodies/MdPreviewBody.jsx';
 import PromptBody from './node-bodies/PromptBody.jsx';
@@ -385,7 +386,8 @@ export default function CanvasNode({
   incomingEdges = [], hasOutgoingEdges = false, draftActive, runStatus = null,
   removing = false, removingOutside = false, removeFromMenu = false, inSection = false,
   onRemoveFromSection, onCancelRemove, scale = 1, debit = null,
-  canRunFromHere = false, flowRunning = false, onRunFromHere, onStopFlow, getRunFromHereEst
+  canRunFromHere = false, flowRunning = false, onRunFromHere, onStopFlow, getRunFromHereEst,
+  canonicalPrep = null, onCanonicalRetry, onCanonicalOpenLive
 }) {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   // "Run from here" pre-flight cost — fetched lazily when the pill is hovered.
@@ -1163,11 +1165,16 @@ export default function CanvasNode({
   // Generation feedback: the progress ring shows whenever the node is
   // producing content (capture stream, run-flow, image gen). Excludes the
   // challenge state, which is "waiting for a human", not "working".
-  const generating =
+  // Preparação da cópia editável (spec 2026-10-09): tem o PRÓPRIO número (real, da tarefa) e substitui o anel
+  // estimado por tempo e a mensagem de carregamento.
+  const canonicalActive = !!canonicalPrep;
+  const canonicalRunning = canonicalPrep?.status === 'running';
+  const generating = !canonicalActive && (
     (node._loading && !node._challenge && !node._failed) ||
     node.meta?.status === 'generating' ||
-    !!runStatus;
+    !!runStatus);
   const genPct = useGenerationProgress(generating, estimatedDurationMs(node));
+  const ringActive = generating || canonicalRunning;
 
   // The progress ring traces the node's OUTER frame (topbar + body), so it
   // must use the real rendered box — not the body-only node.height, which made
@@ -1175,10 +1182,10 @@ export default function CanvasNode({
   // node. Measure on the way in (useLayoutEffect = before paint, no flash).
   const [ringFrame, setRingFrame] = useState(null);
   useLayoutEffect(() => {
-    if (!generating) { setRingFrame(null); return; }
+    if (!ringActive) { setRingFrame(null); return; }
     const el = cnodeRef.current;
     if (el) setRingFrame({ w: el.offsetWidth, h: el.offsetHeight });
-  }, [generating, node.width, node.height]);
+  }, [ringActive, node.width, node.height]);
 
   // Loading body: a node that ALREADY has content gets a dark frosted blur of
   // that content (the new version is materialising over the old); an empty
@@ -1195,7 +1202,7 @@ export default function CanvasNode({
   return (
     <div
       ref={cnodeRef}
-      className={`cnode origin-${origin}${selected ? ' selected' : ''}${placing ? ' placing' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}${generating ? ' generating' : ''}${removing ? ' removing' : ''}`}
+      className={`cnode origin-${origin}${selected ? ' selected' : ''}${placing ? ' placing' : ''}${node.is_main ? ' is-main' : ''}${editing ? ' editing' : ''}${narrowTopbar ? ' narrow' : ''}${generating ? ' generating' : ''}${removing ? ' removing' : ''}${canonicalActive ? ' canonical-prep' : ''}`}
       style={{ left: node.pos_x, top: node.pos_y, width: node.width, '--cnode-h': `${node.height}px`, '--cnode-w': node.width }}
       data-node-id={node.id}
       onContextMenu={(e) => {
@@ -1219,6 +1226,16 @@ export default function CanvasNode({
       {generating && (
         <NodeProgressRing
           pct={genPct}
+          width={ringFrame?.w || node.width}
+          height={ringFrame?.h || node.height || Math.round(node.width * 9 / 16)}
+        />
+      )}
+      {canonicalActive && (
+        <CanonicalPrepOverlay prep={canonicalPrep} onRetry={onCanonicalRetry} onOpenLive={onCanonicalOpenLive} />
+      )}
+      {canonicalRunning && (
+        <NodeProgressRing
+          pct={canonicalPrep.pct}
           width={ringFrame?.w || node.width}
           height={ringFrame?.h || node.height || Math.round(node.width * 9 / 16)}
         />

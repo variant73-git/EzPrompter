@@ -5773,6 +5773,37 @@ body.chat-dock-preview {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* Cópia editável no Edit (spec 2026-10-09 §0): o site atual borrado no fundo, o número grande no centro e o
+   contorno do node como barra. `filter` só no node que prepara — nunca backdrop-filter dentro do mundo
+   zoomado (lição 148b). Rótulos em tamanho constante na tela, como .cnode-gen-status. */
+.cnode.canonical-prep .cnode-body { filter: blur(14px) saturate(0.85); }
+.cnode-canonical {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(10, 10, 10, 0.35);
+  border-radius: inherit;
+  pointer-events: none;
+}
+.cnode-canonical-pct {
+  font-size: clamp(32px, calc(0.22 * var(--cnode-h, 600px)), 160px);
+  font-weight: 300;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.cnode-canonical-unit { font-size: 0.45em; margin-left: 0.04em; color: var(--text-secondary); }
+.cnode-canonical-label { font-size: calc(14px / max(0.2, var(--canvas-scale, 1))); color: var(--text-secondary); }
+.cnode-canonical-failed { pointer-events: auto; background: rgba(10, 10, 10, 0.72); padding: 24px; text-align: center; }
+.cnode-canonical-title { font-size: calc(16px / max(0.2, var(--canvas-scale, 1))); color: var(--text-primary); }
+.cnode-canonical-detail { font-size: calc(13px / max(0.2, var(--canvas-scale, 1))); color: var(--text-secondary); }
+.cnode-canonical-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 
 /* Hidden during edit mode — the editor's own inspector + layers panel
    take over the chrome, and the dock would only compete for clicks. */
