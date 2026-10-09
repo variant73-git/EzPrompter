@@ -14,3 +14,4 @@ evals/prompts/board-agent.txt
 # Certificados locais do mkcert (aceite do lease B) — nunca commitar
 _wildcard.rt.localtest.me*.pem
 _verbatim/
+.vercel
