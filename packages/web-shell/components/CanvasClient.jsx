@@ -39,6 +39,8 @@ import { buildNodesClipboardPayload, parseNodesClipboardText, payloadToPasteItem
 import { estimateChain } from '../lib/billing/pricing.js';
 import { shouldReconstructForAction } from '../lib/reconstruction-policy.js';
 import { EDIT_ROUTE, planEditEntry } from '../lib/edit-action-decision.js';
+import { useCanonicalPrep } from './useCanonicalPrep.js';
+import { CANONICAL_ENTRY, canonicalEditClientEnabled, planCanonicalEntry, readyNodeFrom } from '../lib/canonical/edit-entry.js';
 import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
 import DevWidget from './DevWidget.jsx';
 import { canUseCloneEdit } from '../lib/clone-edit-access.js';
@@ -210,6 +212,8 @@ const EMPTY_EDGES = [];
 const NATIVE_MOTION_CANVAS_EDIT = /^(1|true)$/i.test(
   String(process.env.NEXT_PUBLIC_NATIVE_MOTION_CANVAS_EDIT || ''),
 );
+// Cópia editável no Edit (spec 2026-10-09) — interruptor de desenvolvimento; o servidor decide de verdade.
+const CANONICAL_EDIT = canonicalEditClientEnabled();
 
 function editorKindForNode(node) {
   return resolveNodeEditorKind(
@@ -221,6 +225,11 @@ function editorKindForNode(node) {
 
 export default function CanvasClient({ board, initialNodes, initialEdges, user, initialFocusNodeId = null }) {
   const [nodes, setNodes] = useState(initialNodes || []);
+  // A preparação da cópia leva minutos: o resultado se aplica ao node ATUAL (posição, nome), nunca ao
+  // capturado no clique.
+  const nodesLatestRef = useRef(nodes);
+  nodesLatestRef.current = nodes;
+  const canonical = useCanonicalPrep({ api });
   const [edges, setEdges] = useState(initialEdges || []);
   const [boardName, setBoardName] = useState(board.name || 'Untitled');
   const initialFocusedNode = initialFocusNodeId
@@ -4633,6 +4642,38 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     }
   }
 
+  async function prepareCanonicalCopy(node, { capture }) {
+    const nodeId = node.id;
+    editPreparationRef.current.add(nodeId);
+    const partiuClone = Date.now();
+    try {
+      const outcome = await canonical.run(nodeId, {
+        capture: capture ? async () => {
+          const result = await api.reconstructNode(nodeId, { engine: null });
+          marcarEsperaDoClone(nodeId, Date.now() - partiuClone, 'native', result?.cloneTelemetry, result?.meta?.captureReport);
+          flashNodeDebit(nodeId, result?.credits);
+          setNodes((prev) => prev.map((n) => (n.id === nodeId ? applyReconstructionResultToNode(n, result) : n)));
+        } : null,
+      });
+      if (!outcome.ok) return; // o node mostra o motivo e as duas escolhas
+      const ready = readyNodeFrom(nodesLatestRef.current, node, outcome.result, applyReconstructionResultToNode);
+      setNodes((prev) => prev.map((n) => (n.id === nodeId ? applyReconstructionResultToNode(n, outcome.result) : n)));
+      canonical.dismiss(nodeId);
+      enterEditMode(ready, editorKindForNode(ready));
+    } catch (e) {
+      canonical.dismiss(nodeId);
+      if (e?.challenge) {
+        let host = 'this site';
+        try { host = new URL(e.challenge.url || node?.origin_url || '').hostname.replace(/^www\./, ''); } catch { /* keep default */ }
+        setChallengeNotice({ nodeId, host, purpose: 'edit' });
+      } else if (!handleBillingError(e)) {
+        toast.error(`Could not prepare this site for editing: ${e.message}`);
+      }
+    } finally {
+      editPreparationRef.current.delete(nodeId);
+    }
+  }
+
   async function handleEditingToggle(nodeId, willEdit, details = {}) {
     if (willEdit) {
       const node = nodes.find((n) => n.id === nodeId);
@@ -4668,6 +4709,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         isNativeReady: classifyNativeLineage(node) === NATIVE_LINEAGE.READY,
         needsReconstruction: shouldReconstructForAction({ node, role: 'edit' }),
       });
+      const canonicalEntry = planCanonicalEntry({ node, route, engine: engineOverride, enabled: CANONICAL_EDIT });
+      if (canonicalEntry !== CANONICAL_ENTRY.OFF) {
+        await prepareCanonicalCopy(node, { capture: canonicalEntry === CANONICAL_ENTRY.CAPTURE_THEN_PREPARE });
+        return;
+      }
       if (route === EDIT_ROUTE.REPAIR_NEEDED) {
         toast.error('This clone needs repair — use "Repair clone" to rebuild it.');
         return;
@@ -6236,6 +6282,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
 
   nodeHandlersRef.current = {
     handleEditingToggle,
+    retryCanonicalPrep: (nodeId) => { canonical.dismiss(nodeId); handleEditingToggle(nodeId, true); },
+    openLiveInsteadOfCanonical: (nodeId) => {
+      canonical.dismiss(nodeId);
+      const target = nodesLatestRef.current.find((n) => n.id === nodeId);
+      if (target) enterEditMode(target, editorKindForNode(target));
+    },
     handleNodeSelect,
     handleNodeMove,
     handleNodeMoveStart,
@@ -6739,6 +6791,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
               editing={editingNodeId === n.id}
               editorKind={editorKindForNode(n)}
               runStatus={runStatus.get(n.id) || null}
+              canonicalPrep={canonical.prep.get(n.id) || null}
               draftActive={!!draftEdge && draftEdge.sourceNodeId !== n.id}
               removing={removing?.nodeId === n.id}
               removingOutside={removing?.nodeId === n.id && removingOutside}

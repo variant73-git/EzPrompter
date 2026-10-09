@@ -19,7 +19,7 @@ import CanvasNode from './CanvasNode.jsx';
 // breaks memoization. Never pass a raw CanvasClient function directly.
 function CanvasNodeItem({
   node, scale, debit, incomingEdges, hasOutgoingEdges, selected, livePreviewActive, placing,
-  editing, editorKind, runStatus, draftActive, removing, removingOutside, removeFromMenu,
+  editing, editorKind, runStatus, canonicalPrep, draftActive, removing, removingOutside, removeFromMenu,
   inSection, canRunFromHere, flowRunning, handlersRef,
 }) {
   const h = () => handlersRef.current;
@@ -36,6 +36,9 @@ function CanvasNodeItem({
       editing={editing}
       editorKind={editorKind}
       runStatus={runStatus}
+      canonicalPrep={canonicalPrep}
+      onCanonicalRetry={() => h().retryCanonicalPrep(node.id)}
+      onCanonicalOpenLive={() => h().openLiveInsteadOfCanonical(node.id)}
       draftActive={draftActive}
       removing={removing}
       removingOutside={removingOutside}
