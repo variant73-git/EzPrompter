@@ -196,6 +196,13 @@ export const api = {
       ...(engine ? { body: JSON.stringify({ engine }) } : {}),
     }, ticket)).then(jsonOrThrow)),
 
+  // Cópia editável no Edit (spec 2026-10-09). Iniciar leva etiqueta (reenvio não cria segunda tarefa);
+  // avançar é idempotente por construção (cada consulta só faz o passo da vez).
+  startCanonicalJob: (nodeId) => withTicket(`canonical:${nodeId}`, (ticket) =>
+    fetch(`/api/nodes/${nodeId}/canonical-job`, withIdemHeader({ ...COMMON, method: 'POST' }, ticket)).then(jsonOrThrow)),
+  advanceCanonicalJob: (jobId) =>
+    fetch(`/api/canonical-jobs/${jobId}/advance`, { ...COMMON, method: 'POST' }).then(jsonOrThrow),
+
   // Sites com verificação de bot (spec 2026-09-08): abre um job de challenge no
   // navegador remoto. O ticket de idempotência do Edit viaja aqui e é reusado
   // na captura (dedup do pagamento).
