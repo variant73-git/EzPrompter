@@ -5137,7 +5137,7 @@ html.canvas-zoom-below-30 .cnode-asset-img {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  transition: opacity 140ms ease, outline-color 140ms ease;
+  transition: opacity 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 /* Side-docked layouts — full-height sidebar at left or right edge.
    Top matches the top edge of the zoom widget (18px) so the dock
@@ -5234,28 +5234,28 @@ body.chat-dock-preview {
 /* During a drag, swap the dark dock chrome for the same near-transparent
    frosted glass the section frames use — the canvas reads through cleanly
    while the dock outline still says "this is the widget". */
-/* Click-to-focus: a cold off-white ring appears when the user clicks the dock,
-   cleared when they click away. Reuses the outline channel (the base transition
-   already eases its colour) so it fades in smoothly. */
+/* Click-to-focus stays inside the dock silhouette, preserving the soft shell. */
 .prompt-dock.is-focused {
-  outline: 1.5px solid rgba(227, 231, 236, 0.72);
-  outline-offset: 2px;
+  box-shadow:
+    inset 0 0 0 1px rgba(227, 231, 236, 0.28),
+    0 16px 60px rgba(0, 0, 0, 0.55);
 }
-/* Add-URL: flash the ring to FULL white with a soft outer glow, then ease it
-   back to the normal focused off-white over 2s (one-shot). */
+/* Add-URL: a restrained inner highlight, then back to the focused state. */
 .prompt-dock.add-url-flash {
-  outline: 1.5px solid #ffffff;
-  outline-offset: 2px;
   animation: dock-add-url-flash 2s ease-out;
 }
 @keyframes dock-add-url-flash {
   0% {
-    outline-color: #ffffff;
-    box-shadow: 0 0 18px 3px rgba(255, 255, 255, 0.55), 0 16px 60px rgba(0, 0, 0, 0.55);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.72),
+      0 0 18px 3px rgba(255, 255, 255, 0.22),
+      0 16px 60px rgba(0, 0, 0, 0.55);
   }
   100% {
-    outline-color: rgba(227, 231, 236, 0.72);
-    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0), 0 16px 60px rgba(0, 0, 0, 0.55);
+    box-shadow:
+      inset 0 0 0 1px rgba(227, 231, 236, 0.28),
+      0 0 0 0 rgba(255, 255, 255, 0),
+      0 16px 60px rgba(0, 0, 0, 0.55);
   }
 }
 
@@ -5266,11 +5266,9 @@ body.chat-dock-preview {
   box-shadow: none;
   pointer-events: none;
 }
-/* When dragged INTO a snap zone, brighten the outline + add a subtle
-   white ring as "about to dock" affordance. */
+/* When dragged into a snap zone, an inner highlight signals the target. */
 .prompt-dock.is-snapping {
-  outline: 1px solid rgba(255, 255, 255, 0.85);
-  outline-offset: 2px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.62);
 }
 
 /* Drag handle — dark pill with 6 light dots, centred at the top of
@@ -9313,3 +9311,142 @@ body.rb-ed-active.rb-ed-canvas .canvas-minimap { display: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .canvas-first-node-coachmark { animation: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ROUNDED ADAPTIVE SHELL — keeps the current rail, minimap navigation and
+   contextual inspector while giving the workspace a single soft frame.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  --shell-gutter: 10px;
+  --shell-panel-gap: 8px;
+  --shell-radius: 28px;
+  --chrome-radius: 18px;
+}
+
+.canvas-shell::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  border-radius: var(--shell-radius);
+  box-shadow:
+    inset 0 0 0 var(--shell-gutter) #10100F,
+    inset 0 0 18px rgba(0, 0, 0, 0.42);
+}
+body.rb-ed-active.rb-ed-canvas .canvas-shell::after { display: none; }
+
+.canvas-sidebar {
+  left: var(--shell-gutter);
+  top: var(--shell-gutter);
+  bottom: var(--shell-gutter);
+  border-right: 0;
+  border-radius: var(--chrome-radius);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.canvas-topbar {
+  top: var(--shell-gutter);
+  left: calc(var(--shell-gutter) + var(--sidebar-w) + var(--shell-panel-gap));
+  right: var(--shell-gutter);
+  border-bottom: 0;
+  border-radius: var(--chrome-radius);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.24);
+}
+
+.canvas-sidebar-new,
+.canvas-sidebar-item,
+.canvas-topbar-viewports,
+.canvas-topbar-actions .credits-pill {
+  border-color: transparent;
+  border-radius: 10px;
+}
+
+.canvas-tools {
+  left: calc(var(--shell-gutter) + var(--sidebar-w) + var(--shell-panel-gap));
+  border: 0;
+  border-radius: 14px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+}
+.canvas-tool-mode-track { border-radius: 10px; }
+
+.canvas-zoomdock {
+  left: calc(var(--shell-gutter) + var(--sidebar-w) + var(--shell-panel-gap));
+  bottom: calc(var(--shell-gutter) + var(--shell-panel-gap));
+}
+.zoom-controls {
+  border: 0;
+  border-radius: 14px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+}
+
+.canvas-minimap {
+  top: var(--minimap-top, calc(var(--shell-gutter) + var(--topbar-h) + var(--shell-panel-gap))) !important;
+  right: var(--minimap-right, calc(var(--shell-gutter) + var(--shell-panel-gap) + var(--inspector-w, 0px))) !important;
+  border: 0;
+  border-radius: 16px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.3);
+}
+.canvas-minimap-counts {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+}
+.minimap-node-menu {
+  border: 0;
+  border-radius: 16px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.38);
+}
+.minimap-node-search,
+.minimap-node-row { border-radius: 9px; }
+
+.canvas-inspector {
+  top: calc(var(--shell-gutter) + var(--topbar-h) + var(--shell-panel-gap));
+  right: var(--shell-gutter);
+  bottom: var(--shell-gutter);
+  border-left: 0;
+  border-radius: var(--chrome-radius);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.3);
+  overflow: hidden auto;
+}
+.canvas-inspector.collapsed {
+  top: calc(var(--shell-gutter) + var(--topbar-h) + var(--shell-panel-gap));
+  right: var(--shell-gutter);
+  border: 0;
+  border-radius: 14px;
+}
+.cinsp-field,
+.cinsp-row button,
+.cinsp-fill { border-radius: 9px; }
+
+.canvas-library-drawer {
+  left: calc(var(--shell-gutter) + var(--sidebar-w) + var(--shell-panel-gap));
+  top: calc(var(--shell-gutter) + var(--topbar-h) + var(--shell-panel-gap));
+  bottom: var(--shell-gutter);
+  border-right: 0;
+  border-radius: var(--chrome-radius);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.36);
+  overflow: hidden;
+}
+.canvas-library-drawer > header { border-bottom-color: rgba(255, 255, 255, 0.06); }
+.canvas-library-drawer > header button,
+.canvas-library-empty > span,
+.canvas-library-empty button,
+.canvas-library-new-node,
+.canvas-workflow-card { border-radius: 10px; }
+
+.prompt-dock {
+  bottom: calc(var(--shell-gutter) + var(--shell-panel-gap));
+  border: 0;
+  border-radius: 20px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+}
+.prompt-dock.dock-left,
+.prompt-dock.dock-right {
+  top: var(--shell-gutter);
+  bottom: var(--shell-gutter);
+  border-radius: var(--chrome-radius);
+}
+.prompt-dock.dock-left { left: var(--shell-gutter); }
+.prompt-dock.dock-right { right: var(--shell-gutter); }
