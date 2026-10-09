@@ -26,6 +26,7 @@ describe('CanonicalPrepOverlay', () => {
 
   it('código desconhecido tem texto genérico; nada para mostrar sem estado', () => {
     expect(canonicalErrorCopy('qualquer').detail).toBe('Something went wrong while preparing it.');
+    expect(canonicalErrorCopy('network')).toEqual({ title: 'Lost the connection', detail: 'The copy may already be ready. Try again to check.' });
     const { container } = render(<CanonicalPrepOverlay prep={null} />);
     expect(container).toBeEmptyDOMElement();
   });

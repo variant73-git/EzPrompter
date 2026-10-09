@@ -27,3 +27,10 @@ export function readyNodeFrom(latestNodes, fallbackNode, result, apply) {
   const fresh = (latestNodes || []).find((n) => n.id === fallbackNode.id) || fallbackNode;
   return apply(fresh, result);
 }
+
+// A cópia fica pronta minutos depois do clique: se a pessoa já está editando QUALQUER node, abrir esta por cima
+// fecharia aquele editor sem perguntar (edições não salvas perdidas, geometria/câmera de restauração trocadas).
+// Nesse caso a cópia só fica pronta no node; o próximo Edit abre direto (revisão final, Claude).
+export function openWhenReady({ editingNodeId }) {
+  return !editingNodeId;
+}

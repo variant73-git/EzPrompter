@@ -63,4 +63,11 @@ describe('consulta da preparação', () => {
     poller.stop();
     expect(await promessa).toMatchObject({ ok: false, code: 'cancelled' });
   });
+
+  it('queda de conexão (erro sem código) vira network, não falha da preparação (revisão final, Codex)', async () => {
+    const semRede = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    expect(await createCanonicalPoller({ advance: semRede, ...immediate }).run('j')).toMatchObject({ ok: false, code: 'network' });
+    expect(semRede).toHaveBeenCalledTimes(5);
+  });
 });
+

@@ -22,7 +22,8 @@ export function useCanonicalPrep({ api }) {
 
   useEffect(() => () => { for (const p of pollers.current.values()) p.stop(); }, []);
 
-  const run = useCallback(async (nodeId, { capture = null } = {}) => {
+  // `resumeJobId`: retomar a consulta de uma tarefa que já existe (a conexão caiu) em vez de iniciar outra.
+  const run = useCallback(async (nodeId, { capture = null, resumeJobId = null } = {}) => {
     patch(nodeId, { status: 'running', pct: capture ? 0 : 10, errorCode: null });
     try {
       if (capture) {
@@ -31,8 +32,8 @@ export function useCanonicalPrep({ api }) {
         try { await capture(); } finally { clearInterval(tick); }
         patch(nodeId, { pct: 10 });
       }
-      const started = await api.startCanonicalJob(nodeId);
-      patch(nodeId, { pct: started?.job?.progressPct });
+      const started = resumeJobId ? { job: { id: resumeJobId } } : await api.startCanonicalJob(nodeId);
+      patch(nodeId, { pct: started?.job?.progressPct, jobId: started.job.id });
       const poller = createCanonicalPoller({
         advance: api.advanceCanonicalJob,
         onUpdate: (job) => patch(nodeId, { pct: job.progressPct }),

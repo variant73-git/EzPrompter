@@ -49,4 +49,22 @@ describe('useCanonicalPrep', () => {
     expect(result.current.prep.has('n1')).toBe(false);
     expect(api.startCanonicalJob).not.toHaveBeenCalled();
   });
+
+  it('queda de conexão guarda a tarefa; retomar consulta a MESMA tarefa sem iniciar outra (revisão final, Codex)', async () => {
+    const api = {
+      startCanonicalJob: vi.fn(async () => ({ job: { id: 'j1', status: 'queued', progressPct: 10 } })),
+      advanceCanonicalJob: vi.fn().mockRejectedValue(new TypeError('Failed to fetch')),
+    };
+    const { result } = renderHook(() => useCanonicalPrep({ api }));
+    await act(async () => { await result.current.run('n1'); });
+    expect(result.current.prep.get('n1')).toMatchObject({ status: 'failed', errorCode: 'network', jobId: 'j1' });
+    api.advanceCanonicalJob.mockReset();
+    api.advanceCanonicalJob.mockResolvedValue({ job: { id: 'j1', status: 'ready', progressPct: 100 }, result: { snapshotId: 's2' } });
+    let outcome;
+    await act(async () => { outcome = await result.current.run('n1', { resumeJobId: 'j1' }); });
+    expect(outcome).toMatchObject({ ok: true, result: { snapshotId: 's2' } });
+    expect(api.startCanonicalJob).toHaveBeenCalledTimes(1);
+    expect(api.advanceCanonicalJob).toHaveBeenCalledWith('j1');
+  }, 20_000);
 });
+

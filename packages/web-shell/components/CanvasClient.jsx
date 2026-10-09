@@ -40,7 +40,7 @@ import { estimateChain } from '../lib/billing/pricing.js';
 import { shouldReconstructForAction } from '../lib/reconstruction-policy.js';
 import { EDIT_ROUTE, planEditEntry } from '../lib/edit-action-decision.js';
 import { useCanonicalPrep } from './useCanonicalPrep.js';
-import { CANONICAL_ENTRY, canonicalEditClientEnabled, planCanonicalEntry, readyNodeFrom } from '../lib/canonical/edit-entry.js';
+import { CANONICAL_ENTRY, canonicalEditClientEnabled, openWhenReady, planCanonicalEntry, readyNodeFrom } from '../lib/canonical/edit-entry.js';
 import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
 import DevWidget from './DevWidget.jsx';
 import { canUseCloneEdit } from '../lib/clone-edit-access.js';
@@ -4642,12 +4642,13 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     }
   }
 
-  async function prepareCanonicalCopy(node, { capture }) {
+  async function prepareCanonicalCopy(node, { capture, resumeJobId = null }) {
     const nodeId = node.id;
     editPreparationRef.current.add(nodeId);
     const partiuClone = Date.now();
     try {
       const outcome = await canonical.run(nodeId, {
+        resumeJobId,
         capture: capture ? async () => {
           const result = await api.reconstructNode(nodeId, { engine: null });
           marcarEsperaDoClone(nodeId, Date.now() - partiuClone, 'native', result?.cloneTelemetry, result?.meta?.captureReport);
@@ -4659,7 +4660,8 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
       const ready = readyNodeFrom(nodesLatestRef.current, node, outcome.result, applyReconstructionResultToNode);
       setNodes((prev) => prev.map((n) => (n.id === nodeId ? applyReconstructionResultToNode(n, outcome.result) : n)));
       canonical.dismiss(nodeId);
-      enterEditMode(ready, editorKindForNode(ready));
+      if (openWhenReady({ editingNodeId: editingNodeIdRef.current, nodeId })) enterEditMode(ready, editorKindForNode(ready));
+      else toast.info('Editable copy is ready — press Edit to open it.');
     } catch (e) {
       canonical.dismiss(nodeId);
       if (e?.challenge) {
@@ -6282,7 +6284,17 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
 
   nodeHandlersRef.current = {
     handleEditingToggle,
-    retryCanonicalPrep: (nodeId) => { canonical.dismiss(nodeId); handleEditingToggle(nodeId, true); },
+    retryCanonicalPrep: (nodeId) => {
+      // Conexão caída: a tarefa pode ter terminado no servidor — retomar a MESMA, nunca iniciar outra (Codex).
+      const prev = canonical.prep.get(nodeId);
+      const target = nodesLatestRef.current.find((n) => n.id === nodeId);
+      if (prev?.errorCode === 'network' && prev.jobId && target) {
+        prepareCanonicalCopy(target, { capture: false, resumeJobId: prev.jobId });
+        return;
+      }
+      canonical.dismiss(nodeId);
+      handleEditingToggle(nodeId, true);
+    },
     openLiveInsteadOfCanonical: (nodeId) => {
       canonical.dismiss(nodeId);
       const target = nodesLatestRef.current.find((n) => n.id === nodeId);

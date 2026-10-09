@@ -45,7 +45,8 @@ export function createCanonicalPoller({
         } catch (e) {
           if (done) return;
           errors += 1;
-          if (errors >= maxErrors || e?.code === 'not_found') { finish({ ok: false, code: e?.code || 'internal' }); return; }
+          // erro SEM código = a resposta não chegou (rede): a tarefa pode até ter terminado — nunca dizer "falhou"
+          if (errors >= maxErrors || e?.code === 'not_found') { finish({ ok: false, code: e?.code || 'network' }); return; }
           timer = schedule(tick, intervalMs);
           return;
         }

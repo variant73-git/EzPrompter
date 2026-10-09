@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EDIT_ROUTE } from '../edit-action-decision.js';
 import { applyReconstructionResultToNode } from '../node-editor-kind.js';
-import { CANONICAL_ENTRY, canonicalEditClientEnabled, planCanonicalEntry, readyNodeFrom } from './edit-entry.js';
+import { CANONICAL_ENTRY, canonicalEditClientEnabled, openWhenReady, planCanonicalEntry, readyNodeFrom } from './edit-entry.js';
 
 const site = (source) => ({ kind: 'site', current_snapshot_source: source });
 
@@ -50,4 +50,11 @@ describe('Edit com a cópia editável', () => {
     expect(pronto.meta.name).toBe('Renamed');
     expect(readyNodeFrom([], clicado, result, applyReconstructionResultToNode).pos_x).toBe(0);
   });
+
+  it('a cópia que fica pronta NÃO abre por cima de outro node em edição (revisão final, Claude)', () => {
+    expect(openWhenReady({ editingNodeId: null, nodeId: 'n1' })).toBe(true);
+    expect(openWhenReady({ editingNodeId: 'n2', nodeId: 'n1' })).toBe(false);
+    expect(openWhenReady({ editingNodeId: 'n1', nodeId: 'n1' })).toBe(false);
+  });
 });
+

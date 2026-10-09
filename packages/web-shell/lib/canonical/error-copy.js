@@ -8,5 +8,7 @@ const DETAIL = Object.freeze({
 });
 
 export function canonicalErrorCopy(code) {
+  // A conexão caiu: a preparação pode ter terminado no servidor — não é uma falha dela (revisão final, Codex).
+  if (code === 'network') return { title: 'Lost the connection', detail: 'The copy may already be ready. Try again to check.' };
   return { title: "Couldn't prepare the editable copy", detail: DETAIL[code] || 'Something went wrong while preparing it.' };
 }
