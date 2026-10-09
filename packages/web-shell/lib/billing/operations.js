@@ -152,10 +152,18 @@ export async function reconcileStrandedHold({ sql, operationId }) {
 // is generous (15 min) — safely above any real op runtime (route deadlines ≤200s,
 // reconstruct 2-3 min) — so a still-in_flight row past it is genuinely dead.
 export async function findStrandedOperations({ sql, olderThanSecs = 900, limit = 100 }) {
+  // A preparação da cópia (spec 2026-10-09) vive até 35 min — mais que o TTL. Enquanto a tarefa dela não terminou
+  // a LIMPEZA (máquina desligada + cobrança encerrada), a reserva NÃO é órfã: quem a encerra é a própria tarefa ou a
+  // varredura dela — senão esta varredura devolveria a reserva de uma cópia entregue.
   return sql`
     SELECT id, user_id, op, hold_credits, created_at
     FROM operations
     WHERE status = 'in_flight' AND created_at < NOW() - make_interval(secs => ${olderThanSecs})
+      AND NOT EXISTS (
+        SELECT 1 FROM canonical_jobs j
+         WHERE j.op_id = operations.id
+           AND j.cleanup_done = false
+      )
     ORDER BY created_at ASC
     LIMIT ${limit}
   `;

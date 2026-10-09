@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   claimOperation, reclaimOperation, getOperation,
-  reconcileStrandedHold, reconcileStrandedHolds,
+  reconcileStrandedHold, reconcileStrandedHolds, findStrandedOperations,
 } from './operations.js';
 
 // Same scripted fake as ledger.test.js: each awaited sql`` consumes one queued
@@ -140,4 +140,12 @@ describe('reconcileStrandedHolds (sweep)', () => {
     const out = await reconcileStrandedHolds({ sql });
     expect(out).toEqual({ scanned: 0, reconciled: 0, refundedCredits: 0 });
   });
+
+  it('findStrandedOperations deixa de fora a reserva de uma preparação viva', async () => {
+    const calls = [];
+    const sql = (strings, ...values) => { calls.push(strings.join('?')); return Promise.resolve([]); };
+    await findStrandedOperations({ sql, olderThanSecs: 900, limit: 10 });
+    expect(calls[0]).toMatch(/NOT EXISTS \(\s*SELECT 1 FROM canonical_jobs j\s+WHERE j\.op_id = operations\.id\s+AND j\.cleanup_done = false\s*\)/);
+  });
 });
+

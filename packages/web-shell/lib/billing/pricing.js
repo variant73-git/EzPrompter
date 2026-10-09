@@ -11,6 +11,8 @@ export const CLONE_EDIT_CREDIT_ESTIMATE = 275;
 
 export const OP_PRICING = {
   'clone.edit':         { flat: CLONE_EDIT_CREDIT_ESTIMATE },
+  // Preparação da cópia editável (spec 2026-10-09 §4.5): ciclo de reserva completo, preço ainda 0.
+  'clone.canonical':    { flat: 0 },
   'compose':            { mult: 3 },
   'extract':            { mult: 3 },
   'extract.clone':      { mult: 4 },
@@ -57,6 +59,7 @@ export const OP_ESTIMATES = {
   'transplant': 75,
   'edit': 50,
   'clone.edit': CLONE_EDIT_CREDIT_ESTIMATE,
+  'clone.canonical': 0,
   'reconstruct': 200,
   'image.generate.openai': 100,
   'image.generate.gemini': 20,
