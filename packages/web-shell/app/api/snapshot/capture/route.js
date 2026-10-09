@@ -120,10 +120,8 @@ export async function POST(request) {
   }
 
   // Streaming path: when the client sends `Accept: text/event-stream`, we
-  // emit progress events as the capture (and potential reconstruction)
-  // progresses through stages. Final event carries the snapshot data.
-  // This lets the canvas node show "Reconstructing…" with stage labels
-  // instead of a generic 60-150s "Capturing…" spinner.
+  // emit progress events as the free capture progresses. Reconstruction is
+  // deferred until Edit or a strict workflow dependency requests it.
   const acceptsStream = request.headers.get('accept')?.includes('text/event-stream');
   if (acceptsStream) {
     const stream = new ReadableStream({

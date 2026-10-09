@@ -110,9 +110,10 @@ function WorkflowMap({ workflow }) {
         <div className="hub-workflow-column" key={`${workflow.id}-${columnIndex}`}>
           {items.slice(0, 3).map((item) => {
             const meta = NODE_KIND_META[item.kind] || NODE_KIND_META.site;
+            const label = item.meta?.mediaType === 'video' ? 'Video' : meta.label;
             return (
               <span key={item.key} style={{ '--node-color': meta.color }} title={item.label}>
-                <i />{meta.label}
+                <i />{label}
               </span>
             );
           })}
@@ -276,7 +277,7 @@ function AnimatedPrompt({ boards, firstName }) {
 }
 
 function HomeDashboard({ boards, workflows, references, onLaunchWorkflow, onCreateWorkflow, launching, creatingWorkflow, firstName }) {
-  const featured = workflows.filter((workflow) => workflow.primary).slice(0, 5);
+  const featured = workflows.filter((workflow) => workflow.primary).slice(0, 6);
   return (
     <>
       <header className="hub-home-header">
@@ -428,7 +429,11 @@ export default function BoardsList({
         sourceNodeId: idByKey.get(item.from),
         targetNodeId: idByKey.get(item.to),
         kind: item.kind || 'generic',
-        payload: { generatedBy: 'workflow-template', workflowTemplateId: workflow.id },
+        payload: {
+          generatedBy: 'workflow-template',
+          workflowTemplateId: workflow.id,
+          ...(item.payload || {}),
+        },
       })));
       router.push(`/canvas/${board.id}?onboarding=workflow-template`);
     } catch (error) {

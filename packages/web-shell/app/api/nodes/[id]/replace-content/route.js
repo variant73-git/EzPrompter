@@ -34,8 +34,8 @@ export async function POST(request, { params }) {
   if (!node) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
   if (kind === 'asset') {
-    if (typeof dataUrl !== 'string' || !/^data:image\//.test(dataUrl)) {
-      return NextResponse.json({ error: 'invalid_args', message: 'asset requires a base64 image data URL in dataUrl' }, { status: 400 });
+    if (typeof dataUrl !== 'string' || !/^data:(?:image|video)\//.test(dataUrl)) {
+      return NextResponse.json({ error: 'invalid_args', message: 'asset requires a base64 image or video data URL in dataUrl' }, { status: 400 });
     }
     const newMeta = {
       // Keep the original assetId/baseImageAssetId IF they came from agent
@@ -43,7 +43,7 @@ export async function POST(request, { params }) {
       // node is a fresh upload (no stale lineage in Smart Edit reuse).
       ...(node.meta || {}),
       source: 'replace-upload',
-      name: name || node.meta?.name || 'uncraft-image',
+      name: name || node.meta?.name || 'uncraft-media',
       dataUrl,
       mimeType: mimeType || 'image/png',
       status: 'done',

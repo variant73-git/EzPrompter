@@ -12,6 +12,10 @@ export const createWorkflowTool = {
 
 Why it exists: the full chain's area is measured BEFORE anything touches the board and a free spot is reserved for it — so the resulting section can NEVER overlap another section. Layout is automatic and horizontal: each dependency step (edge from → to) advances one column to the right; nodes at the same step (variants of the same thing) stack vertically. Do NOT pass positions. Nodes appear on the canvas one by one, in real time.
 
+Placement is automatic and immediate. Never ask the user to position any
+member and never create placement ghosts. After the turn, the canvas camera
+fits and centers the complete chain as one composition.
+
 Anchoring to an EXISTING node: pass anchorNodeId when the chain grows OUT OF a node already on the board (the user's selection, a named source). The chain is placed right next to that node and JOINS its section instead of landing as a detached island. Wire the anchor with edges using the reserved key "anchor" (e.g. { from: "anchor", to: "crop-1" }). Whenever the user's selected node is the origin of the new work, USE the anchor — never build a disconnected copy of it.
 
 Node types and content semantics are identical to createNode: ${TYPE_LIST.join(' / ')} (prompt content → meta.prompt brief; design-system content → design.md snapshot; blank-website content → the node's initial HTML, for derived/split pages; omit content for a blank slot).`,
@@ -118,7 +122,7 @@ Node types and content semantics are identical to createNode: ${TYPE_LIST.join('
       });
       idByKey[s.key] = node.id;
       created.push({ key: s.key, id: node.id, type: s.type, posX: node.pos_x, posY: node.pos_y });
-      if (ctx?.emit) { try { ctx.emit('graph_mutated', { reason: 'createWorkflow:node' }); } catch (_) {} }
+      if (ctx?.emit) { try { ctx.emit('graph_mutated', { reason: 'createWorkflow:node', nodeIds: [node.id] }); } catch (_) {} }
     }
 
     // 4. Wire the edges (dup inserts swallowed — unique constraint). The
@@ -141,7 +145,7 @@ Node types and content semantics are identical to createNode: ${TYPE_LIST.join('
     if (wired > 0) {
       try { await deoverlapSectionForEdge(ctx.boardId, sql, anchorNodeId || idByKey[specs[0].key]); } catch (_) {}
     }
-    if (ctx?.emit) { try { ctx.emit('graph_mutated', { reason: 'createWorkflow:edges' }); } catch (_) {} }
+    if (ctx?.emit) { try { ctx.emit('graph_mutated', { reason: 'createWorkflow:edges', nodeIds: created.map((node) => node.id), focus: 'chain' }); } catch (_) {} }
 
     return { created, edges: wired, anchored: Boolean(anchorNodeId), originX: origin.x, originY: origin.y, width: plan.width, height: plan.height };
   },

@@ -5,19 +5,17 @@ import { placeStackDown } from '../../canvas-layout.js';
 /**
  * Capture a live URL into a site node on the current board. Runs the
  * same pipeline the user gets when they paste a URL into the input bar
- * (snapshot.js → static or reconstructPage path). Cloudflare/captcha
+ * (snapshot.js free capture path). Cloudflare/captcha
  * walls return a structured `challenge_required` error; the agent then
  * tells the user to paste the URL into the input bar themselves so the
- * extension handoff can pick it up. Animated-builder sites (Webflow
- * IX3, Framer Motion, GSAP) get routed through reconstructPage —
- * 2-3min run time, same as the user-driven path.
+ * extension handoff can pick it up. Animated-builder sites are flagged for
+ * deferred reconstruction when Edit or a strict workflow dependency needs it.
  */
 export const captureUrlTool = {
   name: 'captureUrl',
-  description: 'Capture a live website URL into a site node on the canvas. Runs the same snapshot pipeline as the user pasting the URL into the input bar — static capture for plain sites, full reconstruction for animated builders. Costs no AI tokens for static paths but reconstructPage runs vision calls. Returns the new nodeId on success. On Cloudflare/captcha/login walls, returns a `challenge_required` error so you can tell the user to paste the URL themselves (the extension handoff bypasses the wall).',
+  description: 'Capture a live website URL into a site node on the canvas. Runs the same free snapshot pipeline as the user pasting the URL into the input bar. Animated builders are detected and stored without an immediate AI reconstruction; the node is upgraded later only when Edit or a strict workflow dependency requires editable motion. Returns the new nodeId on success. On Cloudflare/captcha/login walls, returns a `challenge_required` error so you can tell the user to paste the URL themselves (the extension handoff bypasses the wall).',
   // Confirm chips are reserved for deletes (2026-06-12). Capture only
-  // creates a node. Long-running: gets an extended per-tool timeout —
-  // the animated-builder reconstruct pipeline alone takes 2-3 min.
+  // creates a node. Capture can still be slow on large or protected pages.
   classification: 'safe',
   timeoutMs: 5 * 60 * 1000,
   inputSchema: {
@@ -80,7 +78,11 @@ export const captureUrlTool = {
     `;
     // Populate: point at the snapshot and clear the generating status (so the
     // ring disappears and the captured content renders).
-    const finalMeta = { name: finalName, source: 'agent-captured' };
+    const finalMeta = {
+      name: finalName,
+      source: 'agent-captured',
+      ...(cap.animatedDetected ? { animatedDetected: true } : {}),
+    };
     await sql`
       UPDATE nodes SET current_snapshot_id = ${snap.id}, meta = ${JSON.stringify(finalMeta)}::jsonb
       WHERE id = ${node.id}

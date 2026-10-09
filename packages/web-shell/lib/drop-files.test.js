@@ -13,6 +13,12 @@ describe('classifyDropFile', () => {
     }
   });
 
+  it('classifies videos as media by MIME or extension', () => {
+    expect(classifyDropFile({ name: 'clip', type: 'video/mp4' })).toBe('media');
+    expect(classifyDropFile({ name: 'clip.webm', type: '' })).toBe('media');
+    expect(classifyDropFile({ name: 'clip.MOV', type: '' })).toBe('media');
+  });
+
   it('classifies markdown by extension or MIME', () => {
     expect(classifyDropFile({ name: 'notes.md', type: '' })).toBe('md');
     expect(classifyDropFile({ name: 'notes.markdown', type: '' })).toBe('md');
@@ -33,7 +39,6 @@ describe('classifyDropFile', () => {
   it('rejects unsupported formats', () => {
     expect(classifyDropFile({ name: 'archive.zip', type: 'application/zip' })).toBeNull();
     expect(classifyDropFile({ name: 'doc.pdf', type: 'application/pdf' })).toBeNull();
-    expect(classifyDropFile({ name: 'clip.mp4', type: 'video/mp4' })).toBeNull();
     expect(classifyDropFile({ name: 'noext', type: '' })).toBeNull();
   });
 

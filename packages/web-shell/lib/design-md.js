@@ -58,7 +58,16 @@ For each distinct component family present (buttons, cards, nav, inputs, badges,
 Distinctive decorative choices: pills, oversized radii, rotated blocks, blurs, noise/dither, gradient meshes, decorative SVG/canvas. Omit if plain.
 
 ## Animations & Interactions
-Transitions, keyframes, hover behaviour, scroll effects — name what is animated and how (properties, durations, easings).
+Describe the choreography scene-by-scene, not just the presence of motion. For each important sequence name: semantic target, driver (load/scroll/pointer/media/event), trigger, pinned or sticky state, properties, start/end states, relative timing, duration or scroll range, easing, stagger, layering dependencies, and reduced-motion resolution. Copy exact selectors or animation ids when present.
+
+## Media Slots
+List the semantic roles and treatment of replaceable images and videos: hero media, product render, proof image, background loop, scroll-scrubbed video, poster, crop/aspect ratio, object-fit, mask and layering. This section is the binding map for connected asset nodes.
+
+## Transplant Directives
+Three terse bullet groups:
+- PRESERVE: structural and behavioural invariants that define the experience.
+- ADAPT: dimensions that must respond to different copy length, media aspect, viewport or item count without losing the original rhythm.
+- REPLACE: identity-bearing content that a new brand/content/media node should override.
 
 ## Responsive Behavior
 What the @media queries actually change, grouped by breakpoint. Omit if none are present.

@@ -27,7 +27,8 @@ import { ToastRoot, toast } from './Toast.jsx';
 import { BLANK_SITE_HTML } from '../lib/blank-site-html.js';
 import { findSectionTerminals, planIncrementalRun, planRunFromNode, nodeInputSignature, sectionRerunWouldOverwrite, chainSignature, sectionOps } from '../lib/section-run.js';
 import { buildNodesClipboardPayload, parseNodesClipboardText, payloadToPasteItems } from '../lib/node-clipboard.js';
-import { estimateChain, estimateOp } from '../lib/billing/pricing.js';
+import { estimateChain } from '../lib/billing/pricing.js';
+import { needsDeferredReconstruction } from '../lib/reconstruction-policy.js';
 import { clampToViewport } from '../lib/menu-position.js';
 import { readCanvasScale, chromeScale } from '../lib/canvas-scale.js';
 import { createWheelBatcher } from '../lib/wheel-batch.js';
@@ -45,6 +46,7 @@ import {
   clampCanvasScale,
   parseCanvasView,
 } from '../lib/canvas-view.js';
+import { frameAgentNodes } from '../lib/agent-camera.js';
 
 // Inline SVGs for the canvas + context menus. Phosphor-style strokes,
 // 1.6px weight, currentColor — matches the rest of the editor chrome.
@@ -289,9 +291,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   // credits" opens the PlansModal (v1 waitlist).
   const [insufficientCredits, setInsufficientCredits] = useState(null);
   const [plansOpen, setPlansOpen] = useState(false);
-  // Animated-site choice — set when a free capture flags animatedDetected;
-  // { nodeId, busy } drives the "Rebuild live with AI?" ConfirmModal.
-  const [animatedChoice, setAnimatedChoice] = useState(null);
+  // Guards the one paid preparation that can precede edit mode. URL capture
+  // itself remains free; an animated capture is reconstructed only after the
+  // user explicitly chooses Edit.
+  const editPreparationRef = useRef(new Set());
   // Transient per-node debit chips — nodeId → credits, cleared after 2.5s.
   const [nodeDebits, setNodeDebits] = useState(new Map());
   function flashNodeDebit(nodeId, credits) {
@@ -1469,7 +1472,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         });
         return { ...created.node, current_design_md: text };
       }
-      if (k === 'image') {
+      if (k === 'image' || k === 'media') {
+        if (file.size > MAX_ASSET_UPLOAD_BYTES) {
+          toast.error(`${file.name}: media too large (max 50MB).`);
+          return null;
+        }
         const dataUrl = await new Promise((resolve, reject) => {
           const fr = new FileReader();
           fr.onload = () => resolve(fr.result);
@@ -1480,7 +1487,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         const { posX, posY } = placeAt(width, height);
         const created = await api.createNode({
           boardId: board.id, kind: 'asset', posX, posY, width, height,
-          meta: { name: file.name, dataUrl, mimeType: file.type || 'image/*', ...adoptMeta },
+          meta: { name: file.name, dataUrl, mimeType: file.type || (k === 'media' ? 'video/*' : 'image/*'), ...adoptMeta },
         });
         return { ...created.node };
       }
@@ -1504,7 +1511,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const placeable = [];
     let skipped = 0;
     for (const f of files) { if (classifyQueueFile(f)) placeable.push(f); else skipped += 1; }
-    if (skipped) toast.error(`${skipped} unsupported file${skipped > 1 ? 's' : ''} skipped (use images, .md, or .html).`);
+    if (skipped) toast.error(`${skipped} unsupported file${skipped > 1 ? 's' : ''} skipped (use images, videos, .md, or .html).`);
     if (!placeable.length) return;
     placeQueueRef.current = { files: placeable, index: 0, total: placeable.length, prefetch: null };
     startNextQueued();
@@ -1994,12 +2001,19 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         boardId: board.id, kind: 'site', originUrl: url,
         posX, posY, width, height,
         isMain,
+        meta: cap.animatedDetected ? { animatedDetected: true } : {},
+        snapshotSource: 'capture',
         html: cap.html
       });
       const finalNode = {
         ...created.node,
         current_html: cap.html,
         current_screenshot: cap.screenshotDataUrl,
+        current_snapshot_source: 'capture',
+        meta: {
+          ...(created.node.meta || {}),
+          ...(cap.animatedDetected ? { animatedDetected: true } : {}),
+        },
         _loading: false
       };
       setNodes((prev) => prev.map((n) => (n.id === id ? finalNode : n)));
@@ -2010,9 +2024,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       pushCreateUndo(created.node, linkEdge);
       // Frame the new node at 100% so it's the immediate focus.
       setTimeout(() => zoomToNode(finalNode, 350, 1), 80);
-      // Animated builder detected — the free static capture is saved with
-      // animations frozen; offer the deliberate billed vision rebuild.
-      if (cap.animatedDetected) setAnimatedChoice({ nodeId: created.node.id, busy: false });
     } catch (e) {
       // Bot-protection interstitial — captureUrlStream tags the thrown
       // error with `.challenge` and (when placement was passed) the
@@ -2190,7 +2201,9 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     let imageSrc = null;
     const t = asset.type;
     if (t === 'image' || t === 'background-image' || t === 'video') {
-      imageSrc = asset.thumb_url || asset.blob_url || asset.source_url;
+      imageSrc = t === 'video'
+        ? (asset.blob_url || asset.source_url || asset.thumb_url)
+        : (asset.thumb_url || asset.blob_url || asset.source_url);
     } else if (t === 'svg' || t === 'icon') {
       if (asset.source_url && asset.source_url.startsWith('data:')) {
         imageSrc = asset.source_url;
@@ -2221,7 +2234,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const posX = w.x - width / 2;
     const posY = w.y - height / 2;
     try {
-      const meta = { name: asset.name || 'asset', dataUrl: imageSrc, mimeType: 'image/*' };
+      const meta = {
+        name: asset.name || 'asset',
+        dataUrl: imageSrc,
+        mimeType: t === 'video' ? (asset.meta?.mimeType || 'video/*') : 'image/*',
+      };
       // Library drops keep the cursor-centered position; when that point
       // lands inside a section frame the node joins that section instead
       // of overlapping it as a stranger.
@@ -2258,7 +2275,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const adoptedInto = hit && !String(hit.rootId || '').startsWith('temp-') ? hit.rootId : null;
     const rejects = [];
     const jobs = [];
-    const KIND = { image: 'asset', md: 'designmd', html: 'site' };
+    const KIND = { image: 'asset', media: 'asset', md: 'designmd', html: 'site' };
     for (const f of files) {
       const k = classifyQueueFile(f);
       if (!k) { rejects.push(f.name || 'untitled'); continue; }
@@ -2419,15 +2436,15 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
   const ACCEPT_BY_KIND = {
     site: '.html,.htm,text/html',
     designmd: '.md,.markdown,text/markdown',
-    asset: 'image/*',
+    asset: 'image/*,video/*',
   };
-  const MAX_ASSET_UPLOAD_BYTES = 10 * 1024 * 1024;
+  const MAX_ASSET_UPLOAD_BYTES = 50 * 1024 * 1024;
 
   function validFileForKind(kind, file) {
     const name = (file?.name || '').toLowerCase();
     if (kind === 'site') return /\.html?$/.test(name) || file?.type === 'text/html';
     if (kind === 'designmd') return /\.(md|markdown)$/.test(name);
-    if (kind === 'asset') return (file?.type || '').startsWith('image/');
+    if (kind === 'asset') return /^(image|video)\//.test(file?.type || '');
     return false;
   }
 
@@ -2547,7 +2564,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     const file = await pickFile(accept);
     if (!file) return;
     if (!validFileForKind(kind, file)) {
-      const expected = kind === 'asset' ? 'an image file'
+      const expected = kind === 'asset' ? 'an image or video file'
         : kind === 'designmd' ? 'a .md file'
         : 'an .html file';
       toast.error(`This node only accepts ${expected}.`);
@@ -2572,11 +2589,11 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         api.updateNode(node.id, { meta }).catch(() => {});
       } else {
         if (file.size > MAX_ASSET_UPLOAD_BYTES) {
-          toast.error('Image too large (max 10MB).');
+          toast.error('Media too large (max 50MB).');
           return;
         }
         const dataUrl = await blobToDataUrl(file);
-        const meta = { ...(node.meta || {}), name: file.name, dataUrl, mimeType: file.type || 'image/*' };
+        const meta = { ...(node.meta || {}), name: file.name, dataUrl, mimeType: file.type || 'application/octet-stream' };
         setNodes((prev) => prev.map((n) => (n.id === node.id ? { ...n, meta } : n)));
         await api.updateNode(node.id, { meta });
       }
@@ -2927,7 +2944,35 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     try {
       const result = await api.runNode(id, opts, controller.signal);
       clearTimeout(advanceToStep2);
-      flashNodeDebit(id, result?.credits);
+      const reconstructionCredits = (result?.reconstructions || []).reduce(
+        (sum, item) => sum + Number(item.credits || 0),
+        0,
+      );
+      for (const reconstructed of (result?.reconstructions || [])) {
+        flashNodeDebit(reconstructed.nodeId, reconstructed.credits);
+      }
+      flashNodeDebit(id, Math.max(0, Number(result?.credits || 0) - reconstructionCredits));
+      if (result?.reconstructions?.length) {
+        const byId = new Map(result.reconstructions.map((item) => [item.nodeId, item]));
+        setNodes((prev) => prev.map((node) => {
+          const reconstructed = byId.get(node.id);
+          if (!reconstructed) return node;
+          return {
+            ...node,
+            current_html: reconstructed.html,
+            current_snapshot_id: reconstructed.snapshotId,
+            current_snapshot_source: 'reconstruct',
+            meta: {
+              ...(node.meta || {}),
+              ...(reconstructed.meta || {}),
+              animatedDetected: false,
+              animatedRuntime: true,
+              reconstructionEngine: 'iter9',
+            },
+            _resetTick: (node._resetTick || 0) + 1,
+          };
+        }));
+      }
       setNodeRunStatus(id, { step: 3, label: 'Saving…', request });
       // Hold the saving label briefly so the transition reads as a
       // resolved step rather than a flash.
@@ -3012,7 +3057,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       results.forEach((r, i) => {
         const id = runnable[i];
         if (r.status === 'fulfilled' && r.value?.snapshotId) {
-          updates.set(id, { html: r.value.html, snapshotId: r.value.snapshotId });
+          updates.set(id, { html: r.value.html, snapshotId: r.value.snapshotId, transplant: r.value.transplant });
           // Ran clean — gate this chain's run buttons until it changes again.
           const sec = sections.find((s) => s.memberIds.includes(id));
           if (sec) markSectionPendingClean(sec.id);
@@ -3029,6 +3074,12 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             ...n,
             current_html: u.html,
             current_snapshot_id: u.snapshotId,
+            current_snapshot_source: 'demarcelizer-4',
+            meta: {
+              ...(n.meta || {}),
+              ...(u.transplant ? { lastTransplant: u.transplant } : {}),
+              ...(u.transplant?.motionPreserved ? { animatedRuntime: true } : {}),
+            },
             _resetTick: (n._resetTick || 0) + 1
           };
         }));
@@ -3314,20 +3365,23 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       const dataUrl = n.meta?.dataUrl;
       if (!dataUrl) { toast.info('Nothing to download yet.'); return; }
       const m = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
-      if (!m) { toast.error('Could not read this image.'); return; }
+      if (!m) { toast.error('Could not read this media file.'); return; }
       const mime = m[1] || 'image/png';
       const base64 = m[2];
       // Map mime → file extension. Default to .png for unknowns.
       const ext = mime === 'image/jpeg' || mime === 'image/jpg' ? 'jpg'
                 : mime === 'image/webp' ? 'webp'
                 : mime === 'image/gif'  ? 'gif'
+                : mime === 'video/mp4' ? 'mp4'
+                : mime === 'video/webm' ? 'webm'
+                : mime === 'video/quicktime' ? 'mov'
                 : 'png';
       const byteString = atob(base64);
       const bytes = new Uint8Array(byteString.length);
       for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
       const blob = new Blob([bytes], { type: mime });
       const url = URL.createObjectURL(blob);
-      const baseName = (n.meta?.name || 'uncraft-image').toString().replace(/[^a-zA-Z0-9._-]+/g, '_');
+      const baseName = (n.meta?.name || 'uncraft-media').toString().replace(/[^a-zA-Z0-9._-]+/g, '_');
       const fname = baseName.endsWith('.' + ext) ? baseName : `${baseName}.${ext}`;
       const a = document.createElement('a');
       a.href = url;
@@ -3547,11 +3601,29 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
                 ...n,
                 current_html: result.html,
                 current_snapshot_id: result.snapshotId,
+                current_snapshot_source: 'demarcelizer-4',
+                meta: {
+                  ...(n.meta || {}),
+                  ...(result.transplant ? { lastTransplant: result.transplant } : {}),
+                  ...(result.transplant?.motionPreserved ? { animatedRuntime: true } : {}),
+                },
                 _resetTick: (n._resetTick || 0) + 1,
               }
             : n
         )));
-        return { ok: true, patch: { current_html: result.html, current_snapshot_id: result.snapshotId } };
+        return {
+          ok: true,
+          patch: {
+            current_html: result.html,
+            current_snapshot_id: result.snapshotId,
+            current_snapshot_source: 'demarcelizer-4',
+            meta: {
+              ...(terminal.meta || {}),
+              ...(result.transplant ? { lastTransplant: result.transplant } : {}),
+              ...(result.transplant?.motionPreserved ? { animatedRuntime: true } : {}),
+            },
+          },
+        };
       } catch (e) {
         console.warn('[section-rerun] site compose failed:', e?.message || e);
         toast.error(e?.message || 'Re-run failed.');
@@ -3627,27 +3699,34 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     });
   }
 
-  // Replace node content with a freshly uploaded file. Accept image/html/md;
+  // Replace node content with a freshly uploaded file. Accept media/html/md;
   // the endpoint figures out the new kind from the explicit `kind` we send
   // (derived from the file's mime + extension here) and patches the node row
   // accordingly. Border colour, body renderer, and tools all shift to match
   // the new media after refetch.
   async function handleReplaceContent(nodeId) {
-    const file = await pickFile('image/*,.html,.htm,text/html,.md,.markdown,text/markdown,text/plain');
+    const file = await pickFile('image/*,video/*,.html,.htm,text/html,.md,.markdown,text/markdown,text/plain');
     if (!file) return;
     const name = file.name || 'replacement';
     const lowerName = name.toLowerCase();
     const mime = file.type || '';
     let payload = null;
-    if (mime.startsWith('image/') || /\.(png|jpe?g|webp|gif|svg)$/i.test(lowerName)) {
-      // Image → base64 data URL
+    if (/^(image|video)\//.test(mime) || /\.(png|jpe?g|webp|gif|svg|mp4|webm|mov|m4v)$/i.test(lowerName)) {
+      if (file.size > MAX_ASSET_UPLOAD_BYTES) {
+        toast.error('Media too large (max 50MB).');
+        return;
+      }
       const dataUrl = await new Promise((resolve, reject) => {
         const fr = new FileReader();
         fr.onload = () => resolve(fr.result);
-        fr.onerror = () => reject(new Error('Could not read image file'));
+        fr.onerror = () => reject(new Error('Could not read media file'));
         fr.readAsDataURL(file);
       });
-      payload = { kind: 'asset', dataUrl, mimeType: mime || 'image/png', name };
+      const fallbackMime = /\.(mp4|m4v)$/i.test(lowerName) ? 'video/mp4'
+        : /\.webm$/i.test(lowerName) ? 'video/webm'
+        : /\.mov$/i.test(lowerName) ? 'video/quicktime'
+        : 'image/png';
+      payload = { kind: 'asset', dataUrl, mimeType: mime || fallbackMime, name };
     } else if (/\.(html?|xhtml)$/i.test(lowerName) || mime === 'text/html') {
       const html = await file.text();
       if (!/<!doctype|<html|<body|<div|<section/i.test(html.trim())) {
@@ -3659,7 +3738,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
       const designMd = await file.text();
       payload = { kind: 'designmd', designMd, name };
     } else {
-      toast.error('Unsupported file type. Use image, .html, or .md.');
+      toast.error('Unsupported file type. Use image, video, .html, or .md.');
       return;
     }
 
@@ -4150,18 +4229,55 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
     return { positionX, positionY, scale };
   }
 
-  function handleEditingToggle(nodeId, willEdit) {
+  function enterEditMode(node) {
+    setEditingNodeId(node.id);
+    setTimeout(() => {
+      const f = computeEditFrame(node);
+      if (window.__uncraftZoom) {
+        window.__uncraftZoom._editFrame = f;
+        window.__uncraftZoom.setState?.(f, 350);
+      }
+    }, 50);
+  }
+
+  async function handleEditingToggle(nodeId, willEdit) {
     if (willEdit) {
-      setEditingNodeId(nodeId);
       const node = nodes.find((n) => n.id === nodeId);
-      if (node) {
-        setTimeout(() => {
-          const f = computeEditFrame(node);
-          if (window.__uncraftZoom) {
-            window.__uncraftZoom._editFrame = f;
-            window.__uncraftZoom.setState?.(f, 350);
-          }
-        }, 50);
+      if (!node || editPreparationRef.current.has(nodeId)) return;
+      if (!needsDeferredReconstruction(node)) {
+        enterEditMode(node);
+        return;
+      }
+
+      editPreparationRef.current.add(nodeId);
+      setNodeRunStatus(nodeId, { step: 1, label: 'Preparing editable site…', request: '' });
+      try {
+        const result = await api.reconstructNode(nodeId);
+        flashNodeDebit(nodeId, result?.credits);
+        const preparedNode = result?.skipped && !result?.html ? node : {
+          ...node,
+          current_html: result.html,
+          current_snapshot_id: result.snapshotId,
+          current_snapshot_source: result.snapshotSource || 'reconstruct',
+          meta: {
+            ...(node.meta || {}),
+            ...(result.meta || {}),
+            ...(!result.skipped ? {
+              animatedDetected: false,
+              animatedRuntime: true,
+              reconstructionEngine: 'iter9',
+            } : {}),
+          },
+          _resetTick: (node._resetTick || 0) + 1,
+        };
+        setNodes((prev) => prev.map((candidate) => candidate.id === nodeId ? preparedNode : candidate));
+        setNodeRunStatus(nodeId, null);
+        enterEditMode(preparedNode);
+      } catch (e) {
+        setNodeRunStatus(nodeId, null);
+        if (!handleBillingError(e)) toast.error(`Could not prepare this site for editing: ${e.message}`);
+      } finally {
+        editPreparationRef.current.delete(nodeId);
       }
     } else {
       setEditingNodeId(null);
@@ -6418,30 +6534,25 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
             if (frame) agentRunNewNodesRef.current = new Map();  // reset at end of run
             if (accumulated.length === 0) return;
 
-            // Focus the camera on the new content the moment it lands on the
-            // canvas (loading state included) so the user never has to hunt
-            // for where it appeared. We fit the ACCUMULATED bbox (not each
-            // node), so as more nodes arrive the frame expands smoothly to
-            // include them instead of hard-jumping per tool call. Only frame
-            // when something new actually appeared this tick (or at run end),
-            // so plain updates/deletes don't move the camera.
-            if (newNodes.length === 0 && !frame) return;
+            // Chat-created nodes are persisted directly, never handed to the
+            // user's cursor as placement ghosts. Mid-run mutations only reveal
+            // the work. Camera movement happens ONCE, at run end, so a chain
+            // assembles without repeated jumps and then lands as one composed
+            // view. A single node uses the standard node-centering frame.
+            if (!frame) return;
 
             setTimeout(() => {
-              const PAD = 160;
-              const minX = Math.min(...accumulated.map((n) => n.pos_x));
-              const minY = Math.min(...accumulated.map((n) => n.pos_y));
-              const maxX = Math.max(...accumulated.map((n) => n.pos_x + (n.width || 1280)));
-              const maxY = Math.max(...accumulated.map((n) => n.pos_y + (n.height || 800)));
-              const cx = (minX + maxX) / 2;
-              const cy = (minY + maxY) / 2;
+              if (accumulated.length === 1) {
+                zoomToNode(accumulated[0], 500);
+                return;
+              }
               const ins = chromeInsets();
-              const vw = window.innerWidth - ins.left - ins.right;
-              const vh = window.innerHeight - ins.top;
-              const scale = Math.min(vw / (maxX - minX + PAD * 2), vh / (maxY - minY + PAD * 2), 1.0);
-              const posX = ins.left + vw / 2 - cx * scale;
-              const posY = ins.top + vh / 2 - cy * scale;
-              transformRef.current?.setTransform(posX, posY, scale, frame ? 500 : 420);
+              const camera = frameAgentNodes(accumulated, {
+                viewportWidth: window.innerWidth,
+                viewportHeight: window.innerHeight,
+                insets: ins,
+              });
+              if (camera) transformRef.current?.setTransform(camera.positionX, camera.positionY, camera.scale, 500);
             }, 80);
           } catch (e) { console.warn('[CanvasClient] agent-mutation refetch failed', e); }
         }}
@@ -6486,34 +6597,6 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user }
         onCancel={() => setInsufficientCredits(null)}
       />
       <PlansModal open={plansOpen} onClose={() => setPlansOpen(false)} />
-
-      <ConfirmModal
-        open={!!animatedChoice}
-        title="Animated site detected"
-        message="Quick capture saved (free) — animations are frozen. Rebuild it live with AI for ≈ 150-250 credits?"
-        confirmLabel={`Reconstruct (~${estimateOp('reconstruct')} cr)`}
-        cancelLabel="Keep free capture"
-        busy={!!animatedChoice?.busy}
-        onConfirm={async () => {
-          if (!animatedChoice || animatedChoice.busy) return;
-          const nodeId = animatedChoice.nodeId;
-          setAnimatedChoice((c) => (c ? { ...c, busy: true } : c));
-          try {
-            const r = await api.reconstructNode(nodeId);
-            flashNodeDebit(nodeId, r?.credits);
-            setNodes((prev) => prev.map((n) => (
-              n.id === nodeId
-                ? { ...n, current_html: r.html, current_snapshot_id: r.snapshotId, _resetTick: (n._resetTick || 0) + 1 }
-                : n
-            )));
-            setAnimatedChoice(null);
-          } catch (e) {
-            setAnimatedChoice(null);
-            if (!handleBillingError(e)) toast.error(`Reconstruction failed: ${e.message}`);
-          }
-        }}
-        onCancel={() => { if (!animatedChoice?.busy) setAnimatedChoice(null); }}
-      />
 
       <ConfirmModal
         open={!!dropRejects}

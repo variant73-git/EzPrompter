@@ -46,6 +46,7 @@ const { POST: runPost } = await import('./nodes/[id]/run/route.js');
 const { POST: reconstructPost } = await import('./nodes/[id]/reconstruct/route.js');
 const { POST: signupPost } = await import('./auth/signup/route.js');
 const { grantCredits: grantMock } = await import('../../lib/billing/ledger.js');
+const { reconstructPage: reconstructPageMock } = await import('../../lib/reconstruct.js');
 
 const makeRequest = (body = {}) => ({ json: async () => body, headers: { get: () => null } });
 const runParams = { params: Promise.resolve({ id: 'node-1' }) };
@@ -53,6 +54,7 @@ const runParams = { params: Promise.resolve({ id: 'node-1' }) };
 beforeEach(() => {
   holdMock.mockClear();
   settleMock.mockClear();
+  reconstructPageMock.mockClear();
   holdMock.mockImplementation(async () => ({ held: true, balance: 500 }));
 });
 
@@ -86,12 +88,34 @@ describe('POST /api/nodes/[id]/run billing wrapper', () => {
     expect(json).toMatchObject({ error: 'insufficient_credits', estimate: 75, balance: 10 });
     expect(settleMock).not.toHaveBeenCalled();
   });
+
+  it('reconstructs an animated runtime source only when its binding requires it', async () => {
+    currentSql = fakeSql([
+      [{ id: 'node-1', kind: 'site', meta: {}, board_id: 'b1', origin_url: null, current_html: '<html>target</html>', current_design_md: null, current_snapshot_source: 'upload' }],
+      [{ id: 'source-1', edge_id: 'e1', edge_payload: { binding: { motion: 'preserve' } }, source_node_id: 'source-1', kind: 'site', meta: { animatedDetected: true }, board_id: 'b1', origin_url: 'https://example.com', source_html: '<html>frozen</html>', source_design_md: null, current_snapshot_source: 'capture' }],
+      [{ id: 'source-snap' }], // deferred reconstruction snapshot
+      [],                      // reconstructed source metadata
+      [{ id: 'target-snap' }], // composed target snapshot
+      [],                      // target metadata
+      [],                      // applied edges
+    ]);
+
+    const res = await runPost(makeRequest(), runParams);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.reconstructions).toHaveLength(1);
+    expect(json.reconstructions[0]).toMatchObject({ nodeId: 'source-1', reason: 'runtime-source' });
+    expect(holdMock).toHaveBeenNthCalledWith(1, expect.objectContaining({ credits: 200 }));
+    expect(holdMock).toHaveBeenNthCalledWith(2, expect.objectContaining({ credits: 75 }));
+    expect(reconstructPageMock).toHaveBeenCalledWith('https://example.com');
+  });
 });
 
 describe('POST /api/nodes/[id]/reconstruct billing wrapper (Task 15)', () => {
   it('bills the reconstruct and returns credits', async () => {
     currentSql = fakeSql([
-      [{ id: 'node-1', board_id: 'b1', origin_url: 'https://example.com' }],
+      [{ id: 'node-1', kind: 'site', meta: { animatedDetected: true }, board_id: 'b1', origin_url: 'https://example.com', current_snapshot_source: 'capture' }],
       [{ id: 'snap-1' }], // snapshot INSERT RETURNING
       [],                 // UPDATE nodes
     ]);
@@ -105,7 +129,7 @@ describe('POST /api/nodes/[id]/reconstruct billing wrapper (Task 15)', () => {
   it('returns 402 when the hold fails', async () => {
     holdMock.mockImplementation(async () => ({ held: false, balance: 5 }));
     currentSql = fakeSql([
-      [{ id: 'node-1', board_id: 'b1', origin_url: 'https://example.com' }],
+      [{ id: 'node-1', kind: 'site', meta: { animatedDetected: true }, board_id: 'b1', origin_url: 'https://example.com', current_snapshot_source: 'capture' }],
     ]);
     const res = await reconstructPost(makeRequest(), runParams);
     const json = await res.json();
