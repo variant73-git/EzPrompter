@@ -145,4 +145,12 @@ describe('node editor kind', () => {
     });
     expect(resolveNodeEditorKind(prepared, snapshotEditorMetadata(prepared), flags)).toBe(NODE_EDITOR_KIND.LEGACY);
   });
+
+  it('snapshot canonical com pacote e manifesto v2 é nativo pronto', () => {
+    expect(classifyNativeLineage({
+      current_snapshot_source: 'canonical',
+      current_native_bundle_id: '33333333-3333-4333-8333-333333333333',
+      current_motion_manifest_version: 2,
+    })).toBe(NATIVE_LINEAGE.READY);
+  });
 });

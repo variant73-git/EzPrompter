@@ -13,7 +13,9 @@ export const NATIVE_LINEAGE = Object.freeze({
   LEGACY: 'legacy',
   INCONSISTENT: 'native-inconsistent',
 });
-export const NATIVE_SNAPSHOT_SOURCES = Object.freeze(['native-bundle', 'native-edit']);
+export const CANONICAL_SNAPSHOT_SOURCE = 'canonical';
+// 'canonical' (a cópia editável, spec 2026-10-09) tem a mesma estrutura de um snapshot nativo: pacote + manifesto v2.
+export const NATIVE_SNAPSHOT_SOURCES = Object.freeze(['native-bundle', 'native-edit', CANONICAL_SNAPSHOT_SOURCE]);
 
 /**
  * Structural classifier of a node's native lineage (Sol advise 2026-08-20).
