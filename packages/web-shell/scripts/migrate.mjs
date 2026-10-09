@@ -58,6 +58,14 @@ const MIGRACOES = [
       travas: [],
     }),
   },
+  {
+    arquivo: 'migrations/2026-10-09-canonical-jobs.sql',
+    falta: (r) => ({
+      colunas: [],
+      tabelas: ['canonical_jobs'].filter((t) => !r.tabelas.includes(t)),
+      travas: [],
+    }),
+  },
 ];
 
 const isolado = process.argv.includes('--isolated');
