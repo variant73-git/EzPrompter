@@ -17,7 +17,7 @@
 // v0: layout reproduzido na largura de 1440 px; tablet/celular são etapa seguinte.
 // Uso: node scripts/normalizar-clone.mjs --captura <assets-nativa> --saida <pasta-assets-canonica>
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
 import { servir } from './inventario-conteudo.mjs';
@@ -446,6 +446,13 @@ export function fichasDeSequencia({ amostras, sequencias, mapa, origem }) {
 const ASSENTAR_MS = Number(process.env.UNCRAFT_ASSENTAR_MS) || 1000;
 const LACOS_AGRUPADOS = process.env.UNCRAFT_LACOS_AGRUPADOS !== '0';
 export const PROTOCOLO_GRAVACAO = { assentarMs: ASSENTAR_MS, lacosAgrupados: LACOS_AGRUPADOS };
+// PROGRESSO (2026-10-09, cópia no Edit): a máquina que monta a cópia conta as paradas num arquivo que o
+// servidor lê para o número do node. Uma linha JSON por parada; nunca derruba a gravação (é cosmético).
+const PROGRESSO = process.env.UNCRAFT_PROGRESSO || null;
+export function anotarProgresso(arquivo, entrada) {
+  if (!arquivo) return;
+  try { appendFileSync(arquivo, `${JSON.stringify(entrada)}\n`); } catch { /* progresso é cosmético */ }
+}
 export function coberturaDeLacos(cand, ys) {
   const suspeitos = new Map(); const restantes = new Set(cand.keys());
   while (restantes.size) {
@@ -493,7 +500,9 @@ async function gravarLeitura(page, passo, deslocamento = 0) {
     await cron('esperaMs', () => page.waitForTimeout(Math.max(0, tRolou + ASSENTAR_MS - Date.now()))); const [b, telas] = await cron('medirMs', medir);
     if (Object.keys(b).every((k) => !a[k] || !difere(a[k], b[k]))) tempos.paradasSemMudanca += 1;
     amostras.push({ y, a, b, telasA, telas });
+    anotarProgresso(PROGRESSO, { fase: 'gravando', feitas: i + 1, total: lista.length });
   }
+  anotarProgresso(PROGRESSO, { fase: 'montando' });
   // TESTE DE LACO exatamente como sempre: cada suspeito na SUA parada do meio. Agrupar (Astra r1) e pular quem
   // nao vira ficha (Astra r2) mudam o TRAJETO da pagina — e o historico de desenho dos canvas, lido depois
   // daqui, depende dele.
