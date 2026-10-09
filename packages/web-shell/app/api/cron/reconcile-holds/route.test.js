@@ -4,12 +4,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const reconcileMock = vi.fn(async () => ({ scanned: 2, reconciled: 2, refundedCredits: 350 }));
 vi.mock('../../../../lib/db.js', () => ({ db: async () => ({}) }));
 vi.mock('../../../../lib/billing/operations.js', () => ({ reconcileStrandedHolds: (...a) => reconcileMock(...a) }));
+const canonicalSweep = vi.fn(async () => ({ scanned: 3, failed: 2, cleaned: 2 }));
+vi.mock('../../../../lib/canonical/job-service.js', () => ({ sweepCanonicalJobs: (...a) => canonicalSweep(...a) }));
+vi.mock('../../../../lib/challenge/job-service.js', () => ({ sweepExpiredJobs: async () => ({ expired: 0 }) }));
 
 const { GET } = await import('./route.js');
 
 const makeReq = (auth) => ({ headers: { get: (h) => (h === 'authorization' ? auth : null) } });
 
-beforeEach(() => { reconcileMock.mockClear(); delete process.env.CRON_SECRET; });
+beforeEach(() => { reconcileMock.mockClear(); canonicalSweep.mockClear(); delete process.env.CRON_SECRET; });
 
 describe('GET /api/cron/reconcile-holds', () => {
   it('runs the sweep and returns the summary when no secret is configured (dev)', async () => {
@@ -33,4 +36,18 @@ describe('GET /api/cron/reconcile-holds', () => {
     expect(res.status).toBe(200);
     expect(reconcileMock).toHaveBeenCalledOnce();
   });
+
+  it('também varre as preparações da cópia vencidas e informa quantas falharam', async () => {
+    const res = await GET(makeReq(null));
+    expect(canonicalSweep).toHaveBeenCalledOnce();
+    expect((await res.json()).canonicalJobsFailed).toBe(2);
+  });
+
+  it('falha na varredura da cópia não derruba a reconciliação', async () => {
+    canonicalSweep.mockRejectedValueOnce(new Error('db down'));
+    const res = await GET(makeReq(null));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, canonicalJobsFailed: 0 });
+  });
 });
+

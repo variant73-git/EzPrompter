@@ -47,7 +47,18 @@ export async function GET(request) {
       // eslint-disable-next-line no-console
       console.error('[reconcile-holds] challenge sweep failed:', e?.code || e?.message);
     }
-    return NextResponse.json({ ok: true, ...summary, challengeJobsExpired, ttlSecs: RECONCILE_TTL_SECS });
+    // Preparações da cópia editável vencidas (spec 2026-10-09 §4.1): desliga a máquina, marca 'failed',
+    // devolve a reserva; e retoma limpezas pendentes. Best-effort, como o challenge.
+    let canonicalJobsFailed = 0;
+    try {
+      const { sweepCanonicalJobs } = await import('../../../../lib/canonical/job-service.js');
+      const swept = await sweepCanonicalJobs({ sql });
+      canonicalJobsFailed = swept.failed;
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('[reconcile-holds] canonical sweep failed:', e?.code || e?.message);
+    }
+    return NextResponse.json({ ok: true, ...summary, challengeJobsExpired, canonicalJobsFailed, ttlSecs: RECONCILE_TTL_SECS });
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error('[reconcile-holds] sweep failed:', e);

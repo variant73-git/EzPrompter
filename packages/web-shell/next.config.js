@@ -60,6 +60,11 @@ const nextConfig = {
   // a stray lockfile in $HOME and trace the whole home directory (which
   // hangs the dev server for minutes on first compile).
   outputFileTracingRoot: path.join(__dirname, '..', '..'),
+  // A preparação da cópia (spec 2026-10-09) LÊ estes arquivos do disco para mandá-los à máquina descartável —
+  // leitura dinâmica que o rastreio do Next não enxerga sozinho.
+  outputFileTracingIncludes: {
+    '/api/canonical-jobs/[id]/advance': ['./scripts/*.mjs', './lib/motion-program/uncraft-motion.js'],
+  },
   async headers() {
     return [
       {
