@@ -1,4 +1,5 @@
 import { isIter9Reconstruction } from './node-viewport.js';
+import { mergeCanonicalCopies } from './canonical/copy-screens.js';
 
 export const NODE_EDITOR_KIND = Object.freeze({
   LEGACY: 'legacy',
@@ -63,12 +64,28 @@ export function applyReconstructionResultToNode(node, result) {
     meta: {
       ...(node.meta || {}),
       ...(result.meta || {}),
+      // a marca das telas de cada cópia editável se JUNTA (a nova não apaga a das cópias anteriores)
+      ...(result.meta?.canonicalCopies ? { canonicalCopies: mergeCanonicalCopies(node.meta, result.meta.canonicalCopies) } : {}),
       ...(!result.skipped ? {
         animatedDetected: false,
         animatedRuntime: true,
         reconstructionEngine: native ? 'native-bundle' : 'iter9',
       } : {}),
     },
+    _resetTick: (node._resetTick || 0) + 1,
+  };
+}
+
+// Reset e restaurar versão: o node passa a mostrar OUTRA versão — origem, pacote e manifesto mudam junto com o
+// HTML (Astra r2 #3: o Reset trocava só o HTML e o canvas seguia achando que mostrava o pacote da cópia).
+export function applyRestoredSnapshot(node, restored) {
+  return {
+    ...node,
+    current_html: restored.html,
+    current_snapshot_id: restored.snapshot_id || node.original_snapshot_id,
+    current_snapshot_source: restored.source || node.current_snapshot_source,
+    current_native_bundle_id: restored.native_bundle_id || null,
+    current_motion_manifest_version: restored.motion_manifest_version == null ? null : Number(restored.motion_manifest_version),
     _resetTick: (node._resetTick || 0) + 1,
   };
 }

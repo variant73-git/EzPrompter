@@ -13,6 +13,7 @@ import { EXIT_MEANING, SANDBOX_TIMEOUT_MS, VM, createSandboxRunner, parseExitFil
 import { chunkBySize, loadCapturePayload, loadCodePayload, loadNativeDescriptor } from './payload.js';
 import { canonicalProducerOutput, readTarGz } from './output-bundle.js';
 import { publishCanonical } from './publish.js';
+import { canonicalCopyMeta } from './copy-screens.js';
 
 export const CANONICAL_OP = 'clone.canonical';
 
@@ -38,6 +39,7 @@ export function readyResult(job) {
     snapshotSource: 'canonical',
     bundleDescriptor: { bundleId: job.result_bundle_id },
     motionManifest: { schemaVersion: 2, baseBundleId: job.result_bundle_id },
+    meta: canonicalCopyMeta(job.result_bundle_id),
   };
 }
 

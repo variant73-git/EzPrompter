@@ -21,7 +21,7 @@ export async function POST(request, { params }) {
   if (!node) return NextResponse.json({ error: 'not_found' }, { status: 404 });
 
   const [first] = await sql`
-    SELECT id, html, design_md, screenshot_url
+    SELECT id, html, design_md, screenshot_url, source, native_bundle_id, motion_manifest_version
       FROM snapshots
      WHERE node_id = ${id}
      ORDER BY created_at ASC
@@ -40,6 +40,10 @@ export async function POST(request, { params }) {
     snapshot_id: first.id,
     html: first.html,
     design_md: first.design_md,
-    screenshot_url: first.screenshot_url
+    screenshot_url: first.screenshot_url,
+    // a identidade da versão original vai junto (o canvas troca pacote e manifesto, não só o HTML)
+    source: first.source,
+    native_bundle_id: first.native_bundle_id || null,
+    motion_manifest_version: first.motion_manifest_version == null ? null : Number(first.motion_manifest_version),
   });
 }

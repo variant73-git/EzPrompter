@@ -8799,6 +8799,9 @@ body.rb-ed-active.rb-ed-canvas .canvas-inspector { display: none; }
 .canvas-topbar-viewports button:hover { color: var(--text-primary); background: #343431; }
 .canvas-topbar-viewports button.active { color: #20201E; background: #F0EFE9; }
 .canvas-topbar-viewports button:disabled { opacity: 0.5; cursor: default; }
+/* tela que a cópia editável não tem: clicável (explica o motivo), com cara de desligada */
+.canvas-topbar-viewports button[aria-disabled='true'] { opacity: 0.35; cursor: not-allowed; }
+.canvas-topbar-viewports button[aria-disabled='true']:hover { color: var(--text-muted); background: transparent; }
 .canvas-topbar-viewports button svg { width: 14px; height: 14px; }
 .canvas-topbar-edit { background: #F0EFE9; color: #20201E; }
 .canvas-topbar-edit:hover:not(:disabled) { background: #FFFFFF; }

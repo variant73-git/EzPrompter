@@ -34,6 +34,8 @@ describe('sandbox runner', () => {
     expect(s).toContain('PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64');
     expect(s).toContain('--movimento=decl+leitura');
     expect(s).toContain('--sem-plano');
+    // a cópia é gravada na tela em que o node e o editor a mostram (antes: 1440, transbordava no node de 1280)
+    expect(s).toContain('--tela desktop');
     expect(s).toContain(`UNCRAFT_PROGRESSO="$P"`);
     expect(s).toContain(`tar -czf ${VM.archive}`);
     expect(s).not.toMatch(/UNCRAFT_ASSENTAR_MS|UNCRAFT_LACOS_AGRUPADOS|TOKEN|SECRET|DATABASE_URL/);

@@ -9,17 +9,20 @@ import { chromium } from 'playwright-core';
 import { servir } from './inventario-conteudo.mjs';
 import { mapaDaCaptura, arquivoCapturado } from './mapa-da-captura.mjs';
 import { injetarModoPlano } from '../lib/native-plane/plane-mode.js';
+import { DEFAULT_SCREEN, screenProfile } from '../lib/canonical/screen-profiles.js';
 
 export const GPU = { channel: 'chromium', args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist'] };
 
-export async function analisarPlano({ captura, canonica, excluirCanvas = [], ys = null }) {
+// `tela` = a da copia canonica: o nativo e a copia sao fotografados lado a lado no MESMO tamanho
+export async function analisarPlano({ captura, canonica, excluirCanvas = [], ys = null, tela = DEFAULT_SCREEN }) {
+  const T = screenProfile(tela);
   const html = await readFile(path.join(captura, 'index.html'), 'utf8');
   const porUrl = mapaDaCaptura(html);
   const { srv, origem } = await servir(path.resolve(captura));
   const canon = await servir(path.resolve(canonica));
   const b = await chromium.launch(GPU);
   try {
-    const p = await b.newPage({ viewport: { width: 1440, height: 1200 } });
+    const p = await b.newPage({ viewport: { width: T.width, height: T.height } });
     let externosAbortados = 0;
     // ORIGEM EXATA (Astra r1: o prefixo "127.0.0.1" deixava passar qualquer porta local e "127.0.0.1.x.com").
     // Toda pagina HTML do nativo entra em modo plano — uma navegacao nao escapa para a pagina inteira.
@@ -49,10 +52,10 @@ export async function analisarPlano({ captura, canonica, excluirCanvas = [], ys 
     const nCanvas = await p.evaluate(() => Array.from(document.getElementsByTagName('canvas')).filter((c) => !c.hasAttribute('data-u-plano-fora') && c.getBoundingClientRect().width > 0).length);
     if (!nCanvas) return null;
     const altura = await p.evaluate(() => document.documentElement.scrollHeight);
-    const maxY = Math.max(0, altura - 1200);
+    const maxY = Math.max(0, altura - T.height);
     const posicoes = ys || [...new Set(Array.from({ length: 6 }, (_, i) => Math.round((maxY * i) / 5)))];
     // canonica numa segunda pagina, nas mesmas posicoes: caixas vazias candidatas a ancora
-    const pc = await b.newPage({ viewport: { width: 1440, height: 1200 } });
+    const pc = await b.newPage({ viewport: { width: T.width, height: T.height } });
     await pc.route('**/*', (r) => { let o = null; try { o = new URL(r.request().url()).origin; } catch { o = null; } return o === canon.origem || /^(data|blob):/.test(r.request().url()) ? r.continue() : r.abort(); });
     await pc.goto(`${canon.origem}/index.html`, { waitUntil: 'load' });
     let somaCobertura = 0; const acopladas = new Set();

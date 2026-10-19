@@ -77,6 +77,8 @@ describe('iniciar a preparação', () => {
     expect(readyResult({ status: 'ready', result_bundle_id: 'b2', result_snapshot_id: 's2' })).toEqual({
       kind: 'native', snapshotId: 's2', snapshotSource: 'canonical',
       bundleDescriptor: { bundleId: 'b2' }, motionManifest: { schemaVersion: 2, baseBundleId: 'b2' },
+      // o canvas mistura `meta` no node: a marca das telas chega sem recarregar a página
+      meta: { canonicalCopies: { b2: { screens: ['desktop'] } } },
     });
   });
 });

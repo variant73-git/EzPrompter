@@ -9,6 +9,7 @@ import {
   MOTION_EDITOR_DEVICE_ORDER,
   MOTION_EDITOR_DEVICES,
 } from './motion-editor/devices.js';
+import { deviceAllowedForNode } from './canonical/copy-screens.js';
 
 export function isIter9Reconstruction(node) {
   const source = node?.current_snapshot_source || node?.meta?.snapshotSource;
@@ -38,7 +39,9 @@ export function nativeEditDeviceForNode(node) {
   const exact = MOTION_EDITOR_DEVICE_ORDER.find((id) => (
     Number.isFinite(width) && Math.abs(MOTION_EDITOR_DEVICES[id].width - width) < 4
   ));
-  return getMotionEditorDevice(exact || 'desktop');
+  // a cópia editável que o node mostra pode existir só em algumas telas (T1: desktop): numa largura que ela não
+  // tem, a edição abre no desktop em vez de apertar a cópia de 1280 numa tela de 768
+  return getMotionEditorDevice(exact && deviceAllowedForNode(node, exact) ? exact : 'desktop');
 }
 
 export function canonicalNativeEditNode(node, deviceId = nativeEditDeviceForNode(node).id) {

@@ -8,6 +8,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { comparar, medirCanonico } from './regua-trajetoria.mjs';
+import { DEFAULT_SCREEN } from '../lib/canonical/screen-profiles.js';
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > -1 ? process.argv[i + 1] : d; };
 const dono = (alvo) => alvo.slice(1);
@@ -46,7 +47,7 @@ if (process.argv[1] && process.argv[1].endsWith('escolher-por-elemento.mjs')) {
   const canonico = arg('--canonico'); const ref = JSON.parse(await readFile(arg('--referencia'), 'utf8'));
   const decl = arg('--declarado'); const obs = arg('--observado');
   const ys = ref.amostras.map((s) => s.y);
-  const notas = async (programa) => comparar(ref, await medirCanonico(canonico, ys, { programa }), { notas: true }).notasPorDono;
+  const notas = async (programa) => comparar(ref, await medirCanonico(canonico, ys, { programa, tela: ref.tela || DEFAULT_SCREEN }), { notas: true }).notasPorDono;
   const t0 = Date.now();
   const notasDecl = await notas(decl); const notasObs = await notas(obs);
   const r = escolher({ declarado: JSON.parse(await readFile(decl, 'utf8')), observado: JSON.parse(await readFile(obs, 'utf8')), notasDecl, notasObs });

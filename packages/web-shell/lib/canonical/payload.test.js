@@ -5,6 +5,7 @@ import { createMemoryBundleStore } from '../native-clone/bundle-store.js';
 import { registerNativeBundle } from '../native-clone/register-bundle.js';
 import { PAYLOAD_FILES, VM_PACKAGE_JSON, chunkBySize, loadCapturePayload, loadCodePayload } from './payload.js';
 import { VM } from './sandbox-runner.js';
+import nextConfig from '../../next.config.js';
 
 const raiz = path.resolve(__dirname, '../..');
 
@@ -28,6 +29,13 @@ describe('pacote de entrada da máquina', () => {
   it('a lista de arquivos é exatamente o fecho do script + o tocador', () => {
     const esperado = [...new Set([...fechoDeImports('scripts/normalizar-clone.mjs'), 'lib/motion-program/uncraft-motion.js'])].sort();
     expect([...PAYLOAD_FILES].sort()).toEqual(esperado);
+  });
+
+  it('todo arquivo do pacote entra no build da rota que monta a máquina (senão falta em produção)', () => {
+    const globs = nextConfig.outputFileTracingIncludes['/api/canonical-jobs/[id]/advance'] || [];
+    const casa = (glob, arq) => new RegExp(`^${glob.replace(/^\.\//, '').replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\u0000/g, '.*')}$`).test(arq);
+    const fora = PAYLOAD_FILES.filter((arq) => !globs.some((g) => casa(g, arq)));
+    expect(fora).toEqual([]);
   });
 
   it('código vai para /vercel/sandbox/c com package.json fixo e o script executável', async () => {

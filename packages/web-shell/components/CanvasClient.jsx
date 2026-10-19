@@ -41,6 +41,7 @@ import { shouldReconstructForAction } from '../lib/reconstruction-policy.js';
 import { EDIT_ROUTE, planEditEntry } from '../lib/edit-action-decision.js';
 import { useCanonicalPrep } from './useCanonicalPrep.js';
 import { CANONICAL_ENTRY, canonicalEditClientEnabled, openWhenReady, planCanonicalEntry, readyNodeFrom } from '../lib/canonical/edit-entry.js';
+import { DESKTOP_ONLY_NOTICE, viewportChoicesForNode } from '../lib/canonical/copy-screens.js';
 import { resolveEditEngineOverride } from '../lib/dev-toggles.js';
 import DevWidget from './DevWidget.jsx';
 import { canUseCloneEdit } from '../lib/clone-edit-access.js';
@@ -71,6 +72,7 @@ import {
 } from '../lib/url-reference.js';
 import {
   applyReconstructionResultToNode,
+  applyRestoredSnapshot,
   classifyNativeLineage,
   NATIVE_LINEAGE,
   NODE_EDITOR_KIND,
@@ -141,6 +143,9 @@ const MenuIcon = {
     </svg>
   )
 };
+
+// ícone de cada tela do editor (lib/motion-editor/devices.js)
+const VIEWPORT_ICONS = { desktop: Monitor, tablet: Tablet, mobile: Smartphone };
 
 const WORLD_WIDTH = 8000;
 const WORLD_HEIGHT = 6000;
@@ -3134,13 +3139,10 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
   async function handleResetNode(id) {
     if (String(id).startsWith('temp-')) return;
     try {
-      const { html, snapshot_id } = await api.resetNode(id);
-      // Force a fresh srcDoc by toggling _resetTick so React remounts the iframe.
-      setNodes((prev) => prev.map((n) =>
-        n.id === id
-          ? { ...n, current_html: html, current_snapshot_id: snapshot_id || n.original_snapshot_id, _resetTick: (n._resetTick || 0) + 1 }
-          : n
-      ));
+      const restored = await api.resetNode(id);
+      // Same identity swap as a version restore (source, bundle and manifest follow the HTML); _resetTick
+      // forces a fresh srcDoc so React remounts the iframe.
+      setNodes((prev) => prev.map((n) => (n.id === id ? applyRestoredSnapshot(n, restored) : n)));
     } catch (e) {
       toast.error(`Reset failed: ${e.message}`);
     }
@@ -3153,21 +3155,7 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
     if (String(id).startsWith('temp-') || !snapshotId) return;
     try {
       const restored = await api.restoreVersion(id, snapshotId);
-      setNodes((prev) => prev.map((n) =>
-        n.id === id
-          ? {
-            ...n,
-            current_html: restored.html,
-            current_snapshot_id: restored.snapshot_id,
-            current_snapshot_source: restored.source || n.current_snapshot_source,
-            current_native_bundle_id: restored.native_bundle_id || null,
-            current_motion_manifest_version: restored.motion_manifest_version == null
-              ? null
-              : Number(restored.motion_manifest_version),
-            _resetTick: (n._resetTick || 0) + 1,
-          }
-          : n
-      ));
+      setNodes((prev) => prev.map((n) => (n.id === id ? applyRestoredSnapshot(n, restored) : n)));
     } catch (e) {
       toast.error(`Restore failed: ${e.message}`);
     }
@@ -6428,24 +6416,24 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
               </b>
             </div>
             <div className="canvas-topbar-viewports canvas-edit-viewports" role="group" aria-label="Editing viewport">
-              {[
-                { label: 'Desktop', width: 1280, height: 800, Icon: Monitor },
-                { label: 'Tablet', width: 768, height: 920, Icon: Tablet },
-                { label: 'Mobile', width: 390, height: 844, Icon: Smartphone },
-              ].map(({ label, width, height, Icon }) => (
-                <button
-                  key={label}
-                  type="button"
-                  className={Math.abs(editingNode.width - width) < 4 ? 'active' : ''}
-                  onClick={() => applySiteViewport(editingNode, width, height)}
-                  title={`${label} · ${width}px`}
-                  aria-label={`${label} editing viewport`}
-                  aria-pressed={Math.abs(editingNode.width - width) < 4}
-                  disabled={editorActionBusy}
-                >
-                  <Icon aria-hidden="true" />
-                </button>
-              ))}
+              {viewportChoicesForNode(editingNode).map(({ id, label, width, height, allowed, active, title }) => {
+                const Icon = VIEWPORT_ICONS[id];
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    className={active ? 'active' : ''}
+                    onClick={() => (allowed ? applySiteViewport(editingNode, width, height) : toast.info(`${DESKTOP_ONLY_NOTICE}.`))}
+                    title={title}
+                    aria-label={`${label} editing viewport`}
+                    aria-pressed={active}
+                    aria-disabled={!allowed || undefined}
+                    disabled={editorActionBusy}
+                  >
+                    <Icon aria-hidden="true" />
+                  </button>
+                );
+              })}
             </div>
             <div className="canvas-edit-actions">
               {nativeEditing && <NativeMotionEditTopbarControls />}
@@ -6487,23 +6475,23 @@ export default function CanvasClient({ board, initialNodes, initialEdges, user, 
         </div>
         {selectedSiteNode && (
           <div className="canvas-topbar-viewports canvas-resting-viewports" role="group" aria-label="Website viewport">
-            {[
-              { label: 'Desktop', width: 1280, height: 800, Icon: Monitor },
-              { label: 'Tablet', width: 768, height: 920, Icon: Tablet },
-              { label: 'Mobile', width: 390, height: 844, Icon: Smartphone },
-            ].map(({ label, width, height, Icon }) => (
-              <button
-                key={label}
-                type="button"
-                className={Math.abs(selectedSiteNode.width - width) < 4 ? 'active' : ''}
-                onClick={() => applySiteViewport(selectedSiteNode, width, height)}
-                title={`${label} · ${width}px`}
-                aria-label={`${label} viewport`}
-                aria-pressed={Math.abs(selectedSiteNode.width - width) < 4}
-              >
-                <Icon aria-hidden="true" />
-              </button>
-            ))}
+            {viewportChoicesForNode(selectedSiteNode).map(({ id, label, width, height, allowed, active, title }) => {
+              const Icon = VIEWPORT_ICONS[id];
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={active ? 'active' : ''}
+                  onClick={() => (allowed ? applySiteViewport(selectedSiteNode, width, height) : toast.info(`${DESKTOP_ONLY_NOTICE}.`))}
+                  title={title}
+                  aria-label={`${label} viewport`}
+                  aria-pressed={active}
+                  aria-disabled={!allowed || undefined}
+                >
+                  <Icon aria-hidden="true" />
+                </button>
+              );
+            })}
           </div>
         )}
         <div className="canvas-topbar-actions">

@@ -1,6 +1,8 @@
 // Máquina descartável que monta a cópia (spec 2026-10-09 §4.2). Uma tarefa por máquina; nome determinístico
 // (gravado ANTES de criar, para nunca ficar órfã); nenhuma credencial entra nela — o servidor escreve os
 // arquivos, dispara o comando destacado e lê o resultado.
+import { CANONICAL_SCREENS } from './copy-screens.js';
+
 export const VM = Object.freeze({
   root: '/vercel/sandbox',
   code: '/vercel/sandbox/c',
@@ -48,7 +50,7 @@ export function buildRunScript() {
     `cd ${VM.code} || exit 40`,
     `npm install --no-audit --no-fund > ${VM.out}/install.log 2>&1 || exit 41`,
     `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64 npx playwright install --with-deps chromium >> ${VM.out}/install.log 2>&1 || exit 42`,
-    `UNCRAFT_PROGRESSO="$P" node scripts/normalizar-clone.mjs --captura ${VM.capture} --saida ${VM.out}/canonica --movimento=decl+leitura --sem-plano > ${VM.out}/relatorio.json 2> ${VM.errors} || exit 43`,
+    `UNCRAFT_PROGRESSO="$P" node scripts/normalizar-clone.mjs --captura ${VM.capture} --saida ${VM.out}/canonica --movimento=decl+leitura --sem-plano --tela ${CANONICAL_SCREENS[0]} > ${VM.out}/relatorio.json 2> ${VM.errors} || exit 43`,
     `tar -czf ${VM.archive} -C ${VM.out}/canonica . || exit 44`,
     'exit 0',
     '',

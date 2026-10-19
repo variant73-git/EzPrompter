@@ -14,7 +14,8 @@
 //   - embrulhos que não desenham nada e não mudam o layout são desfeitos; texto dividido em
 //     partes volta a ser texto simples; cada parte visível ganha id DESCRITIVO e as peças de
 //     conteúdo levam `data-u-conteudo` (a mesma chave do inventário).
-// v0: layout reproduzido na largura de 1440 px; tablet/celular são etapa seguinte.
+// O layout sai na TELA da gravação (`--tela`, lib/canonical/screen-profiles.js; padrão = referência 1440 × 1200):
+// o estilo serializado é o calculado, então a cópia só fica certa nessa tela, e ela a declara em <html data-u-tela>.
 // Uso: node scripts/normalizar-clone.mjs --captura <assets-nativa> --saida <pasta-assets-canonica>
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { appendFileSync, existsSync } from 'node:fs';
@@ -27,6 +28,7 @@ import { lerGsapNaPagina, fichasDoGsap, CONTROLE_GSAP } from './ler-gsap.mjs';
 import { mapaDaCaptura, arquivoCapturado, mapaDeRemotas } from './mapa-da-captura.mjs';
 import { lenisSemSuavizacao } from './lenis-instantanea.mjs';
 import { gravarRastro } from './rastro-gravacao.mjs';
+import { DEFAULT_SCREEN, screenProfile } from '../lib/canonical/screen-profiles.js';
 
 const arg = (k, d) => { const i = process.argv.indexOf(k); return i > -1 ? process.argv[i + 1] : d; };
 
@@ -587,12 +589,13 @@ export function etiquetasQueSeMexem(amostras) {
   return out;
 }
 
-export async function normalizarCaptura({ captura, saida, movimento = false, passo = 100, deslocamento = 0, soGravacao = null }) {
+export async function normalizarCaptura({ captura, saida, movimento = false, passo = 100, deslocamento = 0, soGravacao = null, tela = DEFAULT_SCREEN, plano = !process.argv.includes('--sem-plano') }) {
+  const T = screenProfile(tela);   // antes de abrir qualquer coisa: tela desconhecida para aqui
   const corpoColetar = await coletarDoExtrator();
   const { srv, origem } = await servir(path.resolve(captura));
   const browser = await chromium.launch();
   try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 1200 } });
+    const page = await browser.newPage({ viewport: { width: T.width, height: T.height } });
     const porUrl = mapaDaCaptura(await readFile(path.join(captura, 'index.html'), 'utf8').catch(() => ''));
     // sem rede, MAS o que a captura guardou e servido: o site que monta o endereco da imagem enquanto roda
     // acha o arquivo (sem isso o Framer troca a imagem por um aviso de erro e o aviso entra no esqueleto)
@@ -630,7 +633,10 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
     if (movimento) gravacao = await gravarLeitura(page, passo, deslocamento);   // a gravacao E a passada que carrega o preguicoso
     else {
       const max = await page.evaluate(() => document.documentElement.scrollHeight);
-      for (let y = 0; y < max; y += 900) { await page.evaluate((v) => window.scrollTo(0, v), y); await page.waitForTimeout(250); }
+      // salto = 3/4 da tela, com sobreposicao (900 na referencia, como sempre; Astra r1: 900 fixo numa tela de 800
+      // deixava a faixa 800–900 de cada salto sem nunca entrar na tela, e o que so carrega quando visivel ficava de fora)
+      const salto = Math.round(T.height * 0.75);
+      for (let y = 0; y < max; y += salto) { await page.evaluate((v) => window.scrollTo(0, v), y); await page.waitForTimeout(250); }
     }
     await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(2000);
     await page.evaluate(`window.__marca = (el, k) => { try { el.setAttribute('data-u-chave', k); } catch (e) {} return k; }; (${corpoColetar})(${JSON.stringify(origem)}); true`);
@@ -644,10 +650,10 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
       // conferir que os gemeos sao os mesmos; o clone (index.html, motion.json) nao e tocado
       const { mapa, mapaPartes, ids } = await mapasDaPagina(page);
       await mkdir(path.dirname(path.resolve(soGravacao)), { recursive: true });
-      await writeFile(soGravacao, JSON.stringify({ passo, deslocamento, ids, amostras: gravacaoPorId(gravacao, { ...mapa, ...mapaPartes }) }));
+      await writeFile(soGravacao, JSON.stringify({ passo, deslocamento, tela: T.id, ids, amostras: gravacaoPorId(gravacao, { ...mapa, ...mapaPartes }) }));
       return { soGravacao, ids: ids.length, partes: Object.keys(mapaPartes).length, amostras: gravacao.amostras.length };
     }
-    const html = `<!doctype html>\n<html lang="${r.lang || 'en'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${r.titulo.replace(/</g, '&lt;')}</title>
+    const html = `<!doctype html>\n<html lang="${r.lang || 'en'}" data-u-tela="${T.id}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${r.titulo.replace(/</g, '&lt;')}</title>
 <style id="u-fontes">${r.fontes}</style>
 <style id="u-estilo">${r.css}</style>
 </head><body id="u-pagina">${r.corpo}
@@ -689,7 +695,7 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
           if (!js.includes('.register([')) continue;
           const r = extrairRegistro(js); reg.interacoes.push(...r.interacoes); reg.linhas.push(...r.linhas); reg.falhas.push(...r.falhas);
         }
-        const resolvido = await page.evaluate(resolverNaPagina, { interacoes: reg.interacoes, linhas: reg.linhas, largura: 1440 });
+        const resolvido = await page.evaluate(resolverNaPagina, { interacoes: reg.interacoes, linhas: reg.linhas, largura: T.width });
         ix = fichasDoIx3(reg, resolvido);
         relIx = { interacoes: reg.interacoes.length, linhasDeclaradas: reg.linhas.length, falhas: reg.falhas, pulos: resolvido.pulos, instancias: resolvido.instancias.length, ...ix.relatorio };
       }
@@ -727,29 +733,29 @@ export async function normalizarCaptura({ captura, saida, movimento = false, pas
       const rm = { modo, porModo, leitura: leit.relatorio, ...(relIx ? { ix3: relIx } : {}), ...(relGs ? { gsap: relGs } : {}), sequencias: seq.relatorio };
       // a gravacao do SITE por id canonico, ao lado do pacote: e a regua de trajetoria (o estado de
       // cada elemento em cada parada) contra a qual qualquer programa de movimento se compara
-      await writeFile(path.join(path.dirname(path.resolve(saida)), 'gravacao-nativa.json'), JSON.stringify({ passo, deslocamento, ids, amostras: gravacaoPorId(gravacao, { ...mapa, ...mapaPartes }) }));
+      await writeFile(path.join(path.dirname(path.resolve(saida)), 'gravacao-nativa.json'), JSON.stringify({ passo, deslocamento, tela: T.id, ids, amostras: gravacaoPorId(gravacao, { ...mapa, ...mapaPartes }) }));
       mov = { ...rm, amostras: gravacao.amostras.length, lacosMedidos: gravacao.lacos.size, lotties: lot.length, segundosGravando: gravacao.segundos, temposGravando: gravacao.tempos };
     }
     // PLANO VISUAL NATIVO (opcao b): cenas em canvas/WebGL viram uma camada do nativo ao lado da canonica
     let relPlano = null;
-    if (!process.argv.includes('--sem-plano')) {
+    if (plano) {
       const { analisarPlano } = await import('./plano-nativo.mjs');
       const { assinaturaDoCanvas } = await import('../lib/native-plane/plane-mode.js');
       const canvasInfo = await page.evaluate((fonte) => { const assinar = new Function(`return (${fonte})`)(); return Array.from(document.querySelectorAll('canvas')).map((c) => ({ id: c.getAttribute('data-u-id'), assinatura: assinar(c) })); }, assinaturaDoCanvas.toString());
       let fichasMotion = [];
       try { fichasMotion = JSON.parse(await readFile(path.join(saida, 'motion.json'), 'utf8')).fichas || []; } catch { fichasMotion = []; }
-      const plano = await analisarPlano({ captura, canonica: saida, excluirCanvas: assinaturasDeCanvasDaSequencia(fichasMotion, canvasInfo) });
+      const cena = await analisarPlano({ captura, canonica: saida, tela: T.id, excluirCanvas: assinaturasDeCanvasDaSequencia(fichasMotion, canvasInfo) });
       // sem plano: um plano.json de rodada ANTERIOR na mesma pasta nao pode sobreviver (o farmminerals mostrava a
       // camada velha depois que a exclusao certa passou a dizer 'sem plano')
-      await gravarPlano(saida, plano, captura);
-      relPlano = plano ? { colocacao: plano.colocacao, acopladas: plano.acopladas.length } : null;
+      await gravarPlano(saida, cena, captura);
+      relPlano = cena ? { colocacao: cena.colocacao, acopladas: cena.acopladas.length } : null;
     }
-    return { ...r.relatorio, movimento: mov, plano: relPlano, arquivosCopiados: copiados, arquivosFaltando: faltando.length, amostraFaltando: faltando.slice(0, 10), bytesHtml: html.length, bytesCss: r.css.length };
+    return { ...r.relatorio, tela: T.id, movimento: mov, plano: relPlano, arquivosCopiados: copiados, arquivosFaltando: faltando.length, amostraFaltando: faltando.slice(0, 10), bytesHtml: html.length, bytesCss: r.css.length };
   } finally { await browser.close(); srv.close(); }
 }
 
 if (process.argv[1] && process.argv[1].endsWith('normalizar-clone.mjs')) {
   const mArg = process.argv.find((a) => a === '--movimento' || a.startsWith('--movimento='));
-  const r = await normalizarCaptura({ captura: arg('--captura'), saida: arg('--saida'), movimento: mArg ? (mArg.split('=')[1] || 'leitura') : (arg('--so-gravacao') ? 'leitura' : false), passo: Number(arg('--passo', 100)), deslocamento: Number(arg('--deslocamento', 0)), soGravacao: arg('--so-gravacao', null) });
+  const r = await normalizarCaptura({ captura: arg('--captura'), saida: arg('--saida'), movimento: mArg ? (mArg.split('=')[1] || 'leitura') : (arg('--so-gravacao') ? 'leitura' : false), passo: Number(arg('--passo', 100)), deslocamento: Number(arg('--deslocamento', 0)), soGravacao: arg('--so-gravacao', null), tela: arg('--tela', DEFAULT_SCREEN) });
   console.log(JSON.stringify(r, null, 1));
 }

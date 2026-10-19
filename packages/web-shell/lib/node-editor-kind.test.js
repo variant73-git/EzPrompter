@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyReconstructionResultToNode,
+  applyRestoredSnapshot,
   classifyNativeLineage,
   NATIVE_LINEAGE,
   NODE_EDITOR_KIND,
@@ -152,5 +153,27 @@ describe('node editor kind', () => {
       current_native_bundle_id: '33333333-3333-4333-8333-333333333333',
       current_motion_manifest_version: 2,
     })).toBe(NATIVE_LINEAGE.READY);
+  });
+});
+
+describe('marcas das cópias editáveis ao aplicar resultados (Astra r2)', () => {
+  const A = '22222222-2222-5222-8222-222222222222';
+  const B = '33333333-3333-5333-8333-333333333333';
+  it('a cópia nova junta a marca dela às das cópias anteriores do node', () => {
+    const node = { id: 'n1', kind: 'site', meta: { canonicalCopies: { [A]: { screens: ['desktop'] } } } };
+    const pronto = applyReconstructionResultToNode(node, {
+      kind: 'native', snapshotId: 's2', snapshotSource: 'canonical',
+      bundleDescriptor: { bundleId: B }, motionManifest: { schemaVersion: 2, baseBundleId: B },
+      meta: { canonicalCopies: { [B]: { screens: ['desktop'] } } },
+    });
+    expect(pronto.meta.canonicalCopies).toEqual({ [A]: { screens: ['desktop'] }, [B]: { screens: ['desktop'] } });
+  });
+
+  it('Reset e restaurar versão trocam o pacote junto com o HTML (a trava acompanha sem recarregar)', () => {
+    const node = { id: 'n1', current_html: null, current_snapshot_id: 's2', current_snapshot_source: 'canonical', current_native_bundle_id: B, current_motion_manifest_version: 2, _resetTick: 3 };
+    expect(applyRestoredSnapshot(node, { snapshot_id: 's1', html: '<html>', source: 'native-bundle', native_bundle_id: A, motion_manifest_version: 2 }))
+      .toMatchObject({ current_html: '<html>', current_snapshot_id: 's1', current_snapshot_source: 'native-bundle', current_native_bundle_id: A, current_motion_manifest_version: 2, _resetTick: 4 });
+    expect(applyRestoredSnapshot(node, { snapshot_id: 's0', html: '<p>', source: 'capture', native_bundle_id: null, motion_manifest_version: null }))
+      .toMatchObject({ current_snapshot_source: 'capture', current_native_bundle_id: null, current_motion_manifest_version: null });
   });
 });

@@ -2,10 +2,13 @@
 // instrução só. Só publica se a tarefa ainda está em 'packaging' na MESMA geração e com a MESMA trava, e se o
 // node ainda aponta para a versão de quando a tarefa nasceu. Senão: publish_conflict, nada muda.
 import { createEmptyMotionManifest } from '../motion-editor/manifest.js';
+import { canonicalCopyMeta } from './copy-screens.js';
 
 export async function publishCanonical({ sql, job, owner, descriptor, html }) {
   const manifest = createEmptyMotionManifest({ baseBundleId: descriptor.bundleId, runtimeFingerprint: descriptor.runtimeFingerprint });
   const meta = { canonicalJobId: job.id, canonicalPreparedAt: new Date().toISOString() };
+  // a marca das telas é POR PACOTE e se junta às das cópias anteriores (restaurar uma versão antiga continua travado)
+  const marca = canonicalCopyMeta(descriptor.bundleId).canonicalCopies;
   const rows = await sql`
     WITH fence AS (
       SELECT j.id FROM canonical_jobs j
@@ -29,7 +32,10 @@ export async function publishCanonical({ sql, job, owner, descriptor, html }) {
     ), updated_node AS (
       UPDATE nodes
          SET current_snapshot_id = inserted.id,
-             meta = meta || ${JSON.stringify(meta)}::jsonb
+             meta = COALESCE(nodes.meta, '{}'::jsonb) || ${JSON.stringify(meta)}::jsonb
+                 || jsonb_build_object('canonicalCopies',
+                      CASE WHEN jsonb_typeof(nodes.meta->'canonicalCopies') = 'object' THEN nodes.meta->'canonicalCopies' ELSE '{}'::jsonb END
+                      || ${JSON.stringify(marca)}::jsonb)
         FROM inserted
        WHERE nodes.id = ${job.node_id} AND nodes.current_snapshot_id = ${job.source_snapshot_id}
       RETURNING inserted.id AS snapshot_id

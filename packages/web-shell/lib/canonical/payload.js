@@ -7,6 +7,8 @@ import { descriptorFromRow } from '../motion-editor/runtime-gateway-core.js';
 import { VM, buildRunScript } from './sandbox-runner.js';
 
 export const PAYLOAD_FILES = Object.freeze([
+  'lib/canonical/screen-profiles.js',
+  'lib/motion-editor/devices.js',
   'lib/motion-program/uncraft-motion.js',
   'scripts/compilar-movimento.mjs',
   'scripts/gravar-trajetoria.mjs',

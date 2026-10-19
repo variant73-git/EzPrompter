@@ -63,7 +63,7 @@ const nextConfig = {
   // A preparação da cópia (spec 2026-10-09) LÊ estes arquivos do disco para mandá-los à máquina descartável —
   // leitura dinâmica que o rastreio do Next não enxerga sozinho.
   outputFileTracingIncludes: {
-    '/api/canonical-jobs/[id]/advance': ['./scripts/*.mjs', './lib/motion-program/uncraft-motion.js'],
+    '/api/canonical-jobs/[id]/advance': ['./scripts/*.mjs', './lib/motion-program/uncraft-motion.js', './lib/canonical/screen-profiles.js', './lib/motion-editor/devices.js'],
   },
   async headers() {
     return [

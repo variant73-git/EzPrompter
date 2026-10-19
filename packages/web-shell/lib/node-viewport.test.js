@@ -41,6 +41,13 @@ describe('animated site viewport policy', () => {
     expect(node).toEqual({ id: 'site', width: 1220, height: 640, pos_x: 100, pos_y: 200 });
   });
 
+  it('a node showing a desktop-only editable copy edits on desktop even at tablet width', () => {
+    const bundle = '22222222-2222-5222-8222-222222222222';
+    const marked = { width: 768, current_native_bundle_id: bundle, meta: { canonicalCopies: { [bundle]: { screens: ['desktop'] } } } };
+    expect(nativeEditDeviceForNode(marked).id).toBe('desktop');
+    expect(nativeEditDeviceForNode({ ...marked, meta: {} }).id).toBe('tablet');
+  });
+
   it('centers a fixed viewport in the free canvas area without using document height', () => {
     const frame = computeNodeEditFrame(
       { pos_x: 100, pos_y: 200, width: 1280, height: 800 },

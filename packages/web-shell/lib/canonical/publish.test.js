@@ -22,6 +22,14 @@ describe('publicação da cópia', () => {
     expect(text).toMatch(/j\.status = 'packaging' AND j\.generation = \? AND j\.lease_owner = \?/);
     expect(text).toMatch(/nodes\.current_snapshot_id = \?/);
     expect(text).toMatch(/SET status = 'ready'/);
+    // a marca das telas vai no node, amarrada ao pacote publicado
+    // e JUNTA com as marcas das cópias anteriores (restaurar uma versão antiga continua travado — Astra r2 #1)
+    const valores = sql._calls[0].values.map((v) => { try { return JSON.parse(v); } catch { return null; } });
+    expect(valores).toContainEqual({ [descriptor.bundleId]: { screens: ['desktop'] } });
+    expect(text).toMatch(/jsonb_build_object\('canonicalCopies'/);
+    expect(text).toMatch(/jsonb_typeof\(nodes\.meta->'canonicalCopies'\) = 'object'/);
+    // meta NULL não vira NULL (o `||` com NULL apagava a meta inteira)
+    expect(text).toMatch(/COALESCE\(nodes\.meta, '\{\}'::jsonb\)/);
   });
 
   it('node que mudou no meio: publish_conflict, nada publicado', async () => {

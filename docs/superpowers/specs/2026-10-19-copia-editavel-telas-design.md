@@ -177,6 +177,13 @@ tablet and mobile"; Tablet e Celular ficam desligados com a mesma explicação.
 1. **T1 — Desktop certo:** a cópia passa a ser gravada a 1280×800 (perfil `desktop`), com a régua no mesmo tamanho.
    Corrige o defeito relatado. Ainda é um perfil só: o Desktop já abre certo (sem redução), e Tablet/Celular ficam
    desligados com o aviso de 5.3 até a T2.
+   *Como saiu (2026-10-19):* a cópia declara a tela em `<html data-u-tela>` e a régua recusa medir em outra. O node
+   guarda `meta.canonicalCopy = { bundleId, screens }` na publicação; a trava vale só enquanto o node mostra aquele
+   pacote (Reset volta ao clone original, que se adapta a qualquer tela). Clicar em Tablet/Mobile mostra "This
+   editable copy was prepared for desktop only" — o texto de 5.3 ("prepare again…") só faz sentido quando preparar
+   de novo der as outras telas (T2). Nomes no código: `mobile` (= celular, o id do aparelho no editor) e `reference`
+   (= ref). Cópias preparadas ANTES da T1 (gravadas a 1440) não têm a marca e continuam transbordando: Reset + Edit
+   prepara uma nova.
 2. **T2 — Quatro perfis:** quatro máquinas, tabela filha, pacote com quatro páginas e o seletor, troca de tela
    carregando a página do perfil, cópias antigas com o aviso. **Na T2 toda edição vale só na tela em que foi feita**:
    os ids ainda não estão reconciliados, e um id que por acaso coincida entre perfis apontaria para elementos

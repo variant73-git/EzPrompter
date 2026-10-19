@@ -15,6 +15,7 @@ import path from 'node:path';
 import { chromium } from 'playwright-core';
 import { servir } from './inventario-conteudo.mjs';
 import { medirProprio, difere } from './gravar-trajetoria.mjs';
+import { DEFAULT_SCREEN, screenProfile } from '../lib/canonical/screen-profiles.js';
 
 const arg = (n, d) => { const i = process.argv.indexOf(n); return i >= 0 ? process.argv[i + 1] : d; };
 
@@ -153,11 +154,14 @@ export function conferirIds(idsRef, idsCanon) {
   return { ok: !faltam.length && !sobram.length && !outraTag.length, faltam, sobram, outraTag };
 }
 
-export async function medirCanonico(pasta, ys, { atributo = 'id', espera = 1100, forcar = {}, programa = null } = {}) {
+// `tela` = a da gravacao do site (a gravacao antiga, sem o campo, foi feita na referencia). A copia declara a dela
+// em <html data-u-tela>; telas diferentes medem layouts diferentes, entao a comparacao e recusada.
+export async function medirCanonico(pasta, ys, { atributo = 'id', espera = 1100, forcar = {}, programa = null, tela = DEFAULT_SCREEN } = {}) {
+  const T = screenProfile(tela);
   const { srv, origem } = await servir(path.resolve(pasta));
   const browser = await chromium.launch();
   try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 1200 } });
+    const page = await browser.newPage({ viewport: { width: T.width, height: T.height } });
     await page.route(/^https?:\/\/(?!127\.0\.0\.1)/, (r) => r.abort());
     // --programa (Astra r1 #3): o tocador so le motion.json; a regua serve o programa pedido no lugar
     if (programa) { const corpo = await readFile(programa); await page.route(/\/motion\.json(\?.*)?$/, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: corpo })); }
@@ -168,6 +172,8 @@ export async function medirCanonico(pasta, ys, { atributo = 'id', espera = 1100,
       CanvasRenderingContext2D.prototype.drawImage = function (img, ...a) { try { if (img && img.tagName === 'IMG') ult.set(this.canvas, img.currentSrc || img.src); } catch (e) { /* medir nao derruba */ } return orig.call(this, img, ...a); };
     });
     await page.goto(`${origem}/index.html`, { waitUntil: 'load', timeout: 60000 }).catch(() => {});
+    const declarada = await page.evaluate(() => document.documentElement.getAttribute('data-u-tela')).catch(() => null);
+    if ((declarada || DEFAULT_SCREEN) !== T.id) throw new Error(`tela da copia (${declarada || DEFAULT_SCREEN}) diferente da tela da gravacao (${T.id})`);
     await page.waitForTimeout(3000);
     await page.evaluate((pi) => { window.__uPropsInline = pi; }, (await import('./gravar-trajetoria.mjs')).PROPS_INLINE);
     const out = [];
@@ -193,7 +199,7 @@ if (process.argv[1] && process.argv[1].endsWith('regua-trajetoria.mjs')) {
   const t0 = Date.now();
   const forcar = {}; for (const s of gravacao.amostras) for (const [id, v] of Object.entries(s.b)) if (v && v.css) for (const p of Object.keys(v.css)) (forcar[id] ||= new Set()).add(p);
   const programa = arg('--programa', null);
-  const medida = await medirCanonico(arg('--canonico'), gravacao.amostras.map((s) => s.y), { programa, forcar: Object.fromEntries(Object.entries(forcar).map(([k, v]) => [k, [...v]])) });
+  const medida = await medirCanonico(arg('--canonico'), gravacao.amostras.map((s) => s.y), { programa, tela: gravacao.tela || DEFAULT_SCREEN, forcar: Object.fromEntries(Object.entries(forcar).map(([k, v]) => [k, [...v]])) });
   const prog = programa || path.join(arg('--canonico'), 'motion.json');
   const hashProg = (await import('node:crypto')).createHash('sha1').update(await readFile(prog)).digest('hex').slice(0, 12);
   const ids = gravacao.ids ? conferirIds(gravacao.ids, medida.idsCanon) : { ok: false, faltam: ['referencia sem lista de ids'] };
