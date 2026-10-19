@@ -1,0 +1,29 @@
+{
+ "repouso": {
+  "tabletDesligado": "true",
+  "dica": "Tablet — This editable copy was prepared for desktop only",
+  "nodeMudouDeLargura": false,
+  "avisoNaTela": true
+ },
+ "botaoEdit": "Edit",
+ "editorAbriu": true,
+ "editor": {
+  "tabletDesligado": "true",
+  "dica": "Tablet — This editable copy was prepared for desktop only",
+  "avisoNaTela": true,
+  "desktopAtivo": "true"
+ },
+ "snapshot": {
+  "source": "canonical",
+  "declara_desktop": true,
+  "marcas": {
+   "fd73f45f-7975-51a5-906e-40f77a1efeb8": {
+    "screens": [
+     "desktop"
+    ]
+   }
+  },
+  "current_snapshot_id": "aaf05b29-c107-4c4b-94b9-3a54164a0ad2"
+ },
+ "erros": []
+}
