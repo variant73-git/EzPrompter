@@ -453,7 +453,9 @@ export function instalarCamada(ponte, M) {
           guias[k].classList.add('u-arrastando');
           rotular(M.guideChanges({ key: k, start, dx, dy, axis, mods: modsDe(e) }).value);
         },
-        aoClicar: (e) => ponte.selecionarEm(e.clientX, e.clientY),   // clique puro atravessa (editor.js 9116-9142)
+        // clique puro atravessa (editor.js 9116-9142) — menos no rótulo do número: ali o 1º clique de um duplo clique
+        // trocaria a seleção e o campo nunca abriria (Astra, revisão do ramo)
+        aoClicar: valores[k].widget.contains(ev.target) ? null : (e) => ponte.selecionarEm(e.clientX, e.clientY),
         aoFim: () => guias[k].classList.remove('u-arrastando'),
       });
     });
@@ -537,7 +539,14 @@ export function instalarCamada(ponte, M) {
     c.widget.appendChild(valores[c.k].val);
     if (!destruida) redesenhar();
   }
-  GUIA_KEYS.forEach((k) => valores[k].widget.addEventListener('dblclick', (ev) => {
+  // O duplo clique é ouvido na FAIXA: ela captura o ponteiro para arrastar, e com a captura o navegador entrega o
+  // clique e o duplo clique a ela, não ao rótulo (Astra, revisão do ramo — o teste com evento sintético não via)
+  const sobreORotulo = (k, ev) => {
+    const r = valores[k].widget.getBoundingClientRect();
+    return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+  };
+  GUIA_KEYS.forEach((k) => guias[k].addEventListener('dblclick', (ev) => {
+    if (!valores[k].widget.contains(ev.target) && !sobreORotulo(k, ev)) return;
     ev.preventDefault();
     ev.stopPropagation();
     const el = ponte.selecionado();
@@ -670,7 +679,7 @@ export function instalarCamada(ponte, M) {
     },
     alternarGuias() { guiasVisiveis = !guiasVisiveis; redesenhar(); },
     estado() { return { caixaVisivel: selBox.style.display === 'block', caixa: ultimaCaixa, escala, guiasVisiveis, alcasApagadas, guias: guiasDesenhadas.slice(), guiaAtiva, motivo: pill.style.display === 'block' ? pill.textContent : null }; },
-    ganchosDeTeste: { alcaParaTeste: (d) => handles[d], guiaParaTeste: (k) => guias[k], cantoParaTeste: (c) => cantos[c], campoParaTeste: () => (campoAberto ? campoAberto.input : null) },
+    ganchosDeTeste: { alcaParaTeste: (d) => handles[d], guiaParaTeste: (k) => guias[k], cantoParaTeste: (c) => cantos[c], campoParaTeste: () => (campoAberto ? campoAberto.input : null), rotuloParaTeste: () => selLabel, caixaParaTeste: () => selBox },
     destruir() {
       if (arrasteAtivo) arrasteAtivo.cancelar('teardown');
       doc.removeEventListener('keydown', aoTeclar, true);

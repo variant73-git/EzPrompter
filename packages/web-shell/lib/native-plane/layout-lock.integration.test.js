@@ -89,7 +89,8 @@ const HARNESS = `window.__H = (() => {
     const x = r.left + 10, y = r.top + 5; const mark = messages.length;
     const pe = (alvo, type, cx, cy) => alvo.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, button: 0, clientX: cx, clientY: cy, pointerId: 1 }));
     pe(el, 'pointerdown', x, y); pe(document, 'pointermove', x + dx, y + dy); pe(document, 'pointerup', x + dx, y + dy);
-    return { movidos: [...document.querySelectorAll('[style*="translate"]')].map((e) => e.id), tipos: messages.slice(mark).map((m) => m.type) };
+    // a camada de alças (spec 2026-10-20) trava o próprio hospedeiro com translate:none — não é conteúdo da página
+    return { movidos: [...document.querySelectorAll('[style*="translate"]')].map((e) => e.id).filter((id) => id !== 'rb-ed-uncraft-overlay'), tipos: messages.slice(mark).map((m) => m.type) };
   };
   return { idDe, transacao, ferramenta, arrastar };
 })();`;

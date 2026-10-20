@@ -76,6 +76,19 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
       try { if (original == null) el.removeAttribute('style'); else el.setAttribute('style', original); } catch (_) { /* elemento saiu da página */ }
     });
   }
+  // A prévia não anima: com o `transition` do site, cada quadro do arraste dispararia uma transição de CSS (que a
+  // checagem por gesto leria como animação dona da propriedade) e a caixa andaria atrás do mouse
+  function semTransicaoNoGesto(g) {
+    g.estilos.forEach((_, el) => { try { el.style.setProperty('transition', 'none', 'important'); } catch (_) { /* saiu */ } });
+  }
+  // Cancelar devolve o de antes SEM animar a volta: assenta o original com a transição ainda desligada e só então
+  // devolve a declaração verbatim
+  function devolverAntesSemAnimar(g) {
+    devolverAntes(g);
+    semTransicaoNoGesto(g);
+    g.estilos.forEach((_, el) => { try { void getComputedStyle(el).width; } catch (_) { /* saiu */ } });
+    devolverAntes(g);
+  }
   // Assentamentos agendados (rolagem, recuperação) que caíram durante um gesto vivo esperam o fim dele (Astra, Task 6 #1)
   let assentamentoAdiado = false;
   let reagendarAssentamento = null;
@@ -103,6 +116,7 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
   // ao original na hora, em vez de ficar na tela até a confirmação (Astra, Task 9)
   function escreverCandidato(g, changes) {
     devolverAntes(g);
+    semTransicaoNoGesto(g);
     (changes || []).forEach(({ el, property, value }) => { try { el.style.setProperty(property, value); } catch (_) { /* elemento saiu */ } });
   }
   // O tocador também escreve na página (spec §6.2.7, Astra r5 #1): um gesto só começa com ele parado. Pausa o mesmo
@@ -159,11 +173,26 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
     const antes = mudancas.map(({ el, property }) => ({ el, property, caixa: el.getBoundingClientRect() }));
     const estilos = new Map();
     mudancas.forEach(({ el }) => { if (!estilos.has(el)) estilos.set(el, el.getAttribute('style')); });
+    const devolver = () => estilos.forEach((original, el) => { if (original == null) el.removeAttribute('style'); else el.setAttribute('style', original); });
+    // sem transição durante a medida: com `transition` (comum em sites) o valor calculado seria o do MEIO da animação
+    // e todo redimensionar viraria recusa
+    const semTransicao = () => estilos.forEach((_, el) => el.style.setProperty('transition', 'none', 'important'));
     try {
+      semTransicao();
       mudancas.forEach(({ el, property, value }) => el.style.setProperty(property, value));
       for (const { el, property, value } of mudancas) {
-        const calc = String(getComputedStyle(el).getPropertyValue(property) || '').trim();
-        if (/px$/.test(String(value)) && /px$/.test(calc) && Math.abs(parseFloat(calc) - parseFloat(value)) > 0.5) return { ok: false, motivo: 'priority_conflict' };
+        if (!/px$/.test(String(value))) continue;
+        const longe = () => {
+          const calc = String(getComputedStyle(el).getPropertyValue(property) || '').trim();
+          return /px$/.test(calc) && Math.abs(parseFloat(calc) - parseFloat(value)) > 0.5;
+        };
+        if (!longe()) continue;
+        // não pegou: com !important pega = a folha do site força (!important); nem assim = largura/altura é a USADA
+        // pelo layout (flex-basis, grade) e quem decide é a medida da caixa abaixo
+        el.style.setProperty(property, value, 'important');
+        const pegouComImportant = !longe();
+        el.style.setProperty(property, value);
+        if (pegouComImportant || (property !== 'width' && property !== 'height')) return { ok: false, motivo: 'priority_conflict' };
       }
       const tamanho = mudancas.filter((m) => m.property === 'width' || m.property === 'height');
       if (tamanho.length && !opcoes.semMedirTamanho) {
@@ -176,8 +205,12 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
       }
       return { ok: true };
     } finally {
-      // verbatim: verificar nunca muda a declaração original (Astra, Task 6 #2)
-      estilos.forEach((original, el) => { if (original == null) el.removeAttribute('style'); else el.setAttribute('style', original); });
+      // verbatim: verificar nunca muda a declaração original (Astra, Task 6 #2). Assenta o original AINDA sem
+      // transição antes de devolvê-la, senão o elemento animaria do valor medido de volta ao seu
+      devolver();
+      semTransicao();
+      estilos.forEach((_, el) => { void getComputedStyle(el).width; });
+      devolver();
     }
   }
   function elegivelParaCamada(el, mudancas, opcoes = {}) {
@@ -239,7 +272,7 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
   function cancelarGestoDaCamada(id, motivo) {
     const g = gestosDaCamada.get(id);
     if (!g || (g.estado !== 'ativo' && g.estado !== 'aguardando')) return;
-    devolverAntes(g);
+    devolverAntesSemAnimar(g);
     encerrarGesto(g, 'cancelado');
     emit('overlay-gesture-canceled', { gestureId: id, reason: motivo }, { protocol: PROTOCOL_V2 });
     notificarCamada();
