@@ -42,6 +42,7 @@ import {
   createResponsiveManifestPatch,
   parseResponsiveManifest,
   responsiveManifestAfterPatches,
+  responsiveManifestForSettlement,
   responsivePatchAppliesToDevice,
   responsivePropertyKey,
   responsiveRuntimePatches,
@@ -50,6 +51,7 @@ import {
   setResponsivePropertyValue,
   withResponsiveMetadata,
 } from '../../lib/motion-editor/responsive-manifest.js';
+import { responsiveBindingFromPatch, responsivePropertyName, responsiveStoredValue } from '../../lib/motion-editor/responsive-edit.js';
 import {
   EDIT_STATES,
   createEditState,
@@ -163,32 +165,6 @@ function loadedHistory(value, sessionId) {
   }
   if (Array.isArray(value?.patches)) return sessionHistoryFromPatches(value.patches, { sessionId });
   return createSessionHistory({ sessionId });
-}
-
-function responsivePropertyName(property) {
-  if (property === 'text' || String(property).startsWith('attribute.')) return property;
-  return normalizeSemanticProperty(property);
-}
-
-function responsiveBindingFromPatch(patch) {
-  if (!patch || patch.kind === 'responsive') return null;
-  const binding = {
-    elementId: patch.elementId,
-    kind: patch.kind,
-    ...(['text', 'svg'].includes(patch.kind) ? {} : { property: patch.property }),
-    ...(patch.kind === 'motion' ? { motionId: patch.motionId } : {}),
-  };
-  if (patch.kind === 'motion' && patch.property === 'retarget.final' && patch.value && typeof patch.value === 'object') {
-    binding.valueTemplate = patch.value;
-  }
-  return binding;
-}
-
-function responsiveStoredValue(patch, visibleValue) {
-  if (patch?.kind === 'style' && patch.property === 'transform') {
-    return { visibleValue, runtimeValue: patch.value };
-  }
-  return visibleValue;
 }
 
 export function createLocalMotionPersistenceAdapter(source, storage = null) {
@@ -917,8 +893,11 @@ export function useNativeMotionController({
           }
           return;
         }
-        if (entry.meta.responsiveManifest) {
-          replaceResponsiveManifest(entry.meta.responsiveManifest);
+        if (entry.meta.responsiveManifest || entry.meta.undoneTransactionPatches || entry.meta.redoneTransactionPatches) {
+          // só a mudança DESTA transação sobre a tabela atual (Astra r5 #2) — os patches MONTADOS aqui, com a marca de
+          // tela; no desfazer/refazer, os da transação original
+          const patches = entry.meta.undoneTransactionPatches || entry.meta.redoneTransactionPatches || entry.transaction.patches;
+          replaceResponsiveManifest(responsiveManifestForSettlement(responsiveManifestRef.current, { meta: entry.meta, transaction: { patches } }));
         }
         if (entry.meta.operation === 'apply') {
           if (entry.meta.controlUpdate) {
@@ -1697,6 +1676,7 @@ export function useNativeMotionController({
         operation: 'undo',
         transactionId: latest.transaction.id,
         responsiveManifest: nextResponsiveManifest,
+        undoneTransactionPatches: latest.transaction.patches,
         controlUpdate: controlUpdateFromPatches(latest.transaction.patches, 'backward'),
       });
       setPendingTransactions(transactionLedgerRef.current.size);
@@ -1728,6 +1708,7 @@ export function useNativeMotionController({
         operation: 'redo',
         transactionId: next.transaction.id,
         responsiveManifest: nextResponsiveManifest,
+        redoneTransactionPatches: next.transaction.patches,
         controlUpdate: controlUpdateFromPatches(next.transaction.patches, 'forward'),
       });
       setPendingTransactions(transactionLedgerRef.current.size);

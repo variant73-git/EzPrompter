@@ -300,6 +300,15 @@ export function responsiveManifestAfterPatches(manifest, patches, direction = 'f
   return next;
 }
 
+// Confirmação de uma transação: aplica só a mudança DELA sobre a tabela ATUAL — nunca um retrato tirado ao montar a
+// edição (uma edição montada antes da anterior confirmar apagava a anterior ao reabrir — Astra r5 #2, 2026-10-20).
+// Para o desfazer, `entry.transaction.patches` são os patches ORIGINAIS da transação desfeita (para trás).
+export function responsiveManifestForSettlement(currentManifest, entry) {
+  const patches = entry?.transaction?.patches || [];
+  const direction = entry?.meta?.operation === 'undo' ? 'backward' : 'forward';
+  return responsiveManifestAfterPatches(currentManifest, patches, direction);
+}
+
 export function withResponsiveMetadata(patch, {
   propertyKey,
   mode,

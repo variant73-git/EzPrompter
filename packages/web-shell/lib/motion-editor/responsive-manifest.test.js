@@ -9,6 +9,8 @@ import {
   resolveResponsiveProperty,
   setResponsivePropertyMode,
   setResponsivePropertyValue,
+  responsiveManifestForSettlement,
+  withResponsiveMetadata,
 } from './responsive-manifest.js';
 
 const PROPERTY_KEY = responsivePropertyKey('hero', 'opacity');
@@ -178,5 +180,37 @@ describe('responsive property manifest', () => {
       schemaVersion: 1,
       properties: { [PROPERTY_KEY]: { mode: 'shared', sharedValue: () => '1', overrides: {} } },
     })).toThrow(/JSON/i);
+  });
+});
+
+// Astra r5 #2 (2026-10-20): a confirmação aplicava o RETRATO da tabela tirado ao montar a edição; uma 2ª edição
+// montada antes da 1ª confirmar apagava a 1ª ao reabrir. Agora cada confirmação aplica só a SUA mudança.
+describe('tabela por tela na confirmação', () => {
+  const base = () => setResponsivePropertyValue(createResponsiveManifest(), { propertyKey: responsivePropertyKey('u-a', 'width'), deviceId: 'desktop', value: '100px', descriptor: { mode: 'shared' } });
+  const comMarca = (property, value, beforeEntry, afterEntry) => withResponsiveMetadata(
+    { id: `p-${property}`, elementId: 'u-a', kind: 'style', property, before: '', value },
+    { propertyKey: responsivePropertyKey('u-a', property), mode: 'shared', deviceId: 'desktop', beforeEntry, afterEntry },
+  );
+  it('duas edições montadas antes da 1ª confirmar não se apagam', () => {
+    const inicial = base();
+    const chaveW = responsivePropertyKey('u-a', 'width');
+    const depoisA = setResponsivePropertyValue(inicial, { propertyKey: chaveW, deviceId: 'desktop', value: '150px', descriptor: { mode: 'shared' } });
+    const a = { meta: { operation: 'apply' }, transaction: { patches: [comMarca('width', '150px', inicial.properties[chaveW], depoisA.properties[chaveW])] } };
+    const chaveC = responsivePropertyKey('u-a', 'color');
+    const depoisB = setResponsivePropertyValue(inicial, { propertyKey: chaveC, deviceId: 'desktop', value: 'red', descriptor: { mode: 'shared' } });
+    const b = { meta: { operation: 'apply' }, transaction: { patches: [comMarca('color', 'red', null, depoisB.properties[chaveC])] } };
+    let atual = responsiveManifestForSettlement(inicial, a);
+    atual = responsiveManifestForSettlement(atual, b);
+    expect(atual.properties[chaveW]).toEqual(depoisA.properties[chaveW]);
+    expect(atual.properties[chaveC]).toEqual(depoisB.properties[chaveC]);
+  });
+  it('desfazer volta só a mudança daquela transação', () => {
+    const inicial = base();
+    const chaveW = responsivePropertyKey('u-a', 'width');
+    const depoisA = setResponsivePropertyValue(inicial, { propertyKey: chaveW, deviceId: 'desktop', value: '150px', descriptor: { mode: 'shared' } });
+    const patch = comMarca('width', '150px', inicial.properties[chaveW], depoisA.properties[chaveW]);
+    const aplicado = responsiveManifestForSettlement(inicial, { meta: { operation: 'apply' }, transaction: { patches: [patch] } });
+    const desfeito = responsiveManifestForSettlement(aplicado, { meta: { operation: 'undo' }, transaction: { patches: [patch] } });
+    expect(desfeito.properties[chaveW]).toEqual(inicial.properties[chaveW]);
   });
 });
