@@ -69,34 +69,143 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
     const g = gestoVivoId && gestosDaCamada.get(gestoVivoId);
     return !!g && (g.estado === 'ativo' || g.estado === 'aguardando');
   }
+  // Devolve a declaração inline ORIGINAL de cada elemento tocado, verbatim — prioridade (!important) e forma
+  // (shorthand × longhand) incluídas (Astra, Task 6 #2). Os valores por propriedade (`antes`) só servem de `before`.
   function devolverAntes(g) {
-    for (let i = g.antes.length - 1; i >= 0; i -= 1) {
-      const a = g.antes[i];
-      try { if (a.valor === '') a.el.style.removeProperty(a.property); else a.el.style.setProperty(a.property, a.valor); } catch (_) { /* elemento saiu da página */ }
-    }
+    g.estilos.forEach((original, el) => {
+      try { if (original == null) el.removeAttribute('style'); else el.setAttribute('style', original); } catch (_) { /* elemento saiu da página */ }
+    });
   }
+  // Assentamentos agendados (rolagem, recuperação) que caíram durante um gesto vivo esperam o fim dele (Astra, Task 6 #1)
+  let assentamentoAdiado = false;
+  let reagendarAssentamento = null;
   function encerrarGesto(g, estado) {
     g.estado = estado;
     if (g.relogio) clearTimeout(g.relogio);
     g.relogio = null;
     if (gestoVivoId === g.id) gestoVivoId = null;
+    if (assentamentoAdiado && !gestoVivo()) {
+      assentamentoAdiado = false;
+      try { reagendarAssentamento?.(); } catch (_) { /* nada a assentar */ }
+    }
   }
   // O `antes` de cada par elemento × propriedade é capturado ANTES da 1ª escrita dele — inclusive de par que só
   // aparece depois do início (Astra, Task 5 #1): nunca se fabrica um antes, e o cancelamento devolve tudo.
   function capturarAntes(g, pares) {
     (pares || []).forEach(({ el, property }) => {
       if (!el || !property) return;
+      if (!g.estilos.has(el)) g.estilos.set(el, el.getAttribute('style'));
       if (g.antes.some((a) => a.el === el && a.property === property)) return;
       g.antes.push({ el, property, valor: el.style.getPropertyValue(property) });
     });
   }
-  // preenchida na etapa 6 (o tocador fica parado durante o gesto)
-  function pausarTocadorParaGesto() {}
+  // O tocador também escreve na página (spec §6.2.7, Astra r5 #1): um gesto só começa com ele parado. Pausa o mesmo
+  // escopo do último "tocar" que o editor pediu e avisa o editor (o botão de tocar precisa voltar a "parado").
+  // Transportes que o editor pôs para tocar (escopo = motionId, ou '*' = global). Velocidade não liga nem desliga
+  // um transporte (Astra, Task 6 #4); o gesto pausa TODOS antes de capturar os valores.
+  const transportesTocando = new Map();
+  function anotarTransporte(action, motionId) {
+    const chave = motionId || '*';
+    if (action === 'play' || action === 'restart') transportesTocando.set(chave, motionId || null);
+    else if (action === 'pause') { if (chave === '*') transportesTocando.clear(); else transportesTocando.delete(chave); }
+  }
+  function pausarTocadorParaGesto() {
+    if (!transportesTocando.size) return;
+    const escopos = [...transportesTocando.values()];
+    transportesTocando.clear();
+    escopos.forEach((motionId) => { try { controlPlayback('pause', undefined, motionId || undefined); } catch (_) { /* nada tocando */ } });
+    emit('playback-paused', { reason: 'overlay-gesture', motionIds: escopos }, { protocol: PROTOCOL_V2 });
+  }
+
+  // Elegibilidade POR GESTO (spec §5.1): o conjunto inteiro de mudanças, nos canais expandidos (Astra r1 #5) e no
+  // estado candidato completo (Astra r1 #2). Ganchos de teste (jsdom não tem GSAP) nos WeakMaps abaixo.
+  const trilhasInjetadasParaTeste = new WeakMap();
+  const limpezasInjetadasParaTeste = new WeakMap();
+  const CANAIS_EXPANDIDOS = {
+    gap: ['gap', 'rowgap', 'columngap'], rowgap: ['gap', 'rowgap'], columngap: ['gap', 'columngap'],
+    margin: ['margin', 'margintop', 'marginright', 'marginbottom', 'marginleft'],
+    padding: ['padding', 'paddingtop', 'paddingright', 'paddingbottom', 'paddingleft'],
+    inset: ['inset', 'top', 'right', 'bottom', 'left'],
+  };
+  const canaisDe = (nome) => {
+    const n = String(nome || '').toLowerCase().replace(/-/g, '');
+    if (CANAIS_EXPANDIDOS[n]) return CANAIS_EXPANDIDOS[n];
+    for (const [mae, filhos] of Object.entries(CANAIS_EXPANDIDOS)) if (mae !== n && filhos.indexOf(n) !== -1) return [n, mae];
+    return [n];
+  };
+  // clearProps das animações vivas do elemento (o leitor de trilhas o exclui): o fim dela apaga o que foi editado
+  function limpezaDoTocador(el) {
+    const props = new Set();
+    try {
+      const gsap = window.gsap;
+      (gsap && typeof gsap.getTweensOf === 'function' ? gsap.getTweensOf(el) : []).forEach((t) => {
+        const fontes = [t && t.vars && t.vars.clearProps, t && t.vars && t.vars.css && t.vars.css.clearProps];   // Astra, Task 6 #3
+        fontes.forEach((c) => {
+          if (!c) return;
+          String(c === true ? 'all' : c).split(',').forEach((p) => props.add(p.trim().toLowerCase().replace(/-/g, '')));
+        });
+      });
+    } catch (_) { /* tocador ilegível = sem limpeza conhecida */ }
+    (limpezasInjetadasParaTeste.get(el) || []).forEach((p) => props.add(p));
+    return props;
+  }
+  function candidatoMuda(mudancas, opcoes) {
+    const antes = mudancas.map(({ el, property }) => ({ el, property, caixa: el.getBoundingClientRect() }));
+    const estilos = new Map();
+    mudancas.forEach(({ el }) => { if (!estilos.has(el)) estilos.set(el, el.getAttribute('style')); });
+    try {
+      mudancas.forEach(({ el, property, value }) => el.style.setProperty(property, value));
+      for (const { el, property, value } of mudancas) {
+        const calc = String(getComputedStyle(el).getPropertyValue(property) || '').trim();
+        if (/px$/.test(String(value)) && /px$/.test(calc) && Math.abs(parseFloat(calc) - parseFloat(value)) > 0.5) return { ok: false, motivo: 'priority_conflict' };
+      }
+      const tamanho = mudancas.filter((m) => m.property === 'width' || m.property === 'height');
+      if (tamanho.length && !opcoes.semMedirTamanho) {
+        const mudou = tamanho.some((m) => {
+          const a = antes.find((x) => x.el === m.el);
+          const r = m.el.getBoundingClientRect();
+          return Math.abs(r.width - a.caixa.width) > 0.5 || Math.abs(r.height - a.caixa.height) > 0.5;
+        });
+        if (!mudou) return { ok: false, motivo: 'layout_controlled' };
+      }
+      return { ok: true };
+    } finally {
+      // verbatim: verificar nunca muda a declaração original (Astra, Task 6 #2)
+      estilos.forEach((original, el) => { if (original == null) el.removeAttribute('style'); else el.setAttribute('style', original); });
+    }
+  }
+  function elegivelParaCamada(el, mudancas, opcoes = {}) {
+    if (gestoVivo() && opcoes.ignorarGesto !== gestoVivoId) return { ok: false, motivo: 'gesture_busy' };
+    for (const { el: alvo, property } of (mudancas || [])) {
+      if (!alvo) return { ok: false, motivo: 'no_element' };
+      const css = String(property).toLowerCase();
+      if (escritaTravada(alvo, css)) return { ok: false, motivo: 'layout_locked' };
+      const tamanho = css === 'width' || css === 'height';
+      if (tamanho && alvo instanceof SVGElement && alvo.tagName.toLowerCase() !== 'svg') return { ok: false, motivo: 'svg_inner' };
+      // inline NÃO substituído: largura/altura não valem; imagem, vídeo, SVG externo etc. aceitam (Astra, Task 6 #5)
+      const substituido = /^(IMG|VIDEO|CANVAS|IFRAME|OBJECT|EMBED|INPUT|TEXTAREA|SELECT)$/i.test(alvo.tagName)
+        || (typeof SVGSVGElement !== 'undefined' && alvo instanceof SVGSVGElement);
+      if (tamanho && !substituido && getComputedStyle(alvo).display === 'inline') return { ok: false, motivo: 'inline_element' };
+      const canais = canaisDe(css);
+      const limpa = limpezaDoTocador(alvo);
+      if (limpa.has('all') || canais.some((c) => limpa.has(c))) return { ok: false, motivo: 'cleared_by_motion' };
+      for (const clip of (inspectMotion(alvo) || [])) {
+        for (const track of ((clip && clip.tracks) || [])) {
+          const t = String(semanticProperty(track.property) || track.property || '').toLowerCase().replace(/-/g, '');
+          if (canais.indexOf(t) !== -1) return { ok: false, motivo: 'motion_owned' };
+        }
+      }
+      for (const t of (trilhasInjetadasParaTeste.get(alvo) || [])) {
+        if (canais.indexOf(String(t.property).toLowerCase().replace(/-/g, '')) !== -1) return { ok: false, motivo: 'motion_owned' };
+      }
+    }
+    return candidatoMuda(mudancas || [], opcoes);
+  }
   function iniciarGestoDaCamada(alvos) {
     if (gestoVivo()) return { ok: false, motivo: 'gesture_busy' };
     pausarTocadorParaGesto();
     const id = randomIdentity('overlay-gesture');
-    const g = { id, estado: 'ativo', antes: [], relogio: null };
+    const g = { id, estado: 'ativo', antes: [], estilos: new Map(), relogio: null };
     capturarAntes(g, alvos);
     gestosDaCamada.set(id, g);
     gestoVivoId = id;
@@ -137,9 +246,12 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
     devolverAntes(g);          // MESMO turno: sem pintura entre devolver e aplicar; o `before` sai o de antes do gesto
     // só vira `confirmado` se a ponte aplicou; recusa = cancelamento com motivo (Astra, Task 5 #2) — a página já está
     // no antes (devolvido acima; o que a transação chegou a aplicar foi desfeito por applyAtomicTransaction)
-    if (commitTransaction(message, payload.transaction, 'apply')) encerrarGesto(g, 'confirmado');
+    // `aplicando` já não é vivo: a própria aplicação dispara `resize` (refreshRuntime avisa as animações) e a regra
+    // única cancelaria o gesto no meio, devolvendo o antes por cima do valor aplicado
+    encerrarGesto(g, 'aplicando');
+    if (commitTransaction(message, payload.transaction, 'apply')) g.estado = 'confirmado';
     else {
-      encerrarGesto(g, 'cancelado');
+      g.estado = 'cancelado';
       emit('overlay-gesture-canceled', { gestureId: g.id, reason: 'transaction_rejected' }, { protocol: PROTOCOL_V2 });
     }
     notificarCamada();
@@ -3497,6 +3609,7 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
       if (recoveryAttempt < 1) {
         recoveryTimer = setTimeout(() => {
           recoveryTimer = null;
+          if (gestoVivo()) { assentamentoAdiado = true; return; }
           if (mode === 'edit' && selectedId === ensureElementId(element)) settleSelection(element, { recoveryAttempt: 1 });
         }, 160);
       } else {
@@ -7318,6 +7431,7 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
 
   function enterInlineTextEdit(element) {
     if (!isEditableText(element)) return;
+    if (gestoVivo()) cancelarGestoDaCamada(gestoVivoId, 'page-input');
     if (textEditState?.element === element) return;
     if (textEditState) finishInlineTextEdit(true);
     select(element);
@@ -8597,6 +8711,9 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
 
   function flushGesturePreview(gesture) {
     if (gesture.pendingValue === undefined) return;
+    // a prévia do painel roda no quadro SEGUINTE: um gesto da camada que começou nesse meio tempo é cancelado antes
+    // da escrita, senão a devolução da camada apagaria a prévia do painel (Astra, Task 6 r2)
+    if (gestoVivo()) cancelarGestoDaCamada(gestoVivoId, 'panel-preview');
     const value = gesture.pendingValue;
     gesture.pendingValue = undefined;
     applyPatchOrThrow({ ...gesture.patch, value });
@@ -8727,6 +8844,22 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
       return;
     }
     const payload = message.payload || {};
+
+    // O editor de fora recusou o lote do gesto (overlay-batch): é o próprio cancelamento, antes da regra única.
+    if (message.type === 'overlay-gesture-cancel') {
+      cancelarGestoDaCamada(payload.gestureId, payload.reason || 'host_refused');
+      return;
+    }
+    // REGRA ÚNICA (spec §6.2.7): com um gesto vivo, todo comando que não só lê cancela o gesto ANTES de rodar — inclusive
+    // desfazer/refazer, edição do painel, tocador, seleção, modo, tela. Lista do que só lê, para nenhum escritor novo
+    // escapar por esquecimento.
+    const SO_LEITURA = new Set(['health-check', 'describe-element', 'inspect-selected', 'refresh-inventory', 'set-overlay-scale', 'toggle-guides', 'request-announce', 'upload-result', 'set-interaction']);
+    const eDoProprioGesto = message.type === 'apply-transaction' && payload.gestureId;
+    // set-interaction que muda o hover troca declarações das folhas: é escritor (Astra, Task 6 #1)
+    const soLe = SO_LEITURA.has(message.type) && !(message.type === 'set-interaction' && typeof payload.hover === 'boolean');
+    if (gestoVivo() && !eDoProprioGesto && !soLe) cancelarGestoDaCamada(gestoVivoId, `host:${message.type}`);
+    if (message.type === 'playback') anotarTransporte(payload.action, payload.motionId || null);
+    if (message.type === 'toggle-guides') { camada?.alternarGuias(); return; }
 
     if (message.type === 'upload-result') {
       // Resposta da ponte de upload (Task 12): o parent devolveu o caminho (ou
@@ -8958,7 +9091,7 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
         const el = alvo ? chooseElement(alvo, { x, y }) : null;
         if (el) select(el);
       },
-      elegivel: () => ({ ok: false, motivo: 'not_ready' }),
+      elegivel: (el, mudancas, opcoes) => elegivelParaCamada(el, mudancas, opcoes),
       iniciarGesto: (alvos) => iniciarGestoDaCamada(alvos),
       previa: (id, changes) => previaDoGesto(id, changes),
       terminarGesto: (id, changes) => terminarGestoDaCamada(id, changes),
@@ -8992,6 +9125,7 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
     on(document, 'pointerleave', () => hover(null), true);
     on(document, 'pointerdown', (event) => {
       if (ehNossoRef.fn(event.target)) return;
+      if (gestoVivo()) cancelarGestoDaCamada(gestoVivoId, 'page-input');
       if (mode !== 'edit' || tool !== 'move' || event.button !== 0) return;
       if (navegacaoPermitida() && alvoDeNavegacao(event)) return;   // idem: o link vence
       const element = chooseElement(resolveVisibleTarget(event), { x: event.clientX, y: event.clientY });
@@ -9077,6 +9211,7 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
     }, true);
     on(document, 'click', (event) => {
       if (ehNossoRef.fn(event.target)) return;
+      if (gestoVivo()) cancelarGestoDaCamada(gestoVivoId, 'page-input');
       if (mode !== 'edit') return;
       // ⭐ Navegação ligada: o clique num link SEGUE o link em vez de selecionar. É a
       // resposta do dono à pergunta de comportamento — e é por isso que o tooltip da
@@ -9164,6 +9299,17 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (String(event.key).toLowerCase() === TECLA_DE_LINK) teclaDeLinkPressionada = true;
     }, true);
+    // Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z e Ctrl+Y com o foco DENTRO da página vão para o desfazer do editor (Astra r1 #6),
+    // salvo na edição de texto e nos campos (o desfazer do próprio texto continua)
+    on(document, 'keydown', (event) => {
+      if (textEditState || digitando(event.target) || ehNossoRef.fn(event.target)) return;
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const k = String(event.key).toLowerCase();
+      const action = (k === 'z' && !event.shiftKey) ? 'undo' : ((k === 'z' && event.shiftKey) || k === 'y') ? 'redo' : null;
+      if (!action) return;
+      event.preventDefault();
+      emit('history-key', { action }, { protocol: PROTOCOL_V2 });
+    }, true);
     on(document, 'keyup', (event) => {
       if (String(event.key).toLowerCase() === TECLA_DE_LINK) teclaDeLinkPressionada = false;
     }, true);
@@ -9193,10 +9339,12 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
     syncEditConventions();
     // Scrolling the site re-scopes the timeline. Debounced to the scroll settling:
     // the list is cheap to build, but rebuilding it on every scroll event is waste.
+    reagendarAssentamento = () => scheduleViewportMotion();
     const scheduleViewportMotion = () => {
       if (viewportTimer) clearTimeout(viewportTimer);
       viewportTimer = setTimeout(() => {
         viewportTimer = null;
+        if (gestoVivo()) { assentamentoAdiado = true; return; }
         emitViewportMotion();
         if (mode === 'edit' && !scrubActive) {
           const selected = findElement(selectedId);
@@ -9210,6 +9358,7 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
       }, 120);
     };
     on(window, 'scroll', () => {
+      if (gestoVivo()) cancelarGestoDaCamada(gestoVivoId, 'scroll');
       if (mode === 'edit' && !scrubActive) {
         restoreScopedSettlement();
         emitEditState('navigating', { loop: false });
@@ -9218,6 +9367,7 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
       scheduleViewportMotion();
     }, { passive: true });
     on(window, 'resize', () => {
+      if (gestoVivo()) cancelarGestoDaCamada(gestoVivoId, 'resize');
       // Reveal points are functions of viewport height — a resize re-derives
       // them (and the row list) from scratch.
       revealAtCache.clear();
@@ -9246,7 +9396,13 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
       });
     }, 1000);
     window.__uncraftMotionBridge = {
-      overlay: camada ? { estado: () => camada.estado(), ponteParaTeste: () => ponteAtual } : null,
+      overlay: camada ? {
+        estado: () => camada.estado(),
+        ponteParaTeste: () => ponteAtual,
+        ...(camada.ganchosDeTeste || {}),
+        injetarTrilhasParaTeste: (el, trilhas) => trilhasInjetadasParaTeste.set(el, trilhas || []),
+        injetarLimpezaParaTeste: (el, props) => limpezasInjetadasParaTeste.set(el, String(props).split(',').map((p) => p.trim().toLowerCase().replace(/-/g, ''))),
+      } : null,
       teardown() {
         if (gestoVivo()) cancelarGestoDaCamada(gestoVivoId, 'teardown');
         try { camada?.destruir(); } catch (_) { /* a camada nunca derruba o desmonte */ }
@@ -9498,6 +9654,8 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
 
     window.__uncraftEditorCommit = function editorCommit(element, edit, options) {
       const dryRun = !!(options && options.dryRun);
+      // a porta do editor dentro da página também é escritor: o gesto vivo é cancelado antes (Astra, Task 6 #1)
+      if (!dryRun && gestoVivo()) cancelarGestoDaCamada(gestoVivoId, 'editor-commit');
       const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
       if (!(element instanceof Element)) return recusa('no_element');
       const kind = edit && edit.kind;
@@ -9626,6 +9784,7 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
     // bilhete só para o lote, UMA transação com N patches — ou nada.
     window.__uncraftEditorCommitBatch = function editorCommitBatch(entries, options) {
       const dryRun = !!(options && options.dryRun);
+      if (!dryRun && gestoVivo()) cancelarGestoDaCamada(gestoVivoId, 'editor-commit');
       const recusa = (reason, detail) => ({ ok: false, reason, detail: detail || null });
       if (!Array.isArray(entries) || !entries.length) return recusa('empty_batch');
       if (entries.length > 200) return recusa('batch_too_large', String(entries.length));
