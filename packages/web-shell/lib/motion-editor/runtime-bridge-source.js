@@ -9104,6 +9104,8 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
       terminarGesto: (id, changes) => terminarGestoDaCamada(id, changes),
       cancelarGesto: (id, motivo) => cancelarGestoDaCamada(id, motivo),
       gestoVivo: () => gestoVivo(),
+      gestoAtual: () => (gestoVivo() ? gestoVivoId : null),
+      estadoDoGesto: (id) => (gestosDaCamada.get(id) || {}).estado || null,
     };
   }
 
@@ -9302,7 +9304,7 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
     const digitando = (alvo) => alvo instanceof Element
       && (alvo.isContentEditable || /^(input|textarea|select)$/i.test(alvo.tagName));
     on(document, 'keydown', (event) => {
-      if (textEditState || digitando(event.target)) return;   // escrever "l" não liga link
+      if (textEditState || digitando(event.target) || ehNossoRef.fn(event.target)) return;   // escrever "l" (até no campo da camada) não liga link
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       if (String(event.key).toLowerCase() === TECLA_DE_LINK) teclaDeLinkPressionada = true;
     }, true);

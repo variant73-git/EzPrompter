@@ -3,6 +3,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { MOTION_EDITOR_PROTOCOL, MOTION_EDITOR_PROTOCOL_V2, SUPPORTED_MOTION_EDITOR_PROTOCOLS, commandV2 } from './protocol.js';
 import { getRuntimeBridgeSource } from './runtime-bridge-source.js';
+import { buildOverlayBatch } from './overlay-batch.js';
+import { createTransaction } from './transaction.js';
 
 function boot(html) {
   document.body.innerHTML = html || '<main id="m" data-uncraft-id="u-m"><div id="a" data-uncraft-id="u-a" style="width:200px;height:100px">A</div><div id="b" data-uncraft-id="u-b">B</div></main>';
@@ -179,5 +181,148 @@ describe('guias de espaçamento, cantos e clique que atravessa (spec §5.3)', ()
     expect(a.style.paddingTop).toBe('12px');
     expect(a.style.paddingRight).toBe('4px');
     expect(fins()[0].payload.changes.map((c) => c.property)).toEqual(['padding-top']);
+  });
+});
+
+describe('campo de digitar, setas e tecla G (spec §5.3)', () => {
+  let rt; afterEach(() => rt?.restore());
+  const CENA = '<main id="m" data-uncraft-id="u-m"><div id="a" data-uncraft-id="u-a" style="width:200px;height:100px;margin:8px;padding:4px">A</div></main>';
+  const fins = () => rt.messages.filter((m) => m.type === 'overlay-gesture-ended');
+  const ganchos = () => window.__uncraftMotionBridge.overlay;
+  function montarCena() {
+    rt = boot(CENA);
+    caixaViva(document.getElementById('a'), 10, 10);
+    rt.send('select-element', { elementId: 'u-a' });
+  }
+  const tecla = (alvo, key, extra = {}) => alvo.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, composed: true, cancelable: true, ...extra }));
+  function abrirCampo(k) {
+    const widget = ganchos().guiaParaTeste(k).querySelector('.u-guia-widget');
+    widget.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, composed: true }));
+    return ganchos().campoParaTeste();
+  }
+  it('duplo clique abre o campo com o valor atual; 1.5rem + Enter vira 24px numa edição só', () => {
+    montarCena();
+    const campo = abrirCampo('mb');
+    expect(campo.value).toBe('8');
+    campo.value = '1.5rem';
+    tecla(campo, 'Enter');
+    expect(fins()).toHaveLength(1);
+    expect(fins()[0].payload.changes).toEqual([{ elementId: 'u-a', property: 'margin-bottom', before: '8px', value: '24px' }]);
+    expect(ganchos().campoParaTeste()).toBeNull();
+  });
+  it('+5 soma ao valor atual', () => {
+    montarCena();
+    const campo = abrirCampo('mb');
+    campo.value = '+5';
+    tecla(campo, 'Enter');
+    expect(fins()[0].payload.changes[0].value).toBe('13px');
+  });
+  it('Esc fecha sem mudar nada', () => {
+    montarCena();
+    const campo = abrirCampo('mb');
+    campo.value = '40';
+    tecla(campo, 'Escape');
+    expect(fins()).toHaveLength(0);
+    expect(ganchos().campoParaTeste()).toBeNull();
+  });
+  it('setas na guia sob o mouse: 1, Shift 10, Cmd 8 — cada toque uma edição', () => {
+    montarCena();
+    ganchos().guiaParaTeste('mb').dispatchEvent(new MouseEvent('pointerenter', { bubbles: false }));
+    tecla(document, 'ArrowDown');
+    expect(fins().at(-1).payload.changes[0]).toMatchObject({ property: 'margin-bottom', value: '9px' });
+    rt.send('apply-transaction', { gestureId: fins().at(-1).payload.gestureId, transaction: null });   // libera o gesto (recusado)
+    tecla(document, 'ArrowDown', { shiftKey: true });
+    expect(fins().at(-1).payload.changes[0].value).toBe('18px');
+  });
+  it('o campo do vão não abre quando o pai está travado pela cena 3D (como o antigo, que recusava ao abrir)', () => {
+    rt = boot('<main id="m" data-uncraft-id="u-m" style="display:flex;column-gap:10px">'
+      + '<div id="a" data-uncraft-id="u-a" style="width:200px;height:100px">A</div>'
+      + '<div id="b" data-uncraft-id="u-b" data-u-trava="layout" style="width:100px;height:100px">B</div></main>');
+    caixaViva(document.getElementById('a'), 10, 10);
+    caixaViva(document.getElementById('b'), 220, 10);
+    rt.send('select-element', { elementId: 'u-a' });
+    expect(ganchos().estado().guias).toContain('gap');
+    expect(abrirCampo('gap')).toBeNull();
+    expect(ganchos().estado().motivo).toBe('Locked by the 3D scene');
+  });
+  // o editor de fora confirma como de verdade: o mesmo montador de lote e a mesma transação
+  function confirmarUltimo() {
+    const fim = fins().at(-1).payload;
+    const lote = buildOverlayBatch({ manifest: null, deviceId: 'desktop', changes: fim.changes, descriptorFor: () => null });
+    rt.send('apply-transaction', { gestureId: fim.gestureId, transaction: createTransaction({ patches: lote.patches, source: 'overlay' }) });
+  }
+  const microtarefas = () => new Promise((ok) => setTimeout(ok, 0));
+  it('trocar a seleção com o campo aberto fecha o campo sem gravar no elemento antigo (Astra T10 #1)', () => {
+    rt = boot('<main id="m" data-uncraft-id="u-m"><div id="a" data-uncraft-id="u-a" style="width:200px;height:100px;margin:8px">A</div><div id="b" data-uncraft-id="u-b" style="width:100px;height:50px;margin:8px">B</div></main>');
+    caixaViva(document.getElementById('a'), 10, 10); caixaViva(document.getElementById('b'), 10, 140);
+    rt.send('select-element', { elementId: 'u-a' });
+    const campo = abrirCampo('mb');
+    campo.value = '40';
+    rt.send('select-element', { elementId: 'u-b' });
+    expect(ganchos().campoParaTeste()).toBeNull();
+    campo.dispatchEvent(new FocusEvent('blur'));
+    expect(fins()).toHaveLength(0);
+    expect(document.getElementById('a').style.marginBottom).toBe('8px');
+  });
+  it('clicar fora com o campo aberto grava no elemento do campo; o clique não cancela a gravação', () => {
+    rt = boot('<main id="m" data-uncraft-id="u-m"><div id="a" data-uncraft-id="u-a" style="width:200px;height:100px;margin:8px">A</div><div id="b" data-uncraft-id="u-b" style="width:100px;height:50px;margin:8px">B</div></main>');
+    caixaViva(document.getElementById('a'), 10, 10); caixaViva(document.getElementById('b'), 10, 140);
+    rt.send('select-element', { elementId: 'u-a' });
+    const campo = abrirCampo('mb');
+    campo.value = '40';
+    const b = document.getElementById('b');
+    ponteiro(b, 'pointerdown', 20, 150);
+    ponteiro(b, 'click', 20, 150);
+    expect(fins()).toHaveLength(1);
+    expect(fins()[0].payload.changes).toEqual([{ elementId: 'u-a', property: 'margin-bottom', before: '8px', value: '40px' }]);
+    expect(rt.messages.some((m) => m.type === 'overlay-gesture-canceled')).toBe(false);
+    confirmarUltimo();
+    expect(rt.messages.filter((m) => m.type === 'transaction-committed')).toHaveLength(1);
+    expect(document.getElementById('a').style.marginBottom).toBe('40px');
+    expect(ganchos().campoParaTeste()).toBeNull();
+  });
+  it('desmontar com o campo aberto não grava nada, nem num blur atrasado', () => {
+    montarCena();
+    const campo = abrirCampo('mb');
+    campo.value = '40';
+    window.__uncraftMotionBridge.teardown();
+    campo.dispatchEvent(new FocusEvent('blur'));
+    expect(fins()).toHaveLength(0);
+  });
+  it('setas apertadas durante a confirmação viram uma edição cada, na ordem (Astra T10 #2)', async () => {
+    montarCena();
+    ganchos().guiaParaTeste('mb').dispatchEvent(new MouseEvent('pointerenter', { bubbles: false }));
+    tecla(document, 'ArrowDown'); tecla(document, 'ArrowDown'); tecla(document, 'ArrowDown');
+    expect(fins()).toHaveLength(1);
+    confirmarUltimo(); await microtarefas();
+    expect(fins()).toHaveLength(2);
+    confirmarUltimo(); await microtarefas();
+    expect(fins()).toHaveLength(3);
+    confirmarUltimo(); await microtarefas();
+    expect(fins().map((f) => f.payload.changes[0].value)).toEqual(['9px', '10px', '11px']);
+    expect(document.getElementById('a').style.marginBottom).toBe('11px');
+  });
+  it('se uma seta da fila é cancelada, as seguintes não rodam', async () => {
+    montarCena();
+    ganchos().guiaParaTeste('mb').dispatchEvent(new MouseEvent('pointerenter', { bubbles: false }));
+    tecla(document, 'ArrowDown'); tecla(document, 'ArrowDown');
+    rt.send('overlay-gesture-cancel', { gestureId: fins().at(-1).payload.gestureId, reason: 'test' });
+    await microtarefas();
+    expect(fins()).toHaveLength(1);
+    expect(document.getElementById('a').style.marginBottom).toBe('8px');
+  });
+  it('G esconde e mostra as guias; dentro do campo, G e setas não agem', () => {
+    montarCena();
+    expect(ganchos().estado().guias.length).toBeGreaterThan(0);
+    tecla(document, 'g');
+    expect(ganchos().estado().guiasVisiveis).toBe(false);
+    expect(ganchos().estado().guias).toEqual([]);
+    tecla(document, 'g');
+    expect(ganchos().estado().guiasVisiveis).toBe(true);
+    const campo = abrirCampo('mb');
+    tecla(campo, 'g');
+    tecla(campo, 'ArrowDown');
+    expect(ganchos().estado().guiasVisiveis).toBe(true);
+    expect(fins()).toHaveLength(0);
   });
 });

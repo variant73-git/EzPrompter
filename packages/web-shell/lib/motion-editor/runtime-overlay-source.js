@@ -46,6 +46,8 @@ export function instalarCamada(ponte, M) {
     .u-guia-icon { font-size: 9px; opacity: 0.6; }
     .u-guia-val { font-size: 10px; }
     .u-guia-delta { font-size: 9px; color: rgba(255,0,221,0.65); font-weight: 500; margin-left: 2px; }
+    .u-guia-input { background: transparent; border: none; outline: none; color: #FF00DD; font: 500 10px 'Instrument Sans', system-ui, sans-serif; padding: 0; margin: 0; width: 40px; text-align: center; -webkit-appearance: none; }
+    .u-guia-widget.u-editando { box-shadow: 0 0 0 1px rgba(255,0,221,0.7), 0 2px 6px rgba(0,0,0,0.3); }
     .u-canto {
       position: fixed; display: none; box-sizing: border-box; pointer-events: auto; z-index: 2147483641;
       width: calc(10px / var(--u-escala, 1)); height: calc(10px / var(--u-escala, 1));
@@ -457,6 +459,176 @@ export function instalarCamada(ponte, M) {
     });
   });
 
+  // ---- campo de digitar, setas e tecla G (editor.js 8963-9033, 10493-10529) ----
+  // Um ciclo imediato (sem arraste) para o valor digitado e cada toque de seta: uma edição cada, como no antigo.
+  function gestoImediato(el, mudancas, perto) {
+    const lista = resolverAlvos(mudancas, el);
+    const pode = ponte.elegivel(el, lista);
+    if (!pode.ok) { mostrarMotivo(pode.motivo, perto); return null; }
+    const g = ponte.iniciarGesto(lista.map(({ el: alvo, property }) => ({ el: alvo, property })));
+    if (!g.ok) { mostrarMotivo(g.motivo, perto); return null; }
+    ponte.previa(g.gestureId, lista);
+    ponte.terminarGesto(g.gestureId, lista);
+    redesenhar();
+    return g.gestureId;
+  }
+  // Pedido que chega com outro gesto esperando o editor de fora entra numa FILA e roda quando o anterior for
+  // confirmado, calculado sobre o valor daquele momento — tecla segurada não perde toques (Astra, Task 10 #2). Se o
+  // anterior for cancelado (desfazer, rolagem, recusa) ou a seleção mudar, a fila cai inteira: nada roda por cima.
+  const fila = [];
+  let antecessor = null;
+  let drenando = false;
+  let drenagemMarcada = false;
+  function drenarFila() {
+    if (drenando) return;
+    drenando = true;
+    try {
+      while (fila.length && !destruida && !ponte.gestoVivo()) {
+        const estadoDoAnterior = antecessor ? ponte.estadoDoGesto(antecessor) : 'confirmado';
+        if (estadoDoAnterior === 'cancelado') { fila.length = 0; break; }
+        if (estadoDoAnterior !== 'confirmado') break;          // ainda aplicando: espera o próximo aviso
+        const pedido = fila.shift();
+        if (pedido.el !== ponte.selecionado() || ponte.modo() !== 'edit' || ponte.editandoTexto()) { fila.length = 0; break; }
+        const mudancas = pedido.mudancas();
+        if (!mudancas) continue;
+        const id = gestoImediato(pedido.el, mudancas, pedido.perto);
+        if (!id) { fila.length = 0; break; }
+        antecessor = id;
+      }
+    } finally { drenando = false; }
+  }
+  function marcarDrenagem() {
+    if (drenagemMarcada || !fila.length) return;
+    drenagemMarcada = true;
+    // depois do aviso da ponte terminar (ela avisa de dentro da própria confirmação)
+    Promise.resolve().then(() => { drenagemMarcada = false; drenarFila(); });
+  }
+  function pedir(pedido) {
+    if (!fila.length) antecessor = ponte.gestoAtual();   // o gesto que estiver esperando agora (ou nenhum)
+    if (fila.length >= 60) return;                        // tecla segurada sem resposta nenhuma: não acumula sem fim
+    fila.push(pedido);
+    drenarFila();
+  }
+  const PROP_CSS = { mt: 'margin-top', mr: 'margin-right', mb: 'margin-bottom', ml: 'margin-left', pt: 'padding-top', pr: 'padding-right', pb: 'padding-bottom', pl: 'padding-left' };
+  function leituraDaGuia(k, el) {
+    const alvo = k === 'gap' ? el.parentElement : el;
+    if (!alvo) return null;
+    const cs = win.getComputedStyle(alvo);
+    const axis = M.guideAxis(k, k === 'gap' ? cs.flexDirection : 'row');
+    const atual = k === 'gap'
+      ? (parseFloat(axis === 'x' ? (cs.columnGap || cs.gap) : (cs.rowGap || cs.gap)) || 0)
+      : (parseFloat(cs[PROP_CALC[k]]) || 0);
+    return { alvo, cs, axis, atual };
+  }
+  const mudancaAbsoluta = (k, axis, valor) => (k === 'gap'
+    ? [{ alvo: 'parent', property: axis === 'x' ? 'column-gap' : 'row-gap', value: `${valor}px` }]
+    : [{ alvo: 'self', property: PROP_CSS[k], value: `${valor}px` }]);
+  // O campo pertence ao elemento em que abriu: trocar a seleção ou desmontar a camada fecha SEM gravar, e um `blur`
+  // atrasado de um campo já fechado não faz nada (Astra, Task 10 #1).
+  let campoAberto = null;
+  function fecharCampo() {
+    if (!campoAberto) return;
+    const c = campoAberto;
+    c.feito = true;
+    campoAberto = null;
+    c.widget.classList.remove('u-editando');
+    c.widget.textContent = '';
+    c.widget.appendChild(valores[c.k].icone);
+    c.widget.appendChild(valores[c.k].val);
+    if (!destruida) redesenhar();
+  }
+  GUIA_KEYS.forEach((k) => valores[k].widget.addEventListener('dblclick', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const el = ponte.selecionado();
+    if (!el || campoAberto) return;
+    const leitura = leituraDaGuia(k, el);
+    if (!leitura) return;
+    // como o antigo (recusarSeTravado ao abrir): o vão escreve no PAI, que um irmão da cena 3D prende
+    if (ponte.travado(leitura.alvo)) {
+      mostrarMotivo('layout_locked', { x: parseFloat(guias[k].style.left) || 16, y: parseFloat(guias[k].style.top) || 16 });
+      return;
+    }
+    const widget = valores[k].widget;
+    const input = doc.createElement('input');
+    input.type = 'text';
+    input.className = 'u-guia-input';
+    input.value = String(Math.round(leitura.atual));
+    widget.textContent = '';
+    widget.appendChild(input);
+    widget.classList.add('u-editando');
+    const c = { k, widget, input, el, alvo: leitura.alvo, feito: false };
+    c.confirmar = () => {
+      if (c.feito || campoAberto !== c || destruida) return;
+      const valido = ponte.selecionado() === el && (leituraDaGuia(k, el) || {}).alvo === c.alvo;
+      const valor = valido ? M.parseGuideInput({
+        text: input.value,
+        current: leitura.atual,
+        rootFontSize: win.getComputedStyle(doc.documentElement).fontSize,
+        fontSize: leitura.cs.fontSize,
+        parentWidth: leitura.alvo.parentElement ? leitura.alvo.parentElement.getBoundingClientRect().width : 0,
+      }) : null;
+      fecharCampo();
+      if (valor != null && valor !== Math.round(leitura.atual)) pedir({ el, mudancas: () => mudancaAbsoluta(k, leitura.axis, valor) });
+    };
+    campoAberto = c;
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); c.confirmar(); }
+      else if (e.key === 'Escape') { e.preventDefault(); fecharCampo(); }
+    });
+    input.addEventListener('blur', () => c.confirmar());
+    input.addEventListener('pointerdown', (e) => e.stopPropagation());
+    win.setTimeout(() => { try { input.focus(); input.select(); } catch (_) { /* sem foco */ } }, 0);
+  }));
+  const editavel = (n) => !!n && (n.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(String(n.tagName || '')));
+  function aoTeclar(e) {
+    if (destruida || campoAberto || ponte.modo() !== 'edit' || ponte.editandoTexto()) return;
+    if (e.target === raiz) return;   // a sombra é fechada: de fora, quem digita na camada aparece como o hospedeiro
+    const origem = typeof e.composedPath === 'function' ? e.composedPath()[0] : e.target;
+    if (editavel(origem) || editavel(e.target)) return;
+    if (e.metaKey && !/^Arrow/.test(e.key)) return;
+    if (e.ctrlKey && !/^Arrow/.test(e.key)) return;
+    if ((e.key === 'g' || e.key === 'G') && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      guiasVisiveis = !guiasVisiveis;
+      redesenhar();
+      return;
+    }
+    if (!/^Arrow(Up|Down|Left|Right)$/.test(e.key) || !guiaAtiva || !guiasVisiveis) return;
+    const el = ponte.selecionado();
+    if (!el) return;
+    const leitura = leituraDaGuia(guiaAtiva, el);
+    if (!leitura) return;
+    const k = guiaAtiva; const mods = modsDe(e); const arrow = e.key;
+    if (M.nudgeValue({ key: k, arrow, axis: leitura.axis, mods, current: leitura.atual }) == null) return;
+    e.preventDefault();
+    // o valor sai do estado da página na hora de rodar (a fila pode ter edições antes desta)
+    pedir({ el, mudancas: () => {
+      const agora = leituraDaGuia(k, el);
+      if (!agora) return null;
+      const valor = M.nudgeValue({ key: k, arrow, axis: agora.axis, mods, current: agora.atual });
+      return valor == null ? null : mudancaAbsoluta(k, agora.axis, valor);
+    } });
+  }
+  doc.addEventListener('keydown', aoTeclar, true);
+  // Clicar fora com o campo aberto grava, como no antigo (item 94: o clique fora tira o foco). A ponte cancela gesto
+  // vivo em qualquer toque na página, então o toque que gravou não segue para ela; o clique que vem depois só passa
+  // (e troca a seleção) se a gravação já foi confirmada.
+  let engolirClique = false;
+  function aoApertarFora(ev) {
+    if (!campoAberto || ev.target === raiz) return;   // dentro da camada (sombra fechada) quem decide é ela
+    campoAberto.confirmar();
+    if (ponte.gestoVivo()) { ev.stopImmediatePropagation(); ev.preventDefault(); engolirClique = true; }
+  }
+  function aoClicarFora(ev) {
+    if (!engolirClique) return;
+    engolirClique = false;
+    if (ponte.gestoVivo()) { ev.stopImmediatePropagation(); ev.preventDefault(); }
+  }
+  win.addEventListener('pointerdown', aoApertarFora, true);
+  win.addEventListener('click', aoClicarFora, true);
+
   CANTOS.forEach((c) => cantos[c].addEventListener('pointerdown', (ev) => {
     const el = ponte.selecionado();
     if (!el || ev.button !== 0) return;
@@ -479,7 +651,10 @@ export function instalarCamada(ponte, M) {
   }
   function acordar() { if (!quadro && !destruida) quadro = win.requestAnimationFrame(laco); }
 
-  ponte.aoMudar(() => { redesenhar(); acordar(); });
+  ponte.aoMudar(() => {
+    if (campoAberto && ponte.selecionado() !== campoAberto.el) fecharCampo();
+    redesenhar(); acordar(); marcarDrenagem();
+  });
   doc.documentElement.appendChild(raiz);
   marcarAtiva();
   redesenhar();
@@ -494,11 +669,16 @@ export function instalarCamada(ponte, M) {
       redesenhar();
     },
     alternarGuias() { guiasVisiveis = !guiasVisiveis; redesenhar(); },
-    estado() { return { caixaVisivel: selBox.style.display === 'block', caixa: ultimaCaixa, escala, guiasVisiveis, alcasApagadas, guias: guiasDesenhadas.slice(), guiaAtiva }; },
-    ganchosDeTeste: { alcaParaTeste: (d) => handles[d], guiaParaTeste: (k) => guias[k], cantoParaTeste: (c) => cantos[c] },
+    estado() { return { caixaVisivel: selBox.style.display === 'block', caixa: ultimaCaixa, escala, guiasVisiveis, alcasApagadas, guias: guiasDesenhadas.slice(), guiaAtiva, motivo: pill.style.display === 'block' ? pill.textContent : null }; },
+    ganchosDeTeste: { alcaParaTeste: (d) => handles[d], guiaParaTeste: (k) => guias[k], cantoParaTeste: (c) => cantos[c], campoParaTeste: () => (campoAberto ? campoAberto.input : null) },
     destruir() {
       if (arrasteAtivo) arrasteAtivo.cancelar('teardown');
+      doc.removeEventListener('keydown', aoTeclar, true);
+      win.removeEventListener('pointerdown', aoApertarFora, true);
+      win.removeEventListener('click', aoClicarFora, true);
+      fila.length = 0;
       destruida = true;
+      fecharCampo();
       if (quadro) win.cancelAnimationFrame(quadro);
       quadro = 0;
       raiz.remove();
