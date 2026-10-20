@@ -309,6 +309,18 @@ export function responsiveManifestForSettlement(currentManifest, entry) {
   return responsiveManifestAfterPatches(currentManifest, patches, direction);
 }
 
+// O "antes" de cada propriedade é a tabela no momento da CONFIRMAÇÃO, não no da montagem: as confirmações chegam em
+// ordem, e uma edição montada com outra da MESMA propriedade ainda em espera levava o antes velho — desfazê-la depois
+// apagava a anterior da tabela, e reabrir perdia a edição (Astra, revisão do ramo alças e guias, 2026-10-20).
+export function rebaseResponsiveBeforeEntries(manifest, patches) {
+  const properties = propertiesOf(manifest);
+  return (patches || []).map((patch) => {
+    const key = patch?.kind !== 'responsive' ? patch?.responsive?.propertyKey : null;
+    if (!key) return patch;
+    return withResponsiveMetadata(patch, { ...patch.responsive, beforeEntry: Object.hasOwn(properties, key) ? properties[key] : null });
+  });
+}
+
 export function withResponsiveMetadata(patch, {
   propertyKey,
   mode,

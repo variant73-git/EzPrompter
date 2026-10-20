@@ -1963,6 +1963,26 @@ describe('useNativeMotionController', () => {
       expect(hook.result.current.selected?.id).toBe('hero');
     });
 
+    // Astra (ramo inteiro): duas edições da MESMA propriedade em espera, depois desfazer uma — a tabela por tela tem
+    // que voltar para a 1ª edição (0.6), não para o valor de antes das duas (0.8), senão reabrir apaga a 1ª
+    it('duas edições da mesma propriedade em espera + desfazer: a tabela volta para a 1ª, não para antes das duas', async () => {
+      const { frame, hook, enviadas } = await montar();
+      act(() => hook.result.current.commands.applyStyle('opacity', '0.6', '0.8'));
+      act(() => hook.result.current.commands.applyStyle('opacity', '0.4', '0.6'));
+      const [primeira, segunda] = enviadas('apply-transaction').slice(-2);
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', { transaction: primeira.payload.transaction }, primeira.requestId)));
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', { transaction: segunda.payload.transaction }, segunda.requestId)));
+      await waitFor(() => expect(hook.result.current.historyCount).toBe(2));
+      expect(hook.result.current.responsiveScopeFor('opacity', '0.4').effectiveValue).toBe('0.4');
+      act(() => hook.result.current.commands.undo());
+      const volta = enviadas('rollback-transaction').at(-1);
+      expect(volta).toBeTruthy();
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', { transaction: volta.payload.transaction }, volta.requestId)));
+      await waitFor(() => expect(hook.result.current.historyCount).toBe(1));
+      // o segundo argumento é o valor de reserva: 'X' mostra o que a TABELA guarda
+      expect(hook.result.current.responsiveScopeFor('opacity', 'X').effectiveValue).toBe('0.6');
+    });
+
     it('history-key vindo da página desfaz pelo mesmo caminho', async () => {
       const { frame, hook, enviadas } = await montar();
       act(() => hook.result.current.commands.applyStyle('opacity', '0.5', '1'));

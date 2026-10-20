@@ -43,6 +43,7 @@ import {
   parseResponsiveManifest,
   responsiveManifestAfterPatches,
   responsiveManifestForSettlement,
+  rebaseResponsiveBeforeEntries,
   responsivePatchAppliesToDevice,
   responsivePropertyKey,
   responsiveRuntimePatches,
@@ -850,6 +851,7 @@ export function useNativeMotionController({
           inFlightControlTransactionsRef.current.delete(entry.transaction.id);
         }
         const acknowledged = entry.payload?.transaction || entry.transaction;
+        let registrado = acknowledged;
         const patches = acknowledged.patches || entry.transaction.patches;
         if (entry.status !== 'committed') {
           if (entry.meta.operation === 'replay') {
@@ -903,14 +905,21 @@ export function useNativeMotionController({
         if (entry.meta.responsiveManifest || entry.meta.undoneTransactionPatches || entry.meta.redoneTransactionPatches) {
           // só a mudança DESTA transação sobre a tabela atual (Astra r5 #2) — os patches MONTADOS aqui, com a marca de
           // tela; no desfazer/refazer, os da transação original
-          const patches = entry.meta.undoneTransactionPatches || entry.meta.redoneTransactionPatches || entry.transaction.patches;
+          const daHistoria = entry.meta.undoneTransactionPatches || entry.meta.redoneTransactionPatches || null;
+          let patches = daHistoria || entry.transaction.patches;
+          if (!daHistoria && entry.meta.operation === 'apply') {
+            // o histórico guarda o antes DA CONFIRMAÇÃO (a tabela agora, antes desta), que é o que o desfazer devolve
+            const tabelaAntes = responsiveManifestRef.current;
+            patches = rebaseResponsiveBeforeEntries(tabelaAntes, patches);
+            registrado = { ...acknowledged, patches: rebaseResponsiveBeforeEntries(tabelaAntes, acknowledged.patches || []) };
+          }
           replaceResponsiveManifest(responsiveManifestForSettlement(responsiveManifestRef.current, { meta: entry.meta, transaction: { patches } }));
         }
         if (entry.meta.operation === 'apply') {
           if (entry.meta.controlUpdate) {
             updateControlValue(entry.meta.controlUpdate.controlId, entry.meta.controlUpdate.value);
           }
-          updateHistory((current) => acknowledgeSessionTransaction(current, acknowledged, {
+          updateHistory((current) => acknowledgeSessionTransaction(current, registrado, {
             sessionId: currentSessionId(runtimeContextRef.current),
             repairs: entry.payload?.repairs,
           }), { persist: true });
