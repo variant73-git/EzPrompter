@@ -27,7 +27,14 @@ um Ctrl+Z desfaz, e o que foi arrastado continua lá ao reabrir.
   (`transaction-committed`, `originatedByRuntime`) que o editor de fora registra com `recordRuntimeTransaction`
   (`useNativeMotionController.js` 965-971: desfazer + salvar).
 - **Porta de edição para editores dentro da página:** `window.__uncraftEditorCommit` e `__uncraftEditorCommitBatch`
-  (9343+, 9471+): validam identidade, dono da animação e prioridade; o lote aceita até 200 estilos numa transação.
+  (9343+, 9471+): validam e REGISTRAM, mas **não aplicam** os valores (copiam `before`/`value` das entradas) e emitem
+  `describe` do 1º elemento do lote — **não servem** para confirmar o gesto (Astra r1 #1, #4). A sonda de prioridade
+  (9225) testa cada propriedade sozinha e daria falso conflito no destravar (r1 #2).
+- **Caminho de edição do painel:** `applyStyle` → `applyResponsiveEdit` (`useNativeMotionController.js` 1322-1422):
+  atualiza a tabela por tela (manifesto responsivo, `beforeEntry/afterEntry`), marca os patches e aplica pela ponte
+  (`apply-transaction` → `applyAtomicTransaction`, que aplica tudo e devolve se falhar; `describedTransactionElement`
+  preserva a seleção). Ao reabrir, a tabela por tela é reconciliada DEPOIS dos patches salvos (828) — edição que não
+  atualizar a tabela some ao reabrir (r1 #3).
 - **Trava da cena 3D:** `escritaTravada(el, prop)` (80): na região travada, largura/altura/margem/espaçamento/posição
   são recusados.
 - **Editor antigo** (`packages/editor-core/src/editor.js`, 10.918 linhas; `editor.css`): caixa e alças 142-188,
@@ -73,9 +80,14 @@ O editor de fora manda `set-overlay-scale {scale}` (zoom do canvas × escala do 
 
 ### 5.1 Interface camada ↔ ponte
 - `selecionado()` → elemento ou `null`; aviso de mudança (seleção, modo, edição de texto).
-- `podeMexer(el, propriedade)` → `{ ok }` ou `{ ok:false, motivo }` — reúne `escritaTravada`, dono da animação e
-  prioridade, pela MESMA validação do `__uncraftEditorCommitBatch` em modo de ensaio (`dryRun`).
-- `confirmar(el, mudancas)` → envia as mudanças como UM lote pelo `__uncraftEditorCommitBatch` (§6.2).
+- `podeMexer(el, gesto)` → `{ ok }` ou `{ ok:false, motivo }` POR GESTO (o conjunto de propriedades que aquele
+  quadradinho/guia escreve: destravar + tamanho + compensação, ou os lados do grupo), nunca por propriedade solta. Reúne
+  `escritaTravada`, dono da animação sobre os **canais expandidos** (`margin` → 4 lados, `padding` → 4 lados, `gap` →
+  `row-gap`+`column-gap`, `inset` → 4 lados; r1 #5) e prioridade avaliada sobre o **estado candidato completo** — todas
+  as mudanças do gesto aplicadas juntas, com volta garantida (r1 #2).
+- `iniciarGesto(el, gesto)` → guarda os valores INLINE de antes de cada propriedade (o que `readPatchValue` lê) e devolve
+  um `gestureId`; a prévia escreve direto no elemento, um quadro por vez.
+- `terminarGesto(gestureId, mudancas)` / `cancelarGesto(gestureId)` → §6.2.
 - `selecionarEm(x, y)` → pede à ponte a seleção do que está sob o ponto, pulando a camada.
 
 ### 5.2 Caixa e quadradinhos
@@ -93,6 +105,9 @@ O editor de fora manda `set-overlay-scale {scale}` (zoom do canvas × escala do 
 ### 5.3 Guias de espaçamento
 - Nove guias: `mt mr mb ml` (margem, por fora), `pt pr pb pl` (espaçamento interno, por dentro), `gap` (entre o elemento
   e o próximo irmão; muda o PAI; eixo pelo `flex-direction` do pai). Faixas rosas `#FF00DD` hachuradas do antigo.
+  Escreve sempre os **longhands**: os lados de margem/espaçamento e, no `gap`, só o do eixo do arraste (`column-gap` em
+  linha, `row-gap` em coluna) — o antigo escrevia `gap` (os dois); o efeito visível do arraste é o mesmo.
+- A guia de `gap` muda o PAI, mas a seleção continua no filho: a transação não muda a seleção (§6.2.4).
 - Arraste depois de 3 px, nunca abaixo de 0; prévia "valor +d" e pílula de aviso.
 - **Cmd/Ctrl** encaixa de 8 em 8 · **Shift** os quatro lados do grupo · **Alt** espelha no lado oposto.
 - **Guias de canto** quando alguma margem ≥ 2 px: mudam duas margens juntas, com o encaixe de 8.
@@ -103,6 +118,9 @@ O editor de fora manda `set-overlay-scale {scale}` (zoom do canvas × escala do 
 
 ### 5.4 Desfazer
 Cada arraste, valor digitado, toque de seta ou guia de canto = **uma edição**; um Ctrl+Z desfaz cada uma (como o antigo).
+Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z e Ctrl+Y com o foco DENTRO da página são repassados pela ponte ao editor de fora
+(`commands.undo/redo`), salvo durante a edição de texto ou com o campo de digitar aberto, que mantêm o desfazer do
+próprio texto (r1 #6).
 
 ### 5.5 Quando não pode mexer
 - Região travada pela cena 3D: quadradinhos e guias somem; fica só a caixa (como `rb-sel-locked` do antigo).
@@ -115,18 +133,20 @@ Cada arraste, valor digitado, toque de seta ou guia de canto = **uma edição**;
 Com seleção: um laço por quadro (`requestAnimationFrame`) mede o selecionado, o do mouse e o pai (`getBoundingClientRect`
 + estilo calculado para margem/espaçamento/gap) e reposiciona. Sem seleção, ou página escondida, o laço para.
 
-### 6.2 Ao soltar
-1. No início do gesto a camada guarda o valor INLINE de antes de cada propriedade que vai tocar (o que `readPatchValue`
-   leria) e a prévia escreve direto no elemento, um quadro por vez.
-2. Ao soltar, NO MESMO TURNO de JavaScript (sem quadro entre os passos): devolve os valores de antes e chama
-   `__uncraftEditorCommitBatch` com todas as mudanças (destravar + tamanho + compensação, ou as guias do grupo). Sem
-   pintura entre devolver e aplicar → sem piscar; o `before` da transação é o de antes do gesto.
-3. A ponte emite `transaction-committed` com `originatedByRuntime`; o editor de fora registra (`recordRuntimeTransaction`)
-   → desfazer + salvar. **Escopo de tela:** a edição recebe a MESMA marca de tela que uma edição do painel receberia
-   (`withResponsiveMetadata`); com a cópia só de desktop (T1), vale no desktop. Hoje o registro de edição vinda da
-   página não põe essa marca — alinhar faz parte desta entrega.
-4. Recusa do lote (validação mudou entre o ensaio e o fim): os valores de antes ficam, e a camada mostra a pílula com o
-   motivo.
+### 6.2 Ao soltar — o editor de fora confirma, pelo caminho do painel (r1 #1, #3, #4)
+1. No início: `iniciarGesto` guarda os valores de antes; a prévia escreve direto no elemento.
+2. Ao soltar: a prévia FICA na tela, e a ponte avisa o editor de fora com `overlay-gesture-ended {gestureId, elementId
+   alvo, mudancas:[{property, value}]}` (o alvo é o pai no `gap`).
+3. O editor de fora monta a edição pelo MESMO caminho de `applyStyle`/`applyResponsiveEdit` — tabela por tela com
+   `beforeEntry/afterEntry` reais por elemento e propriedade (o pai incluso), dono da animação, histórico encenado — num
+   ÚNICO `apply-transaction` com várias propriedades, levando o `gestureId`. **Escopo de tela:** o mesmo que o painel
+   decide para aquela edição na tela atual (hoje `shared`; com a cópia só de desktop da T1, Tablet/Mobile nem abrem) —
+   a camada nunca escolhe escopo.
+4. A ponte, ao receber o `apply-transaction` com `gestureId`, NO MESMO TURNO: devolve os valores de antes guardados e
+   aplica a transação (`applyAtomicTransaction`) — sem pintura entre os dois (sem piscar) e com `before` = o de antes do
+   gesto. A emissão usa `describedTransactionElement`: a seleção não muda (no `gap` continua o filho).
+5. Recusa (do editor de fora ou da ponte), cancelamento, troca de seleção/modo ou gesto órfão por mais de 10 s: a ponte
+   devolve os valores de antes, e a camada mostra a pílula com o motivo.
 
 ### 6.3 Desfazer, refazer, reabrir
 Pelo caminho existente: `rollback-transaction` devolve todas as propriedades do lote; ao reabrir, as edições salvas são
@@ -139,6 +159,11 @@ reaplicadas pelo replay de sempre. A camada só redesenha.
 - Clone animado (site com código vivo): o código do site pode reescrever o que foi arrastado; esta entrega NÃO traz as
   defesas de "reescrita pelo framework" do editor antigo (resíduo, §9). Na cópia editável não há código do site.
 - Zoom do canvas muda durante o arraste: não afeta a conta (px da página); só o desenho reescala.
+- **Borda da página (diferença assumida em relação ao antigo, r1 #7):** a camada mora dentro da página, então não
+  desenha fora dela (o antigo desenhava no editor de fora e podia passar da borda). Perto da borda: o rótulo "L × A" e a
+  pílula passam para DENTRO/abaixo da caixa; os quadradinhos são empurrados para ficarem inteiros e clicáveis; as faixas
+  de margem que caem fora mostram só a parte visível (rolar a página traz o resto). Elemento maior que a tela mantém os
+  quadradinhos nas bordas visíveis.
 - Seleção múltipla: fora (não existe hoje).
 
 ## 8. Testes
@@ -148,6 +173,12 @@ reaplicadas pelo replay de sempre. A camada só redesenha.
 - **Navegador real (Playwright, ponte real numa página de teste):** cada gesto produz UMA transação; Ctrl+Z volta tudo;
   reabrir reaplica; Esc devolve; a camada nunca aparece no que é salvo, na lista de camadas, em `describe` nem no
   clique; quadradinho apagado em propriedade animada e sumido na região travada; tamanho constante com escala 0,5 e 2.
+  Um teste por achado do Astra r1: (#1) soltar deixa o valor NOVO na tela e o desfazer volta ao de ANTES do gesto;
+  (#2) `width:100px; max-width:100px` → arrastar para 150 é aceito (sem falso conflito de prioridade); (#3) com a
+  largura já na tabela por tela, arrastar, salvar e reabrir mantém o valor novo; (#4) arrastar a guia de `gap` mantém a
+  seleção no filho na ponte E no painel; (#5) animação de `row-gap` no pai apaga a guia de `gap` daquele eixo;
+  (#6) Ctrl+Z com o foco dentro da página desfaz o gesto; (#7) elemento colado no topo mostra rótulo e quadradinhos
+  inteiros.
 - **Ao vivo:** a cópia do farmminerals no canvas — fotos lado a lado com o editor antigo no mesmo elemento, item por item
   de §5.2-§5.5; reabrir depois de salvar.
 - **Auditoria do Astra** na spec e no código antes de cada commit.
