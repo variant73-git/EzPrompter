@@ -1,0 +1,89 @@
+{
+ "passos": [
+  {
+   "nome": "editor aberto",
+   "escala": 0.8468468241887138
+  },
+  {
+   "nome": "titulo",
+   "texto": "For Your Crops. For the Planet.",
+   "largura": 408.015625,
+   "altura": 82.9375,
+   "pt": "0px",
+   "pl": "0px"
+  },
+  {
+   "nome": "caixa",
+   "noAlvo": true,
+   "estado": {
+    "caixaVisivel": true,
+    "caixa": {
+     "x": 842.890625,
+     "y": 394.38128662109375,
+     "width": 408.015625,
+     "height": 82.9375
+    },
+    "escala": 0.8468468468468469,
+    "guiasVisiveis": true,
+    "alcasApagadas": null,
+    "guias": [
+     "gap"
+    ],
+    "guiaAtiva": null,
+    "motivo": null
+   }
+  },
+  {
+   "nome": "alca leste",
+   "larguraAntes": 408.015625,
+   "larguraDepois": 348,
+   "motivo": null
+  },
+  {
+   "nome": "cartao",
+   "texto": "Zero emissionsWe skip energy-intensive processes entirely, c",
+   "largura": 294.890625,
+   "altura": 152.421875,
+   "pt": "15.36px",
+   "pl": "15.36px"
+  },
+  {
+   "nome": "guias",
+   "noAlvo": true,
+   "guias": [
+    "pt",
+    "pr",
+    "pb",
+    "pl"
+   ]
+  },
+  {
+   "nome": "shift",
+   "pt": "23px",
+   "pr": "23px",
+   "pb": "23px",
+   "pl": "23px"
+  },
+  {
+   "nome": "campo 24",
+   "pt": "24px"
+  },
+  {
+   "nome": "ctrl+z",
+   "pt": "23px"
+  },
+  {
+   "nome": "salvo",
+   "editorFechou": true,
+   "avisoDeErro": false
+  },
+  {
+   "nome": "reaberto",
+   "reaberto": {
+    "largura": 348
+   },
+   "esperado": 348
+  }
+ ],
+ "erros": []
+}

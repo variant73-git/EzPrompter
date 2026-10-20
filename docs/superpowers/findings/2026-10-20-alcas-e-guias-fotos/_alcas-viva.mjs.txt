@@ -1,0 +1,159 @@
+// Alças e guias (spec 2026-10-20) — prova AO VIVO no canvas: a cópia editável do farmminerals no editor nativo,
+// fotos de cada gesto + salvar e reabrir. Uso:
+//   node --env-file=.env.local _alcas-viva.mjs <board> <node> <pasta>
+// Grava no node de PROVA (só nele): a largura do título fica salva — é o que "reabrir → valores ficam" confere.
+import { neon } from '@neondatabase/serverless';
+import { chromium } from 'playwright-core';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+
+const [boardId, nodeId, pasta] = process.argv.slice(2);
+mkdirSync(pasta, { recursive: true });
+const { createToken } = await import(path.resolve('lib/auth.js'));
+const sql = neon(process.env.DATABASE_URL);
+const [user] = await sql`SELECT u.* FROM users u JOIN boards b ON b.user_id = u.id WHERE b.id = ${boardId}`;
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+await ctx.addCookies([{ name: 'uncraft_sess', value: encodeURIComponent(createToken(user)), domain: 'localhost', path: '/' }]);
+const page = await ctx.newPage();
+const erros = []; page.on('pageerror', (e) => erros.push(String(e.message).slice(0, 200)));
+const out = { passos: [] };
+const passo = (nome, dados) => { out.passos.push({ nome, ...dados }); console.log(nome, JSON.stringify(dados)); };
+const foto = (nome) => page.screenshot({ path: path.join(pasta, nome) });
+const espera = (ms) => page.waitForTimeout(ms);
+
+async function abrirEditor() {
+  await page.goto(`http://localhost:3030/canvas/${boardId}`, { waitUntil: 'domcontentloaded' });
+  const cnode = page.locator(`.cnode[data-node-id="${nodeId}"]`);
+  await cnode.waitFor({ timeout: 60_000 });
+  await cnode.click({ position: { x: 400, y: 300 } }); await espera(1500);
+  await page.locator('.canvas-inspector').getByRole('button', { name: 'Edit', exact: true }).first().click();
+  await page.locator('body.native-motion-editing').waitFor({ timeout: 120_000 });
+  for (let i = 0; i < 60; i += 1) {
+    for (const f of page.frames()) {
+      const ok = await f.evaluate(() => !!(window.__uncraftMotionBridge && window.__uncraftMotionBridge.overlay)).catch(() => false);
+      if (ok) { await espera(3000); return f; }
+    }
+    await espera(1000);
+  }
+  throw new Error('quadro do runtime com a camada não apareceu');
+}
+// coordenadas da página (dentro do quadro) → coordenadas da tela do canvas
+async function conversor(f) {
+  const caixa = await (await f.frameElement()).boundingBox();
+  const largura = await f.evaluate(() => innerWidth);
+  const escala = caixa.width / largura;
+  return { escala, caixa, tela: (pt) => ({ x: caixa.x + pt.x * escala, y: caixa.y + pt.y * escala }) };
+}
+// faixa do canvas que fica livre entre os painéis (camadas à esquerda, propriedades à direita, cabeçalho, linha do tempo)
+const BANDA = { x0: 260, x1: 1320, y0: 90, y1: 770 };
+// rola a página DENTRO do quadro até um candidato cair inteiro na faixa visível e marca o escolhido
+const escolher = (f, c, tipo) => f.evaluate(async ({ tipo, caixa, escala, banda }) => {
+  const candidatos = tipo === 'titulo'
+    ? [...document.querySelectorAll('h1,h2,h3')].filter((e) => e.getBoundingClientRect().width > 120 && e.textContent.trim().length > 4)
+    : [...document.querySelectorAll('div,section,article,li,a')].filter((e) => {
+      const cs = getComputedStyle(e); const r = e.getBoundingClientRect();
+      return parseFloat(cs.paddingTop) >= 8 && parseFloat(cs.paddingLeft) >= 8 && r.width > 120 && r.width < 700 && r.height > 40 && r.height < 500;
+    });
+  const tela = (x, y) => ({ x: caixa.x + x * escala, y: caixa.y + y * escala });
+  for (const el of candidatos) {
+    const r0 = el.getBoundingClientRect();
+    window.scrollBy(0, r0.top + r0.height / 2 - (430 - caixa.y) / escala);
+    await new Promise((ok) => setTimeout(ok, 350));
+    const r = el.getBoundingClientRect();
+    const a = tela(r.left, r.top); const b = tela(r.right, r.bottom);
+    if (a.x >= banda.x0 && b.x <= banda.x1 - 20 && a.y >= banda.y0 && b.y <= banda.y1) {
+      el.setAttribute('data-u-alcas-prova', tipo);
+      const cs = getComputedStyle(el);
+      return { texto: el.textContent.trim().slice(0, 60), largura: r.width, altura: r.height, pt: cs.paddingTop, pl: cs.paddingLeft };
+    }
+  }
+  return null;
+}, { tipo, caixa: c.caixa, escala: c.escala, banda: BANDA });
+// confere que a caixa da camada está sobre o alvo marcado
+const selecionouOAlvo = (f, tipo) => f.evaluate((t) => {
+  const r = document.querySelector(`[data-u-alcas-prova="${t}"]`).getBoundingClientRect();
+  const e = window.__uncraftMotionBridge.overlay.estado();
+  return !!e.caixa && Math.abs(e.caixa.width - r.width) < 2 && Math.abs(e.caixa.height - r.height) < 2;
+}, tipo);
+const centro = (f, qual, arg) => f.evaluate(([q, a]) => {
+  const g = window.__uncraftMotionBridge.overlay;
+  const n = q === 'alca' ? g.alcaParaTeste(a) : q === 'guia' ? g.guiaParaTeste(a) : document.querySelector(`[data-u-alcas-prova="${a}"]`);
+  const r = n.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2, top: r.top, width: r.width, height: r.height };
+}, [qual, arg]);
+async function arrastar(c, de, dxPagina, dyPagina, mods = []) {
+  const a = c.tela(de);
+  for (const m of mods) await page.keyboard.down(m);
+  await page.mouse.move(a.x, a.y); await page.mouse.down();
+  await page.mouse.move(a.x + dxPagina * c.escala, a.y + dyPagina * c.escala, { steps: 8 });
+  await page.mouse.up();
+  for (const m of mods) await page.keyboard.up(m);
+  await espera(800);
+}
+
+let f = await abrirEditor();
+let c = await conversor(f);
+passo('editor aberto', { escala: c.escala });
+
+// 1) caixa com 8 alças num título
+const titulo = await escolher(f, c, 'titulo');
+passo('titulo', titulo);
+let pt = c.tela(await centro(f, 'el', 'titulo'));
+await page.mouse.click(pt.x, pt.y); await espera(1200);
+await foto('1-novo-caixa-titulo.png');
+passo('caixa', { noAlvo: await selecionouOAlvo(f, 'titulo'), estado: await f.evaluate(() => window.__uncraftMotionBridge.overlay.estado()) });
+
+// 2) arrastar a alça leste +60 px da página
+const larguraAntes = await f.evaluate(() => document.querySelector('[data-u-alcas-prova="titulo"]').getBoundingClientRect().width);
+await arrastar(c, await centro(f, 'alca', 'e'), -60, 0);
+const larguraDepois = await f.evaluate(() => document.querySelector('[data-u-alcas-prova="titulo"]').getBoundingClientRect().width);
+await foto('2-novo-alca-leste.png');
+passo('alca leste', { larguraAntes, larguraDepois, motivo: (await f.evaluate(() => window.__uncraftMotionBridge.overlay.estado())).motivo });
+
+// 3) guias num cartão (elemento com padding visível)
+const cartao = await escolher(f, c, 'cartao');
+passo('cartao', cartao);
+if (cartao) {
+  const r = await centro(f, 'el', 'cartao');
+  pt = c.tela({ x: r.x, y: r.top + 4 });
+  await page.mouse.click(pt.x, pt.y); await espera(1200);
+  await foto('3-novo-guias-cartao.png');
+  const est = await f.evaluate(() => window.__uncraftMotionBridge.overlay.estado());
+  passo('guias', { noAlvo: await selecionouOAlvo(f, 'cartao'), guias: est.guias });
+  if (est.guias.includes('pt')) {
+    // Shift: os quatro lados juntos
+    await arrastar(c, await centro(f, 'guia', 'pt'), 0, 8, ['Shift']);
+    await foto('4-novo-shift-quatro-lados.png');
+    passo('shift', await f.evaluate(() => { const cs = getComputedStyle(document.querySelector('[data-u-alcas-prova="cartao"]')); return { pt: cs.paddingTop, pr: cs.paddingRight, pb: cs.paddingBottom, pl: cs.paddingLeft }; }));
+    // duplo clique no rótulo e digitar 24
+    const rotulo = await f.evaluate(() => { const w = window.__uncraftMotionBridge.overlay.guiaParaTeste('pt').querySelector('.u-guia-widget'); const r = w.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+    const pr = c.tela(rotulo);
+    await page.mouse.dblclick(pr.x, pr.y); await espera(400);
+    await page.keyboard.press('Meta+a'); await page.keyboard.type('24'); await espera(200);
+    await foto('5-novo-campo-digitando.png');
+    await page.keyboard.press('Enter'); await espera(900);
+    passo('campo 24', await f.evaluate(() => ({ pt: getComputedStyle(document.querySelector('[data-u-alcas-prova="cartao"]')).paddingTop })));
+    await foto('6-novo-campo-24.png');
+    // Ctrl+Z com o foco dentro da página
+    await page.keyboard.press('Control+z'); await espera(1200);
+    passo('ctrl+z', await f.evaluate(() => ({ pt: getComputedStyle(document.querySelector('[data-u-alcas-prova="cartao"]')).paddingTop })));
+    await foto('7-novo-depois-do-ctrl-z.png');
+  }
+}
+
+// 8) salvar e reabrir: o tamanho do título continua
+await page.getByRole('button', { name: 'Done', exact: true }).click(); await espera(5000);
+passo('salvo', { editorFechou: (await page.locator('body.native-motion-editing').count()) === 0, avisoDeErro: (await page.locator('body').innerText()).includes("couldn't be saved") });
+const textoTitulo = titulo && titulo.texto;
+f = await abrirEditor(); c = await conversor(f);
+const reaberto = await f.evaluate((t) => {
+  const h = [...document.querySelectorAll('h1,h2')].find((e) => e.textContent.trim().slice(0, 60) === t);
+  return h ? { largura: h.getBoundingClientRect().width } : null;
+}, textoTitulo);
+passo('reaberto', { reaberto, esperado: larguraDepois });
+await foto('8-novo-reaberto.png');
+
+out.erros = erros.slice(0, 8);
+writeFileSync(path.join(pasta, 'viva.json'), JSON.stringify(out, null, 1));
+await browser.close();

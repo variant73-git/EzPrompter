@@ -1,0 +1,63 @@
+// Alças e guias — o MESMO elemento no editor antigo (editor-core), para as fotos lado a lado. Serve o clone 1:1
+// offline do farmminerals com o editor antigo injetado (como lib/native-plane/layout-lock.integration.test.js).
+// Uso: node _alcas-antigo.mjs <pasta> "<texto do título>" "<começo do texto do cartão>"
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+import { chromium } from 'playwright-core';
+import { fullEditorTags } from './lib/motion-editor/native-clone-gateway.js';
+
+const [pasta, textoTitulo, classeCartao] = process.argv.slice(2);
+mkdirSync(pasta, { recursive: true });
+// a pasta da cópia (por padrão o clone 1:1 offline; para o MESMO elemento, a pasta assets/ do pacote da cópia do node)
+const SITE = path.resolve(process.env.ALCAS_SITE || path.join(process.env.HOME, 'Desktop/IA/Unspirit-Clone-1to1/site'));
+const EDITOR = path.resolve('../editor-core/src');
+const TIPOS = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.woff2': 'font/woff2', '.json': 'application/json', '.mp4': 'video/mp4' };
+const srv = createServer(async (req, res) => {
+  const u = new URL(req.url, 'http://x');
+  try {
+    if (u.pathname.startsWith('/editor-core/')) {
+      const corpo = await readFile(path.join(EDITOR, path.basename(u.pathname)));
+      res.writeHead(200, { 'content-type': TIPOS[path.extname(u.pathname)] || 'application/octet-stream' }); res.end(corpo); return;
+    }
+    const rel = decodeURIComponent(u.pathname === '/' ? '/index.html' : u.pathname);
+    const arq = path.join(SITE, path.normalize(rel));
+    if (!arq.startsWith(SITE + path.sep)) { res.writeHead(403); res.end(); return; }
+    let corpo = await readFile(arq);
+    if (rel === '/index.html') corpo = Buffer.from(String(corpo).replace('</body>', `${fullEditorTags()}</body>`));
+    res.writeHead(200, { 'content-type': TIPOS[path.extname(arq)] || 'application/octet-stream' }); res.end(corpo);
+  } catch { res.writeHead(404); res.end(); }
+});
+await new Promise((ok) => srv.listen(0, '127.0.0.1', ok));
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+await page.goto(`http://127.0.0.1:${srv.address().port}/`, { waitUntil: 'load' });
+await page.waitForSelector('#rb-editor-inspector', { state: 'attached', timeout: 30000 });
+await page.waitForTimeout(2500);
+const foto = (n) => page.screenshot({ path: path.join(pasta, n) });
+async function clicarEm(sel) {
+  const r = await page.evaluate((s) => {
+    const el = s.texto ? [...document.querySelectorAll('h1,h2,h3')].find((e) => e.textContent.replace(/\s+/g, ' ').trim().slice(0, 60) === s.texto)
+      : [...document.querySelectorAll('div,section,article,li,a')]
+        .filter((e) => e.textContent.replace(/\s+/g, ' ').trim().startsWith(s.cartao) && parseFloat(getComputedStyle(e).paddingTop) >= 8 && e.getBoundingClientRect().width > 0)
+        .sort((a, b) => a.getBoundingClientRect().width * a.getBoundingClientRect().height - b.getBoundingClientRect().width * b.getBoundingClientRect().height)[0];
+    if (!el) return null;
+    el.scrollIntoView({ block: 'center' });
+    const b = el.getBoundingClientRect(); return s.texto ? { x: b.left + b.width / 2, y: b.top + b.height / 2 } : { x: b.left + 5, y: b.bottom - 5 };
+  }, sel);
+  if (!r) return false;
+  await page.waitForTimeout(600);
+  await page.mouse.click(r.x, r.y); await page.waitForTimeout(900);
+  return true;
+}
+console.log('titulos', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('h1,h2,h3')].map((e) => e.textContent.replace(/\s+/g, ' ').trim().slice(0, 50)).slice(0, 12))));
+console.log('titulo', await clicarEm({ texto: textoTitulo }));
+await foto('1-antigo-caixa-titulo.png');
+if (classeCartao) {
+  console.log('cartao', await clicarEm({ cartao: classeCartao }));
+  await foto('3-antigo-guias-cartao.png');
+  const w = await page.evaluate(() => { const n = [...document.querySelectorAll('.rb-spacing-widget')].find((x) => getComputedStyle(x).display !== 'none' && x.getBoundingClientRect().width > 0); if (!n) return null; const r = n.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  if (w) { await page.mouse.dblclick(w.x, w.y); await page.waitForTimeout(400); await foto('5-antigo-campo.png'); await page.keyboard.press('Escape'); }
+}
+await browser.close(); srv.close();
