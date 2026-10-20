@@ -156,6 +156,12 @@ Com seleção: um laço por quadro (`requestAnimationFrame`) mede o selecionado,
    (`transaction-rejected`, código `gesture_inactive`), para o livro de transações do editor de fora fechar a entrada e
    não travar as próximas. Confirmar desarma o relógio de 10 s. Um `apply-transaction` sem `gestureId` segue o caminho
    de sempre (painel).
+7. **Nada passa por cima de um gesto vivo (Astra r3):** qualquer `rollback-transaction` (desfazer/refazer, de qualquer
+   origem: teclado na página, teclado ou botão no editor de fora) e qualquer `apply-transaction` SEM o `gestureId` que
+   chegue com um gesto `ativo` ou `aguardando` → a ponte PRIMEIRO cancela o gesto (para as prévias pendentes, devolve
+   os valores de antes, marca `cancelado`, invalida a confirmação) e só então executa a operação. No editor de fora,
+   desfazer/refazer também ficam bloqueados enquanto houver gesto `aguardando` (como já ficam com transação pendente).
+   Sem isso, cancelar depois de um Ctrl+Z devolvia o valor de uma edição já desfeita, sem histórico.
 
 ### 6.3 Desfazer, refazer, reabrir
 Pelo caminho existente: `rollback-transaction` devolve todas as propriedades do lote; ao reabrir, as edições salvas são
@@ -189,7 +195,8 @@ reaplicadas pelo replay de sempre. A camada só redesenha.
   (#6) Ctrl+Z com o foco dentro da página desfaz o gesto; (#7) elemento colado no topo mostra rótulo e quadradinhos
   inteiros. Astra r2: (#1) redimensionar largura E altura já presentes na tabela por tela, com o pai cortando — salvar e
   reabrir mantém as duas medidas e o pai sem corte; (#2) confirmação que chega DEPOIS do cancelamento (por tempo e por
-  troca de seleção) é recusada, nada reaparece, e a edição seguinte do painel passa normalmente.
+  troca de seleção) é recusada, nada reaparece, e a edição seguinte do painel passa normalmente. Astra r3: arrastar →
+  Ctrl+Z → Esc (e → soltar) → reabrir: a edição desfeita não reaparece e o histórico confere com a página.
 - **Ao vivo:** a cópia do farmminerals no canvas — fotos lado a lado com o editor antigo no mesmo elemento, item por item
   de §5.2-§5.5; reabrir depois de salvar.
 - **Auditoria do Astra** na spec e no código antes de cada commit.
