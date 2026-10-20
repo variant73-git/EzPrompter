@@ -135,11 +135,14 @@ Com seleção: um laço por quadro (`requestAnimationFrame`) mede o selecionado,
 
 ### 6.2 Ao soltar — o editor de fora confirma, pelo caminho do painel (r1 #1, #3, #4)
 1. No início: `iniciarGesto` guarda os valores de antes; a prévia escreve direto no elemento.
-2. Ao soltar: a prévia FICA na tela, e a ponte avisa o editor de fora com `overlay-gesture-ended {gestureId, elementId
-   alvo, mudancas:[{property, value}]}` (o alvo é o pai no `gap`).
-3. O editor de fora monta a edição pelo MESMO caminho de `applyStyle`/`applyResponsiveEdit` — tabela por tela com
-   `beforeEntry/afterEntry` reais por elemento e propriedade (o pai incluso), dono da animação, histórico encenado — num
-   ÚNICO `apply-transaction` com várias propriedades, levando o `gestureId`. **Escopo de tela:** o mesmo que o painel
+2. Ao soltar: a prévia FICA na tela, e a ponte avisa o editor de fora com `overlay-gesture-ended {gestureId,
+   mudancas:[{elementId, property, value}]}` — **cada mudança leva o SEU elemento** (o redimensionar pode tocar o filho E
+   o pai, ao liberar o corte; o `gap` toca só o pai; Astra r2 #1).
+3. O editor de fora monta a edição com um **montador de lote** novo, ao lado de `applyResponsiveEdit`: para CADA par
+   elemento × propriedade resolve sozinho a chave da tabela por tela, o `beforeEntry/afterEntry` real, o dono da
+   animação e a regra de tela — o `applyResponsiveEdit` de hoje usa `selected.id` e a marca de UMA propriedade para todos
+   os patches, e ao reabrir a altura voltaria ao valor antigo (r2 #1). O lote inteiro entra num ÚNICO `applyPatches` →
+   um `apply-transaction` com várias propriedades e elementos, levando o `gestureId`. **Escopo de tela:** o mesmo que o painel
    decide para aquela edição na tela atual (hoje `shared`; com a cópia só de desktop da T1, Tablet/Mobile nem abrem) —
    a camada nunca escolhe escopo.
 4. A ponte, ao receber o `apply-transaction` com `gestureId`, NO MESMO TURNO: devolve os valores de antes guardados e
@@ -147,6 +150,12 @@ Com seleção: um laço por quadro (`requestAnimationFrame`) mede o selecionado,
    gesto. A emissão usa `describedTransactionElement`: a seleção não muda (no `gap` continua o filho).
 5. Recusa (do editor de fora ou da ponte), cancelamento, troca de seleção/modo ou gesto órfão por mais de 10 s: a ponte
    devolve os valores de antes, e a camada mostra a pílula com o motivo.
+6. **Estados do gesto (r2 #2):** `ativo` → `aguardando` (depois de `overlay-gesture-ended`) → `confirmado` ou
+   `cancelado`, sem volta. A ponte só devolve-e-aplica um `apply-transaction` com `gestureId` se o gesto está em
+   `aguardando`; gesto `cancelado`, `expirado`, `confirmado` ou desconhecido → **recusa com o id da transação**
+   (`transaction-rejected`, código `gesture_inactive`), para o livro de transações do editor de fora fechar a entrada e
+   não travar as próximas. Confirmar desarma o relógio de 10 s. Um `apply-transaction` sem `gestureId` segue o caminho
+   de sempre (painel).
 
 ### 6.3 Desfazer, refazer, reabrir
 Pelo caminho existente: `rollback-transaction` devolve todas as propriedades do lote; ao reabrir, as edições salvas são
@@ -178,7 +187,9 @@ reaplicadas pelo replay de sempre. A camada só redesenha.
   largura já na tabela por tela, arrastar, salvar e reabrir mantém o valor novo; (#4) arrastar a guia de `gap` mantém a
   seleção no filho na ponte E no painel; (#5) animação de `row-gap` no pai apaga a guia de `gap` daquele eixo;
   (#6) Ctrl+Z com o foco dentro da página desfaz o gesto; (#7) elemento colado no topo mostra rótulo e quadradinhos
-  inteiros.
+  inteiros. Astra r2: (#1) redimensionar largura E altura já presentes na tabela por tela, com o pai cortando — salvar e
+  reabrir mantém as duas medidas e o pai sem corte; (#2) confirmação que chega DEPOIS do cancelamento (por tempo e por
+  troca de seleção) é recusada, nada reaparece, e a edição seguinte do painel passa normalmente.
 - **Ao vivo:** a cópia do farmminerals no canvas — fotos lado a lado com o editor antigo no mesmo elemento, item por item
   de §5.2-§5.5; reabrir depois de salvar.
 - **Auditoria do Astra** na spec e no código antes de cada commit.
