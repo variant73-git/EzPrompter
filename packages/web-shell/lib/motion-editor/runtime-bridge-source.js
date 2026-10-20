@@ -1,9 +1,14 @@
 /*
- * Source injected into an untrusted native-clone iframe. Keep this file free
- * of imports: getRuntimeBridgeSource serializes the function into the cloned
- * document, where it runs inside the iframe's opaque sandbox origin.
+ * Source injected into an untrusted native-clone iframe. NOTHING inside
+ * nativeMotionRuntimeBridge (nor instalarCamada, nor the overlay-math
+ * functions) may use an import or a module-level name: getRuntimeBridgeSource
+ * serializes them into the cloned document, where they run inside the iframe's
+ * sandbox. The module-level imports below only assemble that source text.
  */
-function nativeMotionRuntimeBridge() {
+import { instalarCamada } from './runtime-overlay-source.js';
+import * as OVERLAY_MATH from './overlay-math.js';
+
+function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
   const PROTOCOL = 'uncraft-motion-editor/v1';
   const PROTOCOL_V2 = 'uncraft-motion-editor/v2';
   const SUPPORTED_PROTOCOLS = [PROTOCOL_V2, PROTOCOL];
@@ -48,6 +53,12 @@ function nativeMotionRuntimeBridge() {
   const committedTransactions = new Map();
   const pendingUploads = new Map(); // ponte de upload do editor completo (Task 12)
   const activeGestures = new Map();
+  // Camada de alças e guias (spec 2026-10-20 §4): instalada no boot. `ehNossoRef.fn` diz se um nó é dela — todo
+  // leitor da página (escolha de elemento, inventário, perfil) e todo handler de documento pula o que é da camada.
+  let camada = null;
+  const ehNossoRef = { fn: () => false };
+  const ouvintesDaCamada = [];
+  function notificarCamada() { ouvintesDaCamada.forEach((cb) => { try { cb(); } catch (_) { /* a camada nunca derruba a ponte */ } }); }
   const SELECTABLE = [
     '[data-w-id]', '[data-wf-target]',
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'blockquote',
@@ -6215,7 +6226,7 @@ function nativeMotionRuntimeBridge() {
   function collectDocumentProfile() {
     const colorCounts = new Map();
     const fontCounts = new Map();
-    const elements = Array.from(document.querySelectorAll('body *')).slice(0, 1400);
+    const elements = Array.from(document.querySelectorAll('body *')).filter((el) => !ehNossoRef.fn(el)).slice(0, 1400);
     const addColor = (value) => {
       const normalized = String(value || '').trim();
       if (!normalized || normalized === 'rgba(0, 0, 0, 0)' || normalized === 'transparent') return;
@@ -6286,7 +6297,7 @@ function nativeMotionRuntimeBridge() {
         source: element.getAttribute('data-src') || '', property: 'data-src',
       });
     });
-    Array.from(document.querySelectorAll('body *')).slice(0, 1400).forEach((element, index) => {
+    Array.from(document.querySelectorAll('body *')).filter((el) => !ehNossoRef.fn(el)).slice(0, 1400).forEach((element, index) => {
       const background = getComputedStyle(element).backgroundImage;
       if (!background || background === 'none') return;
       for (const match of background.matchAll(/url\(["']?([^"')]+)["']?\)/g)) {
@@ -6921,6 +6932,7 @@ function nativeMotionRuntimeBridge() {
   }
   function resolveVisibleTarget(event) {
     const target = event.target;
+    if (ehNossoRef.fn(target)) return null;
     if (!(target instanceof Element) || !isSelectionGhost(target)) return target;
     const x = event.clientX;
     const y = event.clientY;
@@ -6937,6 +6949,7 @@ function nativeMotionRuntimeBridge() {
 
   function chooseElement(target, point) {
     if (!(target instanceof Element)) return null;
+    if (ehNossoRef.fn(target)) return null;
     if (point) {
       // If the visible text actually under the cursor is a pointer-events:none
       // element (invisible to elementFromPoint), select it instead of whatever
@@ -7154,6 +7167,7 @@ function nativeMotionRuntimeBridge() {
     const state = textEditState;
     if (!state) return;
     textEditState = null;
+    notificarCamada();
     const element = state.element;
     const editable = state.editable || element;
     const value = rawText(editable);
@@ -7260,6 +7274,7 @@ function nativeMotionRuntimeBridge() {
       selectedId = null;
       emitEditState('navigating', { loop: false });
       emit('selection-changed', { element: null });
+      notificarCamada();
       return;
     }
     const nextId = ensureElementId(element);
@@ -7269,6 +7284,7 @@ function nativeMotionRuntimeBridge() {
     emitEditState('selection-pending', { loop: false });
     emit('selection-changed', { element: describe(element) });
     settleSelection(element);
+    notificarCamada();
   }
 
   function hover(element) {
@@ -7278,6 +7294,7 @@ function nativeMotionRuntimeBridge() {
     if (hoveredElement && ensureElementId(hoveredElement) !== selectedId) {
       hoveredElement.setAttribute('data-uncraft-hovered', 'true');
     }
+    notificarCamada();
   }
 
   function refreshRuntime() {
@@ -8701,6 +8718,9 @@ function nativeMotionRuntimeBridge() {
     } else if (message.type === 'set-mode') {
       if (payload.mode === 'preview') enterPreviewMode();
       else leavePreviewMode();
+      notificarCamada();
+    } else if (message.type === 'set-overlay-scale') {
+      camada?.definirEscala(Number(payload.scale) || 1);
     } else if (message.type === 'begin-scrub') {
       if (mode !== 'edit') return;
       scrubActive = true;
@@ -8768,12 +8788,12 @@ function nativeMotionRuntimeBridge() {
     const style = document.createElement('style');
     style.dataset.uncraftRuntimeBridge = 'true';
     style.textContent = `
-      html[data-uncraft-editor-mode="edit"] [data-uncraft-selected="true"] {
+      html:not([data-uncraft-overlay-ativa])[data-uncraft-editor-mode="edit"] [data-uncraft-selected="true"] {
         outline: 2px solid #2966ea !important;
         outline-offset: 2px !important;
         cursor: default !important;
       }
-      html[data-uncraft-editor-mode="edit"] [data-uncraft-hovered="true"] {
+      html:not([data-uncraft-overlay-ativa])[data-uncraft-editor-mode="edit"] [data-uncraft-hovered="true"] {
         outline: 1px solid rgba(41, 102, 234, 0.82) !important;
         outline-offset: 1px !important;
         cursor: default !important;
@@ -8833,12 +8853,34 @@ function nativeMotionRuntimeBridge() {
     });
   }
 
+  function ponteDaCamada() {
+    return {
+      doc: document,
+      selecionado: () => (selectedId ? findElement(selectedId) : null),
+      passando: () => hoveredElement || null,
+      aoMudar: (cb) => { if (typeof cb === 'function') ouvintesDaCamada.push(cb); },
+      modo: () => mode,
+      editandoTexto: () => !!textEditState,
+      travado: (el) => !!el && layoutTravado(el),
+      idDe: (el) => ensureElementId(el),
+      // clique que atravessa uma guia: o que está sob o ponto, pulando a camada (spec §4.2)
+      selecionarEm: (x, y) => {
+        if (typeof document.elementsFromPoint !== 'function') return;
+        const alvo = document.elementsFromPoint(x, y).find((n) => !ehNossoRef.fn(n) && n !== document.documentElement);
+        const el = alvo ? chooseElement(alvo, { x, y }) : null;
+        if (el) select(el);
+      },
+      elegivel: () => ({ ok: false, motivo: 'not_ready' }),
+    };
+  }
+
   function boot() {
     installStyles();
     document.documentElement.dataset.uncraftEditorMode = mode;
     document.documentElement.dataset.uncraftEditorTool = tool;
     document.documentElement.dataset.uncraftEditState = editState;
     on(document, 'pointermove', (event) => {
+      if (ehNossoRef.fn(event.target)) return;
       if (dragState) {
         const dx = Math.round(event.clientX - dragState.startX);
         const dy = Math.round(event.clientY - dragState.startY);
@@ -8856,6 +8898,7 @@ function nativeMotionRuntimeBridge() {
     }, true);
     on(document, 'pointerleave', () => hover(null), true);
     on(document, 'pointerdown', (event) => {
+      if (ehNossoRef.fn(event.target)) return;
       if (mode !== 'edit' || tool !== 'move' || event.button !== 0) return;
       if (navegacaoPermitida() && alvoDeNavegacao(event)) return;   // idem: o link vence
       const element = chooseElement(resolveVisibleTarget(event), { x: event.clientX, y: event.clientY });
@@ -8888,6 +8931,7 @@ function nativeMotionRuntimeBridge() {
       element.setPointerCapture?.(event.pointerId);
     }, true);
     on(document, 'pointerup', (event) => {
+      if (ehNossoRef.fn(event.target)) return;
       if (!dragState) return;
       const finished = dragState;
       dragState = null;
@@ -8939,6 +8983,7 @@ function nativeMotionRuntimeBridge() {
       }
     }, true);
     on(document, 'click', (event) => {
+      if (ehNossoRef.fn(event.target)) return;
       if (mode !== 'edit') return;
       // ⭐ Navegação ligada: o clique num link SEGUE o link em vez de selecionar. É a
       // resposta do dono à pergunta de comportamento — e é por isso que o tooltip da
@@ -8962,6 +9007,7 @@ function nativeMotionRuntimeBridge() {
       select(element);
     }, true);
     on(document, 'dblclick', (event) => {
+      if (ehNossoRef.fn(event.target)) return;
       if (mode !== 'edit' || tool !== 'select') return;
       const element = chooseElement(resolveVisibleTarget(event), { x: event.clientX, y: event.clientY });
       if (!element || !isEditableText(element)) return;
@@ -9035,6 +9081,18 @@ function nativeMotionRuntimeBridge() {
     // double gateway injection) must REPLACE the previous one — two live bridges
     // handle every command twice: duplicated patches, duplicated playback.
     try { window.__uncraftMotionBridge?.teardown?.(); } catch (_) {}
+    // a camada entra DEPOIS do desmonte da instância anterior (reinjeção) — Astra (Task 4) #2
+    if (typeof instalarCamadaFn === 'function' && M) {
+      try {
+        camada = instalarCamadaFn(ponteDaCamada(), M);
+        const raiz = camada && camada.raiz;
+        ehNossoRef.fn = (no) => {
+          if (!raiz || !no) return false;
+          if (no === raiz) return true;
+          try { return typeof raiz.contains === 'function' && raiz.contains(no); } catch (_) { return false; }
+        };
+      } catch (_) { camada = null; }
+    }
     document.documentElement.dataset.uncraftEditorMode = mode;
     document.documentElement.dataset.uncraftEditorTool = tool;
     document.documentElement.dataset.uncraftEditState = editState;
@@ -9094,7 +9152,10 @@ function nativeMotionRuntimeBridge() {
       });
     }, 1000);
     window.__uncraftMotionBridge = {
+      overlay: camada ? { estado: () => camada.estado() } : null,
       teardown() {
+        try { camada?.destruir(); } catch (_) { /* a camada nunca derruba o desmonte */ }
+        camada = null;
         releaseEditState();
         collapseOverrideChannelsForTeardown();
         activeGestures.forEach((gesture) => {
@@ -9560,6 +9621,10 @@ function nativeMotionRuntimeBridge() {
   else window.addEventListener('load', boot, { once: true });
 }
 
+// As contas da camada entram por nome: cada função de overlay-math.js é autossuficiente (o teste "serializável" garante).
+const FUNCOES_DA_CAMADA = ['resizeChanges', 'unlockChanges', 'guideAxis', 'guideChanges', 'cornerChanges', 'parseGuideInput', 'nudgeValue', 'placeControls'];
+
 export function getRuntimeBridgeSource() {
-  return `;(${nativeMotionRuntimeBridge.toString()})();`;
+  const contas = FUNCOES_DA_CAMADA.map((nome) => `${nome}: (${OVERLAY_MATH[nome].toString()})`).join(',\n');
+  return `;(function(){ const M = {${contas}}; const instalar = (${instalarCamada.toString()}); (${nativeMotionRuntimeBridge.toString()})(instalar, M); })();`;
 }
