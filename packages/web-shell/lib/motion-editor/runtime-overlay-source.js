@@ -125,6 +125,7 @@ export function instalarCamada(ponte, M) {
     priority_conflict: 'The site forces this value',
     layout_controlled: "This element's size is set by its layout",
     gesture_busy: 'Saving\u2026',
+    canceled: 'Change canceled',
     no_element: 'This element is no longer on the page',
     transaction_rejected: "This change couldn't be applied",
     timeout: "This change couldn't be saved",
@@ -283,8 +284,11 @@ export function instalarCamada(ponte, M) {
   // Um arraste por vez, preso ao ponteiro que o começou. Cancelamento do ponteiro, perda de captura, Esc, perda de
   // foco e desmonte da camada passam pela MESMA limpeza, segura de chamar mais de uma vez (Astra, Task 8).
   let arrasteAtivo = null;
-  function arrastar(ev, alvoCaptura, { limiar, aoComecar, aoMover, aoSoltar, aoCancelar }) {
+  function arrastar(ev, alvoCaptura, { limiar, aoComecar, aoMover, aoSoltar, aoCancelar, idDoGesto }) {
     if (arrasteAtivo) arrasteAtivo.cancelar('superseded');
+    // no canvas a página é um quadro: com o foco do teclado no painel de fora (seleção pelas camadas, inspector), o
+    // Esc iria para fora e não cancelaria — o arraste traz o foco para cá (revisão final do ramo #2)
+    try { if (typeof doc.hasFocus === 'function' && !doc.hasFocus()) win.focus(); } catch (_) { /* sem foco */ }
     const id = ev.pointerId;
     const sx = ev.clientX;
     const sy = ev.clientY;
@@ -327,7 +331,7 @@ export function instalarCamada(ponte, M) {
     function cancelado(e) { if (doPonteiro(e)) cancelar('pointer-canceled'); }
     function esc(e) { if (e.key === 'Escape' && comecou) { e.preventDefault(); e.stopPropagation(); cancelar('escape'); } }
     function perdeuFoco() { cancelar('blur'); }
-    const controle = { cancelar };
+    const controle = { cancelar, idDoGesto: () => (typeof idDoGesto === 'function' ? idDoGesto() : null) };
     arrasteAtivo = controle;
     try { if (id != null) alvoCaptura.setPointerCapture(id); } catch (_) { /* sem captura (jsdom) */ }
     doc.addEventListener('pointermove', mover, true);
@@ -381,6 +385,7 @@ export function instalarCamada(ponte, M) {
         redesenhar();
       },
       aoCancelar(motivo) { if (gesto) ponte.cancelarGesto(gesto, motivo); redesenhar(); },
+      idDoGesto: () => gesto,
     });
   }));
 
@@ -417,6 +422,7 @@ export function instalarCamada(ponte, M) {
         redesenhar();
       },
       aoCancelar(motivo) { if (aoFim) aoFim(); if (gesto) ponte.cancelarGesto(gesto, motivo); redesenhar(); },
+      idDoGesto: () => gesto,
     });
   }
 
@@ -660,7 +666,17 @@ export function instalarCamada(ponte, M) {
   }
   function acordar() { if (!quadro && !destruida) quadro = win.requestAnimationFrame(laco); }
 
-  ponte.aoMudar(() => {
+  // Cancelamento que vem da ponte ou do editor de fora (spec §6.2.5): o arraste daquele gesto termina aqui também, e
+  // o motivo vira aviso quando não foi o próprio usuário (Esc, perda de foco) nem a camada (que já avisou)
+  const AVISO_DO_CANCELAMENTO = { timeout: 'timeout', transaction_rejected: 'transaction_rejected', host_refused: 'transaction_rejected', computed_scope: 'transaction_rejected', 'page-input': 'canceled', 'panel-preview': 'canceled', 'editor-commit': 'canceled', resize: 'canceled' };
+  function aoCancelarDeFora(evento) {
+    if (arrasteAtivo && arrasteAtivo.idDoGesto() === evento.gestureId) arrasteAtivo.cancelar(evento.motivo);
+    const motivo = String(evento.motivo || '');
+    const aviso = AVISO_DO_CANCELAMENTO[motivo] || (motivo.indexOf('host:') === 0 ? 'canceled' : null);
+    if (aviso) mostrarMotivo(aviso, ultimaCaixa ? { x: ultimaCaixa.x + 8, y: ultimaCaixa.y + 8 } : null);
+  }
+  ponte.aoMudar((evento) => {
+    if (evento && evento.tipo === 'gesto-cancelado') aoCancelarDeFora(evento);
     if (campoAberto && ponte.selecionado() !== campoAberto.el) fecharCampo();
     redesenhar(); acordar(); marcarDrenagem();
   });
@@ -678,7 +694,7 @@ export function instalarCamada(ponte, M) {
       redesenhar();
     },
     alternarGuias() { guiasVisiveis = !guiasVisiveis; redesenhar(); },
-    estado() { return { caixaVisivel: selBox.style.display === 'block', caixa: ultimaCaixa, escala, guiasVisiveis, alcasApagadas, guias: guiasDesenhadas.slice(), guiaAtiva, motivo: pill.style.display === 'block' ? pill.textContent : null }; },
+    estado() { return { caixaVisivel: selBox.style.display === 'block', caixa: ultimaCaixa, escala, guiasVisiveis, alcasApagadas, guias: guiasDesenhadas.slice(), guiaAtiva, motivo: pill.style.display === 'block' ? pill.textContent : null, arrastando: !!arrasteAtivo }; },
     ganchosDeTeste: { alcaParaTeste: (d) => handles[d], guiaParaTeste: (k) => guias[k], cantoParaTeste: (c) => cantos[c], campoParaTeste: () => (campoAberto ? campoAberto.input : null), rotuloParaTeste: () => selLabel, caixaParaTeste: () => selBox },
     destruir() {
       if (arrasteAtivo) arrasteAtivo.cancelar('teardown');

@@ -58,7 +58,7 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
   let camada = null;
   const ehNossoRef = { fn: () => false };
   const ouvintesDaCamada = [];
-  function notificarCamada() { ouvintesDaCamada.forEach((cb) => { try { cb(); } catch (_) { /* a camada nunca derruba a ponte */ } }); }
+  function notificarCamada(evento) { ouvintesDaCamada.forEach((cb) => { try { cb(evento); } catch (_) { /* a camada nunca derruba a ponte */ } }); }
   let ponteAtual = null;
 
   // Gestos da camada (spec §6.2): ativo → aguardando → confirmado | cancelado, sem volta. No máximo UM vivo (§6.2.7).
@@ -275,7 +275,7 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
     devolverAntesSemAnimar(g);
     encerrarGesto(g, 'cancelado');
     emit('overlay-gesture-canceled', { gestureId: id, reason: motivo }, { protocol: PROTOCOL_V2 });
-    notificarCamada();
+    notificarCamada({ tipo: 'gesto-cancelado', gestureId: id, motivo });
   }
   function aplicarGestoDaCamada(message, payload) {
     const g = gestosDaCamada.get(payload.gestureId);
@@ -289,12 +289,14 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
     // `aplicando` já não é vivo: a própria aplicação dispara `resize` (refreshRuntime avisa as animações) e a regra
     // única cancelaria o gesto no meio, devolvendo o antes por cima do valor aplicado
     encerrarGesto(g, 'aplicando');
-    if (commitTransaction(message, payload.transaction, 'apply')) g.estado = 'confirmado';
-    else {
+    if (commitTransaction(message, payload.transaction, 'apply')) {
+      g.estado = 'confirmado';
+      notificarCamada();
+    } else {
       g.estado = 'cancelado';
       emit('overlay-gesture-canceled', { gestureId: g.id, reason: 'transaction_rejected' }, { protocol: PROTOCOL_V2 });
+      notificarCamada({ tipo: 'gesto-cancelado', gestureId: g.id, motivo: 'transaction_rejected' });
     }
-    notificarCamada();
   }
   const SELECTABLE = [
     '[data-w-id]', '[data-wf-target]',
@@ -9399,15 +9401,28 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
         }
       }, 120);
     };
-    on(window, 'scroll', () => {
-      if (gestoVivo()) cancelarGestoDaCamada(gestoVivoId, 'scroll');
+    const aoRolar = () => {
       if (mode === 'edit' && !scrubActive) {
         restoreScopedSettlement();
         emitEditState('navigating', { loop: false });
       }
       replayCrossedAnimations();
       scheduleViewportMotion();
+    };
+    // Rolagem com gesto vivo NÃO cancela (spec §6.2.7: o tocador fica parado, sem repetir por rolagem): os escritores
+    // dela esperam o gesto terminar. Encolher o último elemento encurta a página e o navegador corrige a rolagem sozinho
+    // — cancelar ali matava o gesto no meio, sem aviso (revisão final do ramo #1).
+    let rolagemAdiada = false;
+    on(window, 'scroll', () => {
+      if (gestoVivo()) { rolagemAdiada = true; return; }
+      aoRolar();
     }, { passive: true });
+    ouvintesDaCamada.push(() => {
+      if (!rolagemAdiada || gestoVivo()) return;
+      rolagemAdiada = false;
+      // depois do turno da confirmação (o aviso vem de dentro dela): nada escreve entre devolver e aplicar
+      setTimeout(() => { if (gestoVivo()) rolagemAdiada = true; else aoRolar(); }, 0);
+    });
     on(window, 'resize', () => {
       if (gestoVivo()) cancelarGestoDaCamada(gestoVivoId, 'resize');
       // Reveal points are functions of viewport height — a resize re-derives

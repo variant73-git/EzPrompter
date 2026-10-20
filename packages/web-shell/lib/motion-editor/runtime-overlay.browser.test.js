@@ -23,6 +23,11 @@ beforeAll(async () => {
       res.writeHead(200, { 'content-type': 'text/javascript' }); res.end(await readFile(GSAP)); return;
     }
     res.writeHead(200, { 'content-type': 'text/html' });
+    if (u.pathname.startsWith('/fora/')) {
+      // o canvas: a página fica num quadro, e o foco do teclado pode estar fora dele (painel, inspector)
+      res.end(`<!doctype html><html><body style="margin:0"><input id="campo-host" style="width:200px"><iframe id="quadro" src="/${u.pathname.slice(6)}" style="border:0;width:900px;height:600px;display:block"></iframe></body></html>`);
+      return;
+    }
     res.end(paginas.get(u.pathname.slice(1)) || '<!doctype html><html><body></body></html>');
   });
   await new Promise((ok) => srv.listen(0, '127.0.0.1', ok)); porta = srv.address().port;
@@ -41,11 +46,12 @@ const HARNESS = `window.__H = (() => {
     runtimeSessionId: SESSION, runtimeFingerprint: 'sha256:alcas', sessionNonce: NONCE });
   document.head.appendChild(config);
   window.postMessage = (m) => messages.push(JSON.parse(JSON.stringify(m)));
+  try { window.parent.postMessage = window.postMessage; } catch (_) {}   // dentro de um quadro, a ponte fala com o pai
   window.eval(window.__BRIDGE_SRC);
   generation = messages.filter((m) => m.type === 'runtime-ready').pop().payload.runtimeGeneration;
   const enviar = (protocol, type, payload) => {
     const mark = messages.length;
-    window.dispatchEvent(new MessageEvent('message', { source: window, origin: ORIGIN, data: {
+    window.dispatchEvent(new MessageEvent('message', { source: window.parent, origin: ORIGIN, data: {
       protocol, protocolVersion: protocol, supportedProtocols: [V2, V1], source: 'host', type,
       sessionNonce: NONCE, requestId: 'alcas-' + (seq += 1), runtimeGeneration: generation,
       bundleId: BUNDLE, sessionId: SESSION, payload } }));
@@ -73,6 +79,19 @@ async function abrir(corpo, { head = '', viewport = { width: 1000, height: 700 }
   await p.evaluate((src) => { window.__BRIDGE_SRC = src; }, getRuntimeBridgeSource());
   await p.evaluate(HARNESS);
   return p;
+}
+// a mesma página, mas dentro de um quadro de uma página de fora (como no canvas); devolve { p, f }
+async function abrirNoQuadro(corpo) {
+  const nome = `p${paginas.size + 1}`;
+  paginas.set(nome, `<!doctype html><html><head><style>body{margin:0;padding:40px;font:16px sans-serif}</style></head><body>${corpo}</body></html>`);
+  const p = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+  abertas.push(p);
+  await p.goto(`http://127.0.0.1:${porta}/fora/${nome}`);
+  const f = p.frames().find((fr) => fr !== p.mainFrame() && fr.url().endsWith(`/${nome}`));
+  await f.waitForLoadState('load');
+  await f.evaluate((src) => { window.__BRIDGE_SRC = src; }, getRuntimeBridgeSource());
+  await f.evaluate(HARNESS);
+  return { p, f };
 }
 const selecionar = (p, elementId) => p.evaluate((id) => window.__H.send('select-element', { elementId: id }), elementId);
 const ultimo = (p, tipo) => p.evaluate((t) => window.__H.ultimo(t), tipo);
@@ -297,6 +316,37 @@ describe('alças e guias — navegador real', () => {
       expect((await ultimo(p, 'selection-changed')).element.id, k).toBe('u-a');
       await p.keyboard.press('Escape');
     }
+  });
+
+  it('revisão final #1: encolher o último elemento com a página rolada até o fim não cancela o gesto', async () => {
+    const p = await abrir(`<div style="height:1500px"></div>${caixa('a', 'width:300px;height:200px;background:#ccc')}`);
+    await p.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await quadro(p);
+    await selecionar(p, 'u-a');
+    await quadro(p);
+    await arrastar(p, await retangulo(p, 'alca', 's'), 0, -80);
+    expect((await todos(p, 'overlay-gesture-canceled')).map((c) => c.reason)).toEqual([]);
+    const fim = await ultimo(p, 'overlay-gesture-ended');
+    expect(fim && fim.changes.find((c) => c.property === 'height').value).toBe('120px');
+    const { resp } = await confirmar(p);
+    expect(resp.some((m) => m.type === 'transaction-committed')).toBe(true);
+  });
+
+  it('revisão final #2: com o foco do teclado FORA do quadro, Esc no meio do arraste cancela e devolve', async () => {
+    const { p, f } = await abrirNoQuadro(caixa('a', 'width:300px;height:200px;background:#ccc'));
+    await p.focus('#campo-host');
+    await f.evaluate(() => window.__H.send('select-element', { elementId: 'u-a' }));
+    await f.evaluate(() => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok))));
+    const h = await f.evaluate(() => { const r = window.__uncraftMotionBridge.overlay.alcaParaTeste('e').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+    const q = await p.evaluate(() => { const r = document.getElementById('quadro').getBoundingClientRect(); return { x: r.left, y: r.top }; });
+    await p.mouse.move(q.x + h.x, q.y + h.y); await p.mouse.down();
+    await p.mouse.move(q.x + h.x + 60, q.y + h.y, { steps: 6 });
+    expect(await f.evaluate(() => document.getElementById('a').getBoundingClientRect().width)).toBe(360);
+    await p.keyboard.press('Escape');
+    expect(await f.evaluate(() => document.getElementById('a').getBoundingClientRect().width)).toBe(300);
+    await p.mouse.up();
+    expect(await f.evaluate(() => window.__H.todos('overlay-gesture-ended'))).toHaveLength(0);
+    expect((await f.evaluate(() => window.__H.todos('overlay-gesture-canceled'))).map((c) => c.reason)).toEqual(['escape']);
   });
 
   it('escala do canvas 0,5 e 2 → a alça mede 12 px na tela', async () => {

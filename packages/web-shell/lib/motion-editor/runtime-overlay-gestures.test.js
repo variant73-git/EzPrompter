@@ -1,6 +1,6 @@
 // Gestos da camada de alças e guias com a ponte real (jsdom; o navegador real fica na etapa 11 do plano).
 // Spec 2026-10-20 §5.2-§5.3; paridade com packages/editor-core/src/editor.js.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MOTION_EDITOR_PROTOCOL, MOTION_EDITOR_PROTOCOL_V2, SUPPORTED_MOTION_EDITOR_PROTOCOLS, commandV2 } from './protocol.js';
 import { getRuntimeBridgeSource } from './runtime-bridge-source.js';
 import { buildOverlayBatch } from './overlay-batch.js';
@@ -324,5 +324,54 @@ describe('campo de digitar, setas e tecla G (spec §5.3)', () => {
     tecla(campo, 'ArrowDown');
     expect(ganchos().estado().guiasVisiveis).toBe(true);
     expect(fins()).toHaveLength(0);
+  });
+});
+
+// Revisão final do ramo #3: cancelamento e recusa que vêm da ponte ou do editor de fora chegam ao aviso, e a camada
+// encerra o arraste em vez de seguir "arrastando" um gesto morto (spec §6.2.5).
+describe('cancelamento de fora chega à camada', () => {
+  let rt; afterEach(() => { rt?.restore(); vi.useRealTimers(); });
+  const ganchos = () => window.__uncraftMotionBridge.overlay;
+  const fins = () => rt.messages.filter((m) => m.type === 'overlay-gesture-ended');
+  function montar() {
+    rt = boot();
+    caixaViva(document.getElementById('a'), 10, 10);
+    rt.send('select-element', { elementId: 'u-a' });
+  }
+  it('um comando do editor no meio do arraste encerra o arraste e avisa', () => {
+    montar();
+    ponteiro(ganchos().alcaParaTeste('e'), 'pointerdown', 210, 60);
+    ponteiro(document, 'pointermove', 250, 60);
+    expect(ganchos().estado().arrastando).toBe(true);
+    rt.send('set-mode', { mode: 'edit' });
+    expect(ganchos().estado().arrastando).toBe(false);
+    expect(ganchos().estado().motivo).toBe('Change canceled');
+    ponteiro(document, 'pointerup', 270, 60);
+    expect(fins()).toHaveLength(0);
+  });
+  it('recusa do editor de fora durante a espera mostra o motivo', () => {
+    montar();
+    ponteiro(ganchos().alcaParaTeste('e'), 'pointerdown', 210, 60);
+    ponteiro(document, 'pointermove', 250, 60);
+    ponteiro(document, 'pointerup', 250, 60);
+    rt.send('overlay-gesture-cancel', { gestureId: fins()[0].payload.gestureId, reason: 'computed_scope' });
+    expect(ganchos().estado().motivo).toBe("This change couldn't be applied");
+  });
+  it('tempo esgotado sem confirmação mostra o motivo', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    montar();
+    ponteiro(ganchos().alcaParaTeste('e'), 'pointerdown', 210, 60);
+    ponteiro(document, 'pointermove', 250, 60);
+    ponteiro(document, 'pointerup', 250, 60);
+    vi.advanceTimersByTime(10001);
+    expect(ganchos().estado().motivo).toBe("This change couldn't be saved");
+  });
+  it('Esc do próprio usuário não mostra aviso', () => {
+    montar();
+    ponteiro(ganchos().alcaParaTeste('e'), 'pointerdown', 210, 60);
+    ponteiro(document, 'pointermove', 250, 60);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(ganchos().estado().motivo).toBeNull();
+    expect(ganchos().estado().arrastando).toBe(false);
   });
 });
