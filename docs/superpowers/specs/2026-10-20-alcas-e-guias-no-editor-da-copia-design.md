@@ -156,12 +156,19 @@ Com seleção: um laço por quadro (`requestAnimationFrame`) mede o selecionado,
    (`transaction-rejected`, código `gesture_inactive`), para o livro de transações do editor de fora fechar a entrada e
    não travar as próximas. Confirmar desarma o relógio de 10 s. Um `apply-transaction` sem `gestureId` segue o caminho
    de sempre (painel).
-7. **Nada passa por cima de um gesto vivo (Astra r3):** qualquer `rollback-transaction` (desfazer/refazer, de qualquer
-   origem: teclado na página, teclado ou botão no editor de fora) e qualquer `apply-transaction` SEM o `gestureId` que
-   chegue com um gesto `ativo` ou `aguardando` → a ponte PRIMEIRO cancela o gesto (para as prévias pendentes, devolve
-   os valores de antes, marca `cancelado`, invalida a confirmação) e só então executa a operação. No editor de fora,
-   desfazer/refazer também ficam bloqueados enquanto houver gesto `aguardando` (como já ficam com transação pendente).
-   Sem isso, cancelar depois de um Ctrl+Z devolvia o valor de uma edição já desfeita, sem histórico.
+7. **REGRA ÚNICA — um gesto vivo por vez, e nada mexe na página por cima dele** (Astra r2 #2, r3 e r4 eram casos da
+   mesma regra). Na ponte existe **no máximo UM gesto** em `ativo` ou `aguardando`. Tudo o que escreve estilo inline na
+   página é serializado em relação a ele:
+   - **novo gesto** (outro quadradinho, guia, seta, campo de digitar) com um gesto vivo → **não começa**: quadradinhos e
+     guias ficam desligados ("salvando…") até o vivo virar `confirmado` ou `cancelado`, e nenhum valor de antes é
+     capturado nesse meio tempo;
+   - **desfazer/refazer** (`rollback-transaction`, de qualquer origem), **edição do painel** (`apply-transaction` sem o
+     `gestureId`), **replay** ao reabrir/trocar de tela, **troca de seleção, de modo ou de tela** → a ponte PRIMEIRO
+     cancela o gesto vivo (para as prévias pendentes, devolve os valores de antes, marca `cancelado`, invalida a
+     confirmação) e só então executa;
+   - no editor de fora, desfazer/refazer ficam bloqueados enquanto houver gesto `aguardando`.
+   Consequência garantida: um valor de antes só é capturado quando NENHUM outro gesto está vivo, então devolvê-lo nunca
+   ressuscita uma edição cancelada ou desfeita.
 
 ### 6.3 Desfazer, refazer, reabrir
 Pelo caminho existente: `rollback-transaction` devolve todas as propriedades do lote; ao reabrir, as edições salvas são
@@ -196,7 +203,11 @@ reaplicadas pelo replay de sempre. A camada só redesenha.
   inteiros. Astra r2: (#1) redimensionar largura E altura já presentes na tabela por tela, com o pai cortando — salvar e
   reabrir mantém as duas medidas e o pai sem corte; (#2) confirmação que chega DEPOIS do cancelamento (por tempo e por
   troca de seleção) é recusada, nada reaparece, e a edição seguinte do painel passa normalmente. Astra r3: arrastar →
-  Ctrl+Z → Esc (e → soltar) → reabrir: a edição desfeita não reaparece e o histórico confere com a página.
+  Ctrl+Z → Esc (e → soltar) → reabrir: a edição desfeita não reaparece e o histórico confere com a página. Astra r4:
+  segundo gesto tentado durante confirmação pendente não começa; depois recusa/expiração do primeiro e Esc → a página
+  volta ao valor de antes do primeiro. Um teste por porta da regra única (§6.2.7): novo gesto, desfazer, refazer, edição
+  do painel, replay, troca de seleção, de modo e de tela — cada uma no meio de `ativo` E de `aguardando`, sempre com o
+  histórico conferindo com a página.
 - **Ao vivo:** a cópia do farmminerals no canvas — fotos lado a lado com o editor antigo no mesmo elemento, item por item
   de §5.2-§5.5; reabrir depois de salvar.
 - **Auditoria do Astra** na spec e no código antes de cada commit.
