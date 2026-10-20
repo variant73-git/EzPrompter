@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { applyNativeCommitSnapshot, createNativeEditApi } from './native-edit-api.js';
-import { createEmptyMotionManifest } from './manifest.js';
+import { createEmptyMotionManifest, parseMotionManifest } from './manifest.js';
+import { buildOverlayBatch } from './overlay-batch.js';
+import { createTransaction } from './transaction.js';
 
 const NODE_ID = '11111111-1111-4111-8111-111111111111';
 const SNAPSHOT_ID = '22222222-2222-4222-8222-222222222222';
@@ -106,6 +108,29 @@ describe('native edit API adapter', () => {
       expect.objectContaining({ method: 'POST', credentials: 'include' }),
     );
     expect(adapter.getState()).toMatchObject({ revision: 4, pending: false, status: 'idle' });
+  });
+
+  // Alças e guias (spec 2026-10-20): o gesto da camada sai com source 'overlay'; o rascunho gravado tem que passar
+  // na validação do servidor (parseMotionManifest) — antes, todo salvamento depois de uma alça voltava 400
+  // (achado na prova ao vivo). Mesmo tratamento das outras edições que vêm da página (runtime-layout etc.).
+  it('saves an overlay gesture in a draft the server accepts', async () => {
+    const clock = scheduler();
+    const lote = buildOverlayBatch({ manifest: null, deviceId: 'desktop', descriptorFor: () => null, changes: [
+      { elementId: 'hero', property: 'width', before: '418px', value: '358px' },
+    ] });
+    const gesto = { ...createTransaction({ patches: lote.patches, source: 'overlay' }), repairs: [] };
+    let enviado = null;
+    const fetcher = vi.fn(async (url, options) => {
+      if (options.method === 'POST') return response(openedSession());
+      enviado = JSON.parse(options.body).draftManifest;
+      return response({ session: { ...openedSession().session, revision: 1, draftManifest: enviado } });
+    });
+    const adapter = createNativeEditApi({ nodeId: NODE_ID, fetcher, schedule: clock.schedule, clearSchedule: clock.clearSchedule, debounceMs: 80 });
+    await adapter.load();
+    await adapter.save({ transactions: [gesto] });
+    clock.queued[0].callback();
+    await vi.waitFor(() => expect(enviado).not.toBeNull());
+    expect(() => parseMotionManifest(enviado)).not.toThrow();
   });
 
   it('coalesces a burst to the latest manifest and advances revisions monotonically', async () => {

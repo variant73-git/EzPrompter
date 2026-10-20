@@ -6,7 +6,8 @@ function cloneJson(value) {
 }
 
 function normalizeSource(source) {
-  if (source === 'runtime-inline-text' || source === 'runtime-layout') return 'properties';
+  // edições que vêm da página (texto inline, Mover, alças e guias da camada) gravam como as do painel
+  if (source === 'runtime-inline-text' || source === 'runtime-layout' || source === 'overlay') return 'properties';
   return source;
 }
 
