@@ -31,6 +31,12 @@ export function instalarCamada(ponte, M) {
     }
     .u-handle.u-off { opacity: 0.35; cursor: not-allowed !important; }
     .u-parent { pointer-events: none; border: calc(1px / var(--u-escala, 1)) dashed rgba(147,197,253,0.15); z-index: 2147483640; }
+    .u-pill {
+      position: fixed; display: none; pointer-events: none; z-index: 2147483646; white-space: nowrap;
+      background: #1A1A1A; color: #fff; border: calc(1px / var(--u-escala, 1)) solid #0095FF; border-radius: 999px;
+      font: 500 calc(11px / var(--u-escala, 1)) 'Instrument Sans', system-ui, sans-serif;
+      padding: calc(5px / var(--u-escala, 1)) calc(12px / var(--u-escala, 1));
+    }
     @keyframes u-glow { 0% { box-shadow: 0 0 0 4px rgba(147,197,253,0.25); } 100% { box-shadow: 0 0 0 0 transparent; } }
   `;
   const raiz = doc.createElement('uncraft-overlay');
@@ -60,6 +66,46 @@ export function instalarCamada(ponte, M) {
   const CURSOR = { nw: 'nwse', n: 'ns', ne: 'nesw', e: 'ew', se: 'nwse', s: 'ns', sw: 'nesw', w: 'ew' };
   const handles = {};
   DIRS.forEach((d) => { const h = mk('u-handle'); h.dataset.dir = d; h.style.cursor = `${CURSOR[d]}-resize`; handles[d] = h; });
+  const pill = mk('u-pill');
+  // Textos do motivo (produto em inglês): tooltip do quadradinho apagado e pílula de recusa
+  const MOTIVOS = {
+    layout_locked: 'Locked by the 3D scene',
+    inline_element: "Inline elements can't be resized",
+    svg_inner: "This part of an SVG can't be resized",
+    motion_owned: 'Driven by an animation \u2014 edit it in Motion',
+    cleared_by_motion: 'An animation resets this when it ends',
+    priority_conflict: 'The site forces this value',
+    layout_controlled: "This element's size is set by its layout",
+    gesture_busy: 'Saving\u2026',
+    no_element: 'This element is no longer on the page',
+    transaction_rejected: "This change couldn't be applied",
+    timeout: "This change couldn't be saved",
+  };
+  let pillTimer = 0;
+  function mostrarMotivo(codigo, perto) {
+    const texto = MOTIVOS[codigo];
+    if (!texto) return;
+    pill.textContent = texto;
+    const p = perto || { x: 16, y: 16 };
+    Object.assign(pill.style, { display: 'block', left: `${p.x}px`, top: `${p.y}px` });
+    if (pillTimer) win.clearTimeout(pillTimer);
+    pillTimer = win.setTimeout(() => { pill.style.display = 'none'; pillTimer = 0; }, 2500);
+  }
+  // Quadradinhos apagados: calculado quando a SELEÇÃO muda (não a cada quadro), sem medir "o tamanho mudou?"
+  let alcasApagadas = null;
+  let selecaoAvaliada = null;
+  function avaliarAlcas(el) {
+    if (el === selecaoAvaliada) return;
+    selecaoAvaliada = el;
+    alcasApagadas = null;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const pode = ponte.elegivel(el, [
+      { el, property: 'width', value: `${Math.round(r.width)}px` },
+      { el, property: 'height', value: `${Math.round(r.height)}px` },
+    ], { semMedirTamanho: true });
+    if (!pode.ok && pode.motivo !== 'gesture_busy') alcasApagadas = pode.motivo;
+  }
   let escala = 1;
   let guiasVisiveis = true;
   let quadro = 0;
@@ -117,9 +163,12 @@ export function instalarCamada(ponte, M) {
       const vp = { width: doc.documentElement.clientWidth || win.innerWidth, height: doc.documentElement.clientHeight || win.innerHeight };
       const lugar = M.placeControls({ box, viewport: vp, handle: 12 / escala, label: { width: 70 / escala, height: 18 / escala } });
       const travado = ponte.travado(el);
+      avaliarAlcas(el);
       DIRS.forEach((d) => {
         const h = pontoParaRaiz(o, lugar.handles[d]);
         Object.assign(handles[d].style, { display: travado ? 'none' : 'block', left: `${h.x}px`, top: `${h.y}px` });
+        handles[d].classList.toggle('u-off', !!alcasApagadas);
+        handles[d].title = alcasApagadas ? (MOTIVOS[alcasApagadas] || '') : '';
       });
       selLabel.textContent = `${Math.round(box.width)} × ${Math.round(box.height)}`;
       const rl = pontoParaRaiz(o, lugar.label);
@@ -127,8 +176,118 @@ export function instalarCamada(ponte, M) {
     } else {
       DIRS.forEach((d) => { handles[d].style.display = 'none'; });
       selLabel.style.display = 'none';
+      avaliarAlcas(null);
     }
   }
+
+  // ---- arrastar os quadradinhos (spec §5.2; editor.js 10738-10830) ----
+  // A camada só faz PRÉVIA; quem confirma é o editor de fora (§6.2). Mudanças viram [{ el, property, value }].
+  const resolverAlvos = (lista, el) => lista
+    .map((c) => ({ el: c.alvo === 'parent' ? el.parentElement : el, property: c.property, value: c.value }))
+    .filter((c) => c.el);
+  // Um arraste por vez, preso ao ponteiro que o começou. Cancelamento do ponteiro, perda de captura, Esc, perda de
+  // foco e desmonte da camada passam pela MESMA limpeza, segura de chamar mais de uma vez (Astra, Task 8).
+  let arrasteAtivo = null;
+  function arrastar(ev, alvoCaptura, { limiar, aoComecar, aoMover, aoSoltar, aoCancelar }) {
+    if (arrasteAtivo) arrasteAtivo.cancelar('superseded');
+    const id = ev.pointerId;
+    const sx = ev.clientX;
+    const sy = ev.clientY;
+    let comecou = false;
+    let terminado = false;
+    const doPonteiro = (e) => id == null || e.pointerId == null || e.pointerId === id;
+    function limpar() {
+      terminado = true;
+      doc.removeEventListener('pointermove', mover, true);
+      doc.removeEventListener('pointerup', soltar, true);
+      doc.removeEventListener('pointercancel', cancelado, true);
+      alvoCaptura.removeEventListener('lostpointercapture', cancelado);
+      doc.removeEventListener('keydown', esc, true);
+      win.removeEventListener('blur', perdeuFoco);
+      if (arrasteAtivo === controle) arrasteAtivo = null;
+    }
+    function cancelar(motivo) {
+      if (terminado) return;
+      limpar();
+      if (comecou) aoCancelar(motivo);
+    }
+    function mover(e) {
+      if (terminado || !doPonteiro(e)) return;
+      const dx = e.clientX - sx;
+      const dy = e.clientY - sy;
+      if (!comecou) {
+        if (Math.abs(dx) < limiar && Math.abs(dy) < limiar) return;
+        if (!aoComecar(dx, dy, e)) { limpar(); return; }
+        comecou = true;
+      }
+      e.preventDefault();
+      aoMover(dx, dy, e);
+    }
+    function soltar(e) {
+      if (terminado || !doPonteiro(e)) return;
+      const tinhaComecado = comecou;
+      limpar();
+      aoSoltar(e.clientX - sx, e.clientY - sy, e, tinhaComecado);
+    }
+    function cancelado(e) { if (doPonteiro(e)) cancelar('pointer-canceled'); }
+    function esc(e) { if (e.key === 'Escape' && comecou) { e.preventDefault(); e.stopPropagation(); cancelar('escape'); } }
+    function perdeuFoco() { cancelar('blur'); }
+    const controle = { cancelar };
+    arrasteAtivo = controle;
+    try { if (id != null) alvoCaptura.setPointerCapture(id); } catch (_) { /* sem captura (jsdom) */ }
+    doc.addEventListener('pointermove', mover, true);
+    doc.addEventListener('pointerup', soltar, true);
+    doc.addEventListener('pointercancel', cancelado, true);
+    alvoCaptura.addEventListener('lostpointercapture', cancelado);
+    doc.addEventListener('keydown', esc, true);
+    win.addEventListener('blur', perdeuFoco);
+    return controle;
+  }
+
+  DIRS.forEach((dir) => handles[dir].addEventListener('pointerdown', (ev) => {
+    const el = ponte.selecionado();
+    if (!el || ev.button !== 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (alcasApagadas) { mostrarMotivo(alcasApagadas, { x: ev.clientX + 12, y: ev.clientY + 12 }); return; }
+    const cs = win.getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    // tudo medido no INÍCIO, como o antigo: tamanho, margens/posição para a compensação W/N, e o estilo para destravar
+    const start = {
+      width: r.width, height: r.height,
+      marginLeft: parseFloat(cs.marginLeft) || 0, marginTop: parseFloat(cs.marginTop) || 0,
+      left: parseFloat(cs.left) || 0, top: parseFloat(cs.top) || 0, position: cs.position,
+    };
+    const computed = { maxWidth: cs.maxWidth, maxHeight: cs.maxHeight, minWidth: cs.minWidth, minHeight: cs.minHeight, width: cs.width, height: cs.height, flexGrow: cs.flexGrow, boxSizing: cs.boxSizing };
+    const pcs = el.parentElement ? win.getComputedStyle(el.parentElement) : null;
+    const paiInfo = pcs ? { display: pcs.display, overflow: pcs.overflow } : null;
+    let gesto = null;
+    let destravar = [];
+    const mudancasDe = (dx, dy) => resolverAlvos([...destravar, ...M.resizeChanges({ dir, dx, dy, start })], el);
+    arrastar(ev, handles[dir], {
+      limiar: 2,                                     // limiar do antigo: clique puro não mexe em nada
+      aoComecar(dx, dy, e) {
+        destravar = M.unlockChanges({ dir, computed, rect: r, parent: paiInfo });
+        const primeiras = mudancasDe(dx, dy);
+        const pode = ponte.elegivel(el, primeiras);
+        if (!pode.ok) { mostrarMotivo(pode.motivo, { x: e.clientX + 12, y: e.clientY + 12 }); return false; }
+        const g = ponte.iniciarGesto(primeiras.map(({ el: alvo, property }) => ({ el: alvo, property })));
+        if (!g.ok) { mostrarMotivo(g.motivo, { x: e.clientX + 12, y: e.clientY + 12 }); return false; }
+        gesto = g.gestureId;
+        return true;
+      },
+      aoMover(dx, dy) { ponte.previa(gesto, mudancasDe(dx, dy)); redesenhar(); },
+      aoSoltar(dx, dy, e, comecou) {
+        if (!comecou || !gesto) return;
+        const finais = mudancasDe(dx, dy);
+        const pode = ponte.elegivel(el, finais, { ignorarGesto: gesto, semMedirTamanho: true });
+        if (!pode.ok) { ponte.cancelarGesto(gesto, pode.motivo); mostrarMotivo(pode.motivo, { x: e.clientX + 12, y: e.clientY + 12 }); return; }
+        ponte.terminarGesto(gesto, finais);
+        redesenhar();
+      },
+      aoCancelar(motivo) { if (gesto) ponte.cancelarGesto(gesto, motivo); redesenhar(); },
+    });
+  }));
 
   // Um laço por quadro só enquanto há o que acompanhar (§6.1); a página escondida não agenda.
   function laco() {
@@ -154,8 +313,10 @@ export function instalarCamada(ponte, M) {
       redesenhar();
     },
     alternarGuias() { guiasVisiveis = !guiasVisiveis; redesenhar(); },
-    estado() { return { caixaVisivel: selBox.style.display === 'block', caixa: ultimaCaixa, escala, guiasVisiveis }; },
+    estado() { return { caixaVisivel: selBox.style.display === 'block', caixa: ultimaCaixa, escala, guiasVisiveis, alcasApagadas }; },
+    ganchosDeTeste: { alcaParaTeste: (d) => handles[d] },
     destruir() {
+      if (arrasteAtivo) arrasteAtivo.cancelar('teardown');
       destruida = true;
       if (quadro) win.cancelAnimationFrame(quadro);
       quadro = 0;
