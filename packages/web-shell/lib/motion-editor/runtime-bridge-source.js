@@ -99,6 +99,12 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
       g.antes.push({ el, property, valor: el.style.getPropertyValue(property) });
     });
   }
+  // Cada prévia = declaração ORIGINAL + as mudanças ATUAIS: um lado que saiu do gesto (soltou o Shift/Alt) volta
+  // ao original na hora, em vez de ficar na tela até a confirmação (Astra, Task 9)
+  function escreverCandidato(g, changes) {
+    devolverAntes(g);
+    (changes || []).forEach(({ el, property, value }) => { try { el.style.setProperty(property, value); } catch (_) { /* elemento saiu */ } });
+  }
   // O tocador também escreve na página (spec §6.2.7, Astra r5 #1): um gesto só começa com ele parado. Pausa o mesmo
   // escopo do último "tocar" que o editor pediu e avisa o editor (o botão de tocar precisa voltar a "parado").
   // Transportes que o editor pôs para tocar (escopo = motionId, ou '*' = global). Velocidade não liga nem desliga
@@ -215,12 +221,13 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
     const g = gestosDaCamada.get(id);
     if (!g || g.estado !== 'ativo') return;
     capturarAntes(g, changes);
-    (changes || []).forEach(({ el, property, value }) => { try { el.style.setProperty(property, value); } catch (_) { /* elemento saiu */ } });
+    escreverCandidato(g, changes);
   }
   function terminarGestoDaCamada(id, changes) {
     const g = gestosDaCamada.get(id);
     if (!g || g.estado !== 'ativo') return;
     capturarAntes(g, changes);
+    escreverCandidato(g, changes);       // na espera, a tela já mostra exatamente o que vai ser confirmado
     g.estado = 'aguardando';
     g.relogio = setTimeout(() => cancelarGestoDaCamada(id, 'timeout'), 10000);
     const antesDe = (el, property) => { const a = g.antes.find((x) => x.el === el && x.property === property); return a ? a.valor : ''; };

@@ -98,3 +98,86 @@ describe('arrastar os quadradinhos (spec §5.2)', () => {
     expect(rt.messages.some((m) => m.type === 'overlay-gesture-ended')).toBe(false);
   });
 });
+
+describe('guias de espaçamento, cantos e clique que atravessa (spec §5.3)', () => {
+  let rt; afterEach(() => rt?.restore());
+  const CENA = '<main id="m" data-uncraft-id="u-m" style="display:flex;flex-direction:row;column-gap:10px">'
+    + '<div id="a" data-uncraft-id="u-a" style="width:200px;height:100px;margin:8px;padding:4px">A</div>'
+    + '<div id="b" data-uncraft-id="u-b" style="width:100px;height:100px">B</div></main>';
+  const fins = () => rt.messages.filter((m) => m.type === 'overlay-gesture-ended');
+  const ganchos = () => window.__uncraftMotionBridge.overlay;
+  function montarCena() {
+    rt = boot(CENA);
+    caixaViva(document.getElementById('a'), 10, 10);
+    caixaViva(document.getElementById('b'), 230, 10);
+    rt.send('select-element', { elementId: 'u-a' });
+  }
+  it('margem de baixo com Cmd encaixa de 8 em 8 (8 + 13 → 24)', () => {
+    montarCena();
+    const guia = ganchos().guiaParaTeste('mb');
+    ponteiro(guia, 'pointerdown', 100, 115); ponteiro(document, 'pointermove', 100, 128, { metaKey: true }); ponteiro(document, 'pointerup', 100, 128, { metaKey: true });
+    expect(fins()).toHaveLength(1);
+    expect(fins()[0].payload.changes).toEqual([{ elementId: 'u-a', property: 'margin-bottom', before: '8px', value: '24px' }]);
+  });
+  it('Shift muda os quatro lados numa edição só', () => {
+    montarCena();
+    const guia = ganchos().guiaParaTeste('pt');
+    ponteiro(guia, 'pointerdown', 100, 12); ponteiro(document, 'pointermove', 100, 18, { shiftKey: true }); ponteiro(document, 'pointerup', 100, 18, { shiftKey: true });
+    expect(fins()).toHaveLength(1);
+    expect(fins()[0].payload.changes.map((c) => [c.property, c.value])).toEqual([['padding-top', '10px'], ['padding-right', '10px'], ['padding-bottom', '10px'], ['padding-left', '10px']]);
+  });
+  it('Alt espelha no lado oposto', () => {
+    montarCena();
+    const guia = ganchos().guiaParaTeste('ml');
+    ponteiro(guia, 'pointerdown', 6, 60); ponteiro(document, 'pointermove', 2, 60, { altKey: true }); ponteiro(document, 'pointerup', 2, 60, { altKey: true });
+    expect(fins()[0].payload.changes.map((c) => [c.property, c.value])).toEqual([['margin-left', '12px'], ['margin-right', '12px']]);
+  });
+  it('gap do pai em linha → column-gap do PAI, e a seleção continua no filho', () => {
+    montarCena();
+    const guia = ganchos().guiaParaTeste('gap');
+    ponteiro(guia, 'pointerdown', 220, 60); ponteiro(document, 'pointermove', 226, 60); ponteiro(document, 'pointerup', 226, 60);
+    expect(fins()[0].payload.changes).toEqual([{ elementId: 'u-m', property: 'column-gap', before: '10px', value: '16px' }]);
+    expect(window.__uncraftMotionBridge.overlay.ponteParaTeste().selecionado().id).toBe('a');
+  });
+  it('canto sudeste muda duas margens', () => {
+    montarCena();
+    const canto = ganchos().cantoParaTeste('se');
+    ponteiro(canto, 'pointerdown', 218, 118); ponteiro(document, 'pointermove', 222, 124); ponteiro(document, 'pointerup', 222, 124);
+    expect(fins()[0].payload.changes.map((c) => [c.property, c.value])).toEqual([['margin-bottom', '14px'], ['margin-right', '12px']]);
+  });
+  it('guia com valor 0 não aparece', () => {
+    montarCena();
+    expect(ganchos().estado().guias).toEqual(expect.arrayContaining(['mt', 'mr', 'mb', 'ml', 'pt', 'pr', 'pb', 'pl', 'gap']));
+    rt.restore(); rt = boot('<main><div id="z" data-uncraft-id="u-z" style="width:50px;height:50px">Z</div></main>');
+    caixaViva(document.getElementById('z'), 0, 0);
+    rt.send('select-element', { elementId: 'u-z' });
+    expect(ganchos().estado().guias).toEqual([]);
+  });
+  it('clique sem arrastar atravessa e seleciona o que está embaixo', () => {
+    montarCena();
+    const b = document.getElementById('b');
+    document.elementsFromPoint = () => [document.querySelector('uncraft-overlay'), b, document.body];
+    try {
+      const guia = ganchos().guiaParaTeste('mr');
+      ponteiro(guia, 'pointerdown', 240, 60); ponteiro(document, 'pointerup', 240, 60);
+      expect(fins()).toHaveLength(0);
+      expect(window.__uncraftMotionBridge.overlay.ponteParaTeste().selecionado()).toBe(b);
+    } finally { delete document.elementsFromPoint; }
+  });
+  // Astra (Task 9): soltar o Shift no meio deixava os outros lados na prévia (e a página pulava ao salvar)
+  it('soltar o Shift no meio volta os outros lados na prévia e na espera', () => {
+    montarCena();
+    const a = document.getElementById('a');
+    const guia = ganchos().guiaParaTeste('pt');
+    ponteiro(guia, 'pointerdown', 100, 12);
+    ponteiro(document, 'pointermove', 100, 18, { shiftKey: true });
+    expect(a.style.paddingRight).toBe('10px');
+    ponteiro(document, 'pointermove', 100, 20);
+    expect(a.style.paddingTop).toBe('12px');
+    expect(a.style.paddingRight).toBe('4px');
+    ponteiro(document, 'pointerup', 100, 20);
+    expect(a.style.paddingTop).toBe('12px');
+    expect(a.style.paddingRight).toBe('4px');
+    expect(fins()[0].payload.changes.map((c) => c.property)).toEqual(['padding-top']);
+  });
+});

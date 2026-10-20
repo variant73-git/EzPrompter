@@ -31,6 +31,28 @@ export function instalarCamada(ponte, M) {
     }
     .u-handle.u-off { opacity: 0.35; cursor: not-allowed !important; }
     .u-parent { pointer-events: none; border: calc(1px / var(--u-escala, 1)) dashed rgba(147,197,253,0.15); z-index: 2147483640; }
+    .u-guia { position: fixed; box-sizing: border-box; display: none; pointer-events: auto; z-index: 2147483641; }
+    .u-guia-margin { background: repeating-linear-gradient(-45deg, rgba(255,0,221,0.12), rgba(255,0,221,0.12) 2px, transparent 2px, transparent 5px); border: calc(1px / var(--u-escala, 1)) solid rgba(255,0,221,0.25); }
+    .u-guia-padding { background: repeating-linear-gradient(-45deg, rgba(255,0,221,0.08), rgba(255,0,221,0.08) 2px, transparent 2px, transparent 5px); border: calc(1px / var(--u-escala, 1)) dashed rgba(255,0,221,0.2); }
+    .u-guia-gap { background: repeating-linear-gradient(-45deg, rgba(255,0,221,0.15), rgba(255,0,221,0.15) 2px, transparent 2px, transparent 5px); border: calc(1px / var(--u-escala, 1)) solid rgba(255,0,221,0.3); }
+    .u-guia:hover, .u-guia.u-ativa { box-shadow: inset 0 0 0 calc(1px / var(--u-escala, 1)) rgba(255,0,221,0.55); }
+    .u-guia.u-arrastando { box-shadow: inset 0 0 0 calc(1px / var(--u-escala, 1)) rgba(255,0,221,0.85), 0 0 0 calc(1px / var(--u-escala, 1)) rgba(255,0,221,0.25); }
+    .u-guia-widget {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(calc(1 / var(--u-escala, 1)));
+      background: #1A1A1A; color: #FF00DD; font: 500 10px 'Instrument Sans', system-ui, sans-serif;
+      padding: 2px 6px; border-radius: 4px; display: flex; align-items: center; gap: 3px; white-space: nowrap;
+      pointer-events: auto; z-index: 2147483642; box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    }
+    .u-guia-icon { font-size: 9px; opacity: 0.6; }
+    .u-guia-val { font-size: 10px; }
+    .u-guia-delta { font-size: 9px; color: rgba(255,0,221,0.65); font-weight: 500; margin-left: 2px; }
+    .u-canto {
+      position: fixed; display: none; box-sizing: border-box; pointer-events: auto; z-index: 2147483641;
+      width: calc(10px / var(--u-escala, 1)); height: calc(10px / var(--u-escala, 1));
+      margin-left: calc(-5px / var(--u-escala, 1)); margin-top: calc(-5px / var(--u-escala, 1));
+      background: #1A1A1A; border: calc(1.5px / var(--u-escala, 1)) solid rgba(255,0,221,0.85); border-radius: 2px;
+    }
+    .u-canto:hover { box-shadow: 0 0 0 3px rgba(255,0,221,0.2); }
     .u-pill {
       position: fixed; display: none; pointer-events: none; z-index: 2147483646; white-space: nowrap;
       background: #1A1A1A; color: #fff; border: calc(1px / var(--u-escala, 1)) solid #0095FF; border-radius: 999px;
@@ -67,6 +89,30 @@ export function instalarCamada(ponte, M) {
   const handles = {};
   DIRS.forEach((d) => { const h = mk('u-handle'); h.dataset.dir = d; h.style.cursor = `${CURSOR[d]}-resize`; handles[d] = h; });
   const pill = mk('u-pill');
+  // ---- guias de espaçamento (editor.js 8789-9317) ----
+  const GUIA_KEYS = ['mt', 'mr', 'mb', 'ml', 'pt', 'pr', 'pb', 'pl', 'gap'];
+  const PROP_CALC = { mt: 'marginTop', mr: 'marginRight', mb: 'marginBottom', ml: 'marginLeft', pt: 'paddingTop', pr: 'paddingRight', pb: 'paddingBottom', pl: 'paddingLeft' };
+  const guias = {};
+  const valores = {};
+  GUIA_KEYS.forEach((k) => {
+    const tipo = k === 'gap' ? 'gap' : k[0] === 'm' ? 'margin' : 'padding';
+    const g = mk(`u-guia u-guia-${tipo}`);
+    g.dataset.guia = k;
+    g.style.cursor = M.guideAxis(k, 'row') === 'x' ? 'ew-resize' : 'ns-resize';
+    const w = doc.createElement('div');
+    w.className = 'u-guia-widget';
+    const icone = doc.createElement('span'); icone.className = 'u-guia-icon'; icone.textContent = '\u2194';
+    const val = doc.createElement('span'); val.className = 'u-guia-val';
+    w.appendChild(icone); w.appendChild(val);
+    g.appendChild(w);
+    guias[k] = g;
+    valores[k] = { icone, val, widget: w };
+  });
+  const CANTOS = ['nw', 'ne', 'se', 'sw'];
+  const cantos = {};
+  CANTOS.forEach((c) => { const el = mk('u-canto'); el.dataset.canto = c; el.style.cursor = c === 'nw' || c === 'se' ? 'nwse-resize' : 'nesw-resize'; cantos[c] = el; });
+  let guiasDesenhadas = [];
+  let guiaAtiva = null;
   // Textos do motivo (produto em inglês): tooltip do quadradinho apagado e pílula de recusa
   const MOTIVOS = {
     layout_locked: 'Locked by the 3D scene',
@@ -173,11 +219,58 @@ export function instalarCamada(ponte, M) {
       selLabel.textContent = `${Math.round(box.width)} × ${Math.round(box.height)}`;
       const rl = pontoParaRaiz(o, lugar.label);
       Object.assign(selLabel.style, { display: 'block', left: `${rl.x}px`, top: `${rl.y}px` });
+      posicionarGuias(el, box, o, travado);
     } else {
       DIRS.forEach((d) => { handles[d].style.display = 'none'; });
       selLabel.style.display = 'none';
       avaliarAlcas(null);
+      posicionarGuias(null, null, o, false);
     }
+  }
+
+  // Faixas nas medidas CALCULADAS (px da página); só o rótulo/espessura usam --u-escala (o antigo multiplicava pelo
+  // _scale do canvas porque desenhava fora da página). Valor 0 não desenha; cantos com alguma margem >= 2 px.
+  function posicionarGuias(el, box, o, travado) {
+    guiasDesenhadas = [];
+    const esconder = () => { GUIA_KEYS.forEach((k) => { guias[k].style.display = 'none'; }); CANTOS.forEach((c) => { cantos[c].style.display = 'none'; }); };
+    if (!el || !box || !guiasVisiveis || travado) { esconder(); return; }
+    const cs = win.getComputedStyle(el);
+    const px = (v) => parseFloat(v) || 0;
+    const v = {};
+    Object.keys(PROP_CALC).forEach((k) => { v[k] = px(cs[PROP_CALC[k]]); });
+    const l = box.x; const t = box.y; const r = box.x + box.width; const b = box.y + box.height;
+    const faixa = (k, x, y, w, h, valor, icone) => {
+      if (!(valor > 0) || !(w > 0) || !(h > 0)) { guias[k].style.display = 'none'; return; }
+      aplicarCaixa(guias[k], { x, y, width: w, height: h }, o);
+      if (!guias[k].classList.contains('u-arrastando')) valores[k].val.textContent = String(Math.round(valor));
+      if (icone) valores[k].icone.textContent = icone;
+      guiasDesenhadas.push(k);
+    };
+    faixa('mt', l - v.ml, t - v.mt, box.width + v.ml + v.mr, v.mt, v.mt);
+    faixa('mr', r, t, v.mr, box.height, v.mr);
+    faixa('mb', l - v.ml, b, box.width + v.ml + v.mr, v.mb, v.mb);
+    faixa('ml', l - v.ml, t, v.ml, box.height, v.ml);
+    faixa('pt', l, t, box.width, v.pt, v.pt);
+    faixa('pr', r - v.pr, t, v.pr, box.height, v.pr);
+    faixa('pb', l, b - v.pb, box.width, v.pb, v.pb);
+    faixa('pl', l, t, v.pl, box.height, v.pl);
+    const pai = el.parentElement;
+    const prox = el.nextElementSibling;
+    const pcs = pai ? win.getComputedStyle(pai) : null;
+    const eixo = M.guideAxis('gap', pcs ? pcs.flexDirection : 'row');
+    const gapVal = pcs ? px(eixo === 'x' ? (pcs.columnGap || pcs.gap) : (pcs.rowGap || pcs.gap)) : 0;
+    const boxProx = prox ? caixaDe(prox) : null;
+    if (gapVal > 0 && boxProx) {
+      if (eixo === 'x') faixa('gap', r, t, boxProx.x - r, box.height, gapVal, '\u2194');
+      else faixa('gap', l, b, box.width, boxProx.y - b, gapVal, '\u2195');
+    } else guias.gap.style.display = 'none';
+    const algumaMargem = v.ml >= 2 || v.mt >= 2 || v.mr >= 2 || v.mb >= 2;
+    const pontoCanto = { nw: { x: l - v.ml, y: t - v.mt }, ne: { x: r + v.mr, y: t - v.mt }, se: { x: r + v.mr, y: b + v.mb }, sw: { x: l - v.ml, y: b + v.mb } };
+    CANTOS.forEach((c) => {
+      if (!algumaMargem) { cantos[c].style.display = 'none'; return; }
+      const p = pontoParaRaiz(o, pontoCanto[c]);
+      Object.assign(cantos[c].style, { display: 'block', left: `${p.x}px`, top: `${p.y}px` });
+    });
   }
 
   // ---- arrastar os quadradinhos (spec §5.2; editor.js 10738-10830) ----
@@ -289,6 +382,94 @@ export function instalarCamada(ponte, M) {
     });
   }));
 
+  // ---- arrastar guias e cantos (editor.js 9035-9220) ----
+  const modsDe = (e) => ({ shift: !!e.shiftKey, alt: !!e.altKey, meta: !!e.metaKey, ctrl: !!e.ctrlKey });
+  // Um gesto qualquer sobre uma lista de mudanças: elegibilidade no 1º movimento, prévia, revalidação ao soltar
+  function gestoDeMudancas(ev, alvoCaptura, el, { limiar, calcular, aoMoverExtra, aoClicar, aoFim }) {
+    let gesto = null;
+    arrastar(ev, alvoCaptura, {
+      limiar,
+      aoComecar(dx, dy, e) {
+        const primeiras = resolverAlvos(calcular(dx, dy, e), el);
+        const pode = ponte.elegivel(el, primeiras);
+        if (!pode.ok) { mostrarMotivo(pode.motivo, { x: e.clientX + 12, y: e.clientY + 12 }); return false; }
+        const g = ponte.iniciarGesto(primeiras.map(({ el: alvo, property }) => ({ el: alvo, property })));
+        if (!g.ok) { mostrarMotivo(g.motivo, { x: e.clientX + 12, y: e.clientY + 12 }); return false; }
+        gesto = g.gestureId;
+        return true;
+      },
+      aoMover(dx, dy, e) {
+        ponte.previa(gesto, resolverAlvos(calcular(dx, dy, e), el));
+        if (aoMoverExtra) aoMoverExtra(dx, dy, e);
+        redesenhar();
+      },
+      aoSoltar(dx, dy, e, comecou) {
+        if (aoFim) aoFim();
+        if (!comecou || !gesto) { if (aoClicar) aoClicar(e); return; }
+        const finais = resolverAlvos(calcular(dx, dy, e), el);
+        const pode = ponte.elegivel(el, finais, { ignorarGesto: gesto, semMedirTamanho: true });
+        if (!pode.ok) { ponte.cancelarGesto(gesto, pode.motivo); mostrarMotivo(pode.motivo, { x: e.clientX + 12, y: e.clientY + 12 }); return; }
+        // as mudanças que a prévia tocou e o fim não traz (ex.: soltou o Shift) voltam: a ponte devolve a declaração
+        // original inteira antes de aplicar só as finais
+        ponte.terminarGesto(gesto, finais);
+        redesenhar();
+      },
+      aoCancelar(motivo) { if (aoFim) aoFim(); if (gesto) ponte.cancelarGesto(gesto, motivo); redesenhar(); },
+    });
+  }
+
+  GUIA_KEYS.forEach((k) => {
+    guias[k].addEventListener('pointerenter', () => { guiaAtiva = k; guias[k].classList.add('u-ativa'); });
+    guias[k].addEventListener('pointerleave', () => { if (!guias[k].classList.contains('u-arrastando')) { if (guiaAtiva === k) guiaAtiva = null; guias[k].classList.remove('u-ativa'); } });
+    guias[k].addEventListener('pointerdown', (ev) => {
+      const el = ponte.selecionado();
+      if (!el || ev.button !== 0) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const alvo = k === 'gap' ? el.parentElement : el;
+      if (!alvo) return;
+      const cs = win.getComputedStyle(alvo);
+      const axis = M.guideAxis(k, k === 'gap' ? cs.flexDirection : 'row');
+      const start = k === 'gap'
+        ? (parseFloat(axis === 'x' ? (cs.columnGap || cs.gap) : (cs.rowGap || cs.gap)) || 0)
+        : (parseFloat(cs[PROP_CALC[k]]) || 0);
+      const rotular = (valor) => {
+        const d = valor - start;
+        valores[k].val.textContent = String(valor);
+        if (d !== 0) {
+          const delta = doc.createElement('span');
+          delta.className = 'u-guia-delta';
+          delta.textContent = `${d >= 0 ? '+' : ''}${d}`;
+          valores[k].val.appendChild(doc.createTextNode(' '));
+          valores[k].val.appendChild(delta);
+        }
+      };
+      gestoDeMudancas(ev, guias[k], el, {
+        limiar: 3,
+        calcular: (dx, dy, e) => M.guideChanges({ key: k, start, dx, dy, axis, mods: modsDe(e) }).changes,
+        aoMoverExtra: (dx, dy, e) => {
+          guias[k].classList.add('u-arrastando');
+          rotular(M.guideChanges({ key: k, start, dx, dy, axis, mods: modsDe(e) }).value);
+        },
+        aoClicar: (e) => ponte.selecionarEm(e.clientX, e.clientY),   // clique puro atravessa (editor.js 9116-9142)
+        aoFim: () => guias[k].classList.remove('u-arrastando'),
+      });
+    });
+  });
+
+  CANTOS.forEach((c) => cantos[c].addEventListener('pointerdown', (ev) => {
+    const el = ponte.selecionado();
+    if (!el || ev.button !== 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const cs = win.getComputedStyle(el);
+    const start = { marginTop: parseFloat(cs.marginTop) || 0, marginRight: parseFloat(cs.marginRight) || 0, marginBottom: parseFloat(cs.marginBottom) || 0, marginLeft: parseFloat(cs.marginLeft) || 0 };
+    gestoDeMudancas(ev, cantos[c], el, {
+      limiar: 0,
+      calcular: (dx, dy, e) => M.cornerChanges({ corner: c, start, dx, dy, mods: modsDe(e) }),
+    });
+  }));
+
   // Um laço por quadro só enquanto há o que acompanhar (§6.1); a página escondida não agenda.
   function laco() {
     quadro = 0;
@@ -313,8 +494,8 @@ export function instalarCamada(ponte, M) {
       redesenhar();
     },
     alternarGuias() { guiasVisiveis = !guiasVisiveis; redesenhar(); },
-    estado() { return { caixaVisivel: selBox.style.display === 'block', caixa: ultimaCaixa, escala, guiasVisiveis, alcasApagadas }; },
-    ganchosDeTeste: { alcaParaTeste: (d) => handles[d] },
+    estado() { return { caixaVisivel: selBox.style.display === 'block', caixa: ultimaCaixa, escala, guiasVisiveis, alcasApagadas, guias: guiasDesenhadas.slice(), guiaAtiva }; },
+    ganchosDeTeste: { alcaParaTeste: (d) => handles[d], guiaParaTeste: (k) => guias[k], cantoParaTeste: (c) => cantos[c] },
     destruir() {
       if (arrasteAtivo) arrasteAtivo.cancelar('teardown');
       destruida = true;
