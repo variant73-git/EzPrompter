@@ -57,21 +57,27 @@ function NativeEditViewportRuntime({
 
   // Zoom do canvas → camada de alças e guias (spec 2026-10-20 §4.4): quadradinhos e rótulos mantêm o tamanho na tela.
   // O canvas guarda o zoom em `--canvas-scale` no <html> (lib/canvas-scale.js).
+  // `commands` é um objeto novo a cada render: o observador lê a função pela referência e só renasce quando o
+  // runtime muda de estado (reconectar reenvia a escala)
+  const enviarEscalaRef = useRef(null);
+  useEffect(() => { enviarEscalaRef.current = commands.setOverlayScale; });
   useEffect(() => {
-    if (typeof document === 'undefined' || typeof commands.setOverlayScale !== 'function') return undefined;
+    if (typeof document === 'undefined') return undefined;
     const ler = () => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
     let ultima = null;
     const enviar = () => {
+      const mandar = enviarEscalaRef.current;
+      if (typeof mandar !== 'function') return;
       const escala = ler();
       if (escala === ultima) return;
       ultima = escala;
-      commands.setOverlayScale(escala);
+      mandar(escala);
     };
     enviar();
     const observador = new MutationObserver(enviar);
     observador.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
     return () => observador.disconnect();
-  }, [commands, status]);
+  }, [status]);
 
   // Ponte de upload (Task 12): o parent (com cookie de login) recebe os bytes do
   // editor completo do clone e chama a rota app-authed. Só o parent conhece o

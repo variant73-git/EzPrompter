@@ -1,6 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+
+// atualizar uma referência depois do commit e antes de qualquer mensagem (no servidor, useLayoutEffect só avisa)
+const useEfeitoDeLayout = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 import {
   command,
   commandV2,
@@ -2190,7 +2193,8 @@ export function useNativeMotionController({
     changeStepValue,
   };
 
-  ultimosRef.current = { applyPatches, undo, redo, descriptorFor: responsiveDescriptorFor };
+  // o ouvinte de mensagens (criado uma vez) chama as funções da render mais recente
+  useEfeitoDeLayout(() => { ultimosRef.current = { applyPatches, undo, redo, descriptorFor: responsiveDescriptorFor }; });
   return {
     iframeRef,
     status,

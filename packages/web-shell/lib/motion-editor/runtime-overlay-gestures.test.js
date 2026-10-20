@@ -375,3 +375,40 @@ describe('cancelamento de fora chega à camada', () => {
     expect(ganchos().estado().arrastando).toBe(false);
   });
 });
+
+// Revisão final do ramo (menores): o desenho é do laço por quadro
+describe('desenho da camada', () => {
+  let rt; afterEach(() => { rt?.restore(); vi.useRealTimers(); });
+  it('um movimento do arraste não mede a página na hora (o laço por quadro desenha)', () => {
+    rt = boot(); const a = document.getElementById('a'); caixaViva(a, 10, 10);
+    rt.send('select-element', { elementId: 'u-a' });
+    ponteiro(window.__uncraftMotionBridge.overlay.alcaParaTeste('e'), 'pointerdown', 210, 60);
+    ponteiro(document, 'pointermove', 230, 60);
+    const medir = a.getBoundingClientRect; let medidas = 0;
+    a.getBoundingClientRect = function () { medidas += 1; return medir.call(this); };
+    ponteiro(document, 'pointermove', 250, 60);
+    expect(a.style.width).toBe('240px');
+    expect(medidas).toBe(0);
+  });
+  it('a aba volta a aparecer → a caixa volta a acompanhar sem esperar aviso da ponte', () => {
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'setTimeout', 'clearTimeout'] });
+    let oculta = false;
+    const descritor = Object.getOwnPropertyDescriptor(Document.prototype, 'hidden');
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => oculta });
+    try {
+      rt = boot(); const a = document.getElementById('a'); caixaViva(a, 10, 10);
+      rt.send('select-element', { elementId: 'u-a' });
+      vi.advanceTimersByTime(50);
+      oculta = true;
+      vi.advanceTimersByTime(50);                      // o laço para com a aba escondida
+      caixaViva(a, 10, 300);                           // a página andou enquanto isso
+      oculta = false;
+      document.dispatchEvent(new Event('visibilitychange'));
+      vi.advanceTimersByTime(50);
+      expect(window.__uncraftMotionBridge.overlay.estado().caixa.y).toBe(300);
+    } finally {
+      delete document.hidden;
+      if (descritor) Object.defineProperty(Document.prototype, 'hidden', descritor);
+    }
+  });
+});

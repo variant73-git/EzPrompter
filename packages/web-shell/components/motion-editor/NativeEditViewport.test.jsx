@@ -268,4 +268,25 @@ describe('escala do canvas para a camada', () => {
     document.documentElement.style.setProperty('--canvas-scale', '0.5');
     await waitFor(() => expect(setOverlayScale).toHaveBeenLastCalledWith(0.5));
   });
+  // revisão final (menor): `commands` é um objeto novo a cada render — o observador do zoom não pode nascer de novo
+  it('não recria o observador do zoom a cada render', async () => {
+    const Original = window.MutationObserver;
+    let doZoom = 0;
+    window.MutationObserver = class extends Original {
+      observe(alvo, opcoes) {
+        if (alvo === document.documentElement && opcoes?.attributeFilter?.includes('style')) doZoom += 1;
+        return super.observe(alvo, opcoes);
+      }
+    };
+    try {
+      const { rerender } = render(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+      rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+      rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+      expect(doZoom).toBe(1);
+      document.documentElement.style.setProperty('--canvas-scale', '0.4');
+      await waitFor(() => expect(setOverlayScale).toHaveBeenLastCalledWith(0.4));
+    } finally {
+      window.MutationObserver = Original;
+    }
+  });
 });

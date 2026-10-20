@@ -357,7 +357,7 @@ export function instalarCamada(ponte, M) {
       marginLeft: parseFloat(cs.marginLeft) || 0, marginTop: parseFloat(cs.marginTop) || 0,
       left: parseFloat(cs.left) || 0, top: parseFloat(cs.top) || 0, position: cs.position,
     };
-    const computed = { maxWidth: cs.maxWidth, maxHeight: cs.maxHeight, minWidth: cs.minWidth, minHeight: cs.minHeight, width: cs.width, height: cs.height, flexGrow: cs.flexGrow, boxSizing: cs.boxSizing };
+    const computed = { maxWidth: cs.maxWidth, maxHeight: cs.maxHeight, minWidth: cs.minWidth, minHeight: cs.minHeight, flexGrow: cs.flexGrow, boxSizing: cs.boxSizing };
     const pcs = el.parentElement ? win.getComputedStyle(el.parentElement) : null;
     const paiInfo = pcs ? { display: pcs.display, overflow: pcs.overflow } : null;
     let gesto = null;
@@ -375,7 +375,8 @@ export function instalarCamada(ponte, M) {
         gesto = g.gestureId;
         return true;
       },
-      aoMover(dx, dy) { ponte.previa(gesto, mudancasDe(dx, dy)); redesenhar(); },
+      // só escreve: quem desenha é o laço por quadro (medir aqui forçava um 2º cálculo de layout por movimento)
+      aoMover(dx, dy) { ponte.previa(gesto, mudancasDe(dx, dy)); acordar(); },
       aoSoltar(dx, dy, e, comecou) {
         if (!comecou || !gesto) return;
         const finais = mudancasDe(dx, dy);
@@ -408,7 +409,7 @@ export function instalarCamada(ponte, M) {
       aoMover(dx, dy, e) {
         ponte.previa(gesto, resolverAlvos(calcular(dx, dy, e), el));
         if (aoMoverExtra) aoMoverExtra(dx, dy, e);
-        redesenhar();
+        acordar();
       },
       aoSoltar(dx, dy, e, comecou) {
         if (aoFim) aoFim();
@@ -675,6 +676,8 @@ export function instalarCamada(ponte, M) {
     const aviso = AVISO_DO_CANCELAMENTO[motivo] || (motivo.indexOf('host:') === 0 ? 'canceled' : null);
     if (aviso) mostrarMotivo(aviso, ultimaCaixa ? { x: ultimaCaixa.x + 8, y: ultimaCaixa.y + 8 } : null);
   }
+  const aoVoltarAAba = () => { if (!doc.hidden) acordar(); };
+  doc.addEventListener('visibilitychange', aoVoltarAAba);
   ponte.aoMudar((evento) => {
     if (evento && evento.tipo === 'gesto-cancelado') aoCancelarDeFora(evento);
     if (campoAberto && ponte.selecionado() !== campoAberto.el) fecharCampo();
@@ -699,6 +702,7 @@ export function instalarCamada(ponte, M) {
     destruir() {
       if (arrasteAtivo) arrasteAtivo.cancelar('teardown');
       doc.removeEventListener('keydown', aoTeclar, true);
+      doc.removeEventListener('visibilitychange', aoVoltarAAba);
       win.removeEventListener('pointerdown', aoApertarFora, true);
       win.removeEventListener('click', aoClicarFora, true);
       fila.length = 0;

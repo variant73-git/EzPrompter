@@ -2,13 +2,6 @@
 // (packages/editor-core/src/editor.js). ⚠️ Cada função é AUTOSSUFICIENTE: a ponte as serializa com toString() e injeta
 // na página; uma referência a algo de fora quebraria só lá dentro (o teste "serializável" pega).
 
-export const GUIAS = Object.freeze({
-  props: { mt: 'margin-top', mr: 'margin-right', mb: 'margin-bottom', ml: 'margin-left', pt: 'padding-top', pr: 'padding-right', pb: 'padding-bottom', pl: 'padding-left' },
-  eixo: { mt: 'y', mb: 'y', pt: 'y', pb: 'y', ml: 'x', mr: 'x', pl: 'x', pr: 'x', gap: 'auto' },
-  sentido: { mt: -1, mb: 1, pt: 1, pb: -1, ml: -1, mr: 1, pl: 1, pr: -1, gap: 1 },
-  espelho: { mt: 'mb', mb: 'mt', ml: 'mr', mr: 'ml', pt: 'pb', pb: 'pt', pl: 'pr', pr: 'pl' },
-});
-
 export function resizeChanges({ dir, dx, dy, start }) {
   let w = start.width; let h = start.height;
   if (dir.indexOf('e') !== -1) w += dx;
@@ -33,8 +26,8 @@ export function unlockChanges({ dir, computed, rect, parent }) {
   if (computed.maxHeight !== 'none' && computed.maxHeight !== '0px') out.push({ alvo: 'self', property: 'max-height', value: 'none' });
   if ((dir.indexOf('w') !== -1 || dir.indexOf('e') !== -1) && computed.minWidth && computed.minWidth !== '0px') out.push({ alvo: 'self', property: 'min-width', value: '0' });
   if ((dir.indexOf('n') !== -1 || dir.indexOf('s') !== -1) && computed.minHeight && computed.minHeight !== '0px') out.push({ alvo: 'self', property: 'min-height', value: '0' });
-  if (computed.width === 'auto' || String(computed.width).indexOf('%') !== -1) out.push({ alvo: 'self', property: 'width', value: `${Math.round(rect.width)}px` });
-  if (computed.height === 'auto' || String(computed.height).indexOf('%') !== -1) out.push({ alvo: 'self', property: 'height', value: `${Math.round(rect.height)}px` });
+  // O antigo também convertia largura/altura "auto"/"%" em px aqui, mas o valor calculado de um elemento desenhado já
+  // vem em px (só o inline devolve "auto", e a camada recusa inline) — e o redimensionar grava as duas medidas sempre.
   const paiFlex = parent && (parent.display === 'flex' || parent.display === 'inline-flex');
   if (paiFlex && (parseFloat(computed.flexGrow) || 0) > 0) out.push({ alvo: 'self', property: 'flex-grow', value: '0' });
   if (computed.boxSizing !== 'border-box') out.push({ alvo: 'self', property: 'box-sizing', value: 'border-box' });
