@@ -1,5 +1,7 @@
 // Camada de alças e guias dentro da página (spec 2026-10-20 §4-§6) — jsdom, com a ponte real.
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPatch } from './protocol.js';
+import { createTransaction } from './transaction.js';
 import { MOTION_EDITOR_PROTOCOL, MOTION_EDITOR_PROTOCOL_V2, SUPPORTED_MOTION_EDITOR_PROTOCOLS, commandV2 } from './protocol.js';
 import { getRuntimeBridgeSource } from './runtime-bridge-source.js';
 
@@ -84,5 +86,76 @@ describe('camada de alças e guias — instalação e isolamento', () => {
     document.getElementById('a').getBoundingClientRect = () => ({ left: 10, top: 40, right: 210, bottom: 140, width: 200, height: 100, x: 10, y: 40 });
     rt.send('select-element', { elementId: 'u-a' });
     expect(window.__uncraftMotionBridge.overlay.estado().caixa).toEqual({ x: 10, y: 0, width: 200, height: 100 });
+  });
+});
+
+// Etapa 5 — ciclo de vida do gesto na ponte (spec §6.2)
+describe('gestos — estados e confirmação', () => {
+  let rt; afterEach(() => rt?.restore());
+  const ponte = () => window.__uncraftMotionBridge.overlay.ponteParaTeste();
+  // transação montada pelas MESMAS funções do editor de fora (passa por assertTransaction)
+  const transacao = (value) => createTransaction({ patches: [createPatch({ elementId: 'u-a', kind: 'style', property: 'width', before: '200px', value })], source: 'overlay' });
+  it('soltar deixa a prévia; a confirmação devolve o antes e aplica no mesmo turno (before = antes do gesto)', () => {
+    rt = boot(); const a = document.getElementById('a');
+    const g = ponte().iniciarGesto([{ el: a, property: 'width' }]);
+    ponte().previa(g.gestureId, [{ el: a, property: 'width', value: '260px' }]);
+    ponte().terminarGesto(g.gestureId, [{ el: a, property: 'width', value: '260px' }]);
+    expect(a.style.width).toBe('260px');
+    const fim = rt.messages.filter((m) => m.type === 'overlay-gesture-ended').pop();
+    expect(fim.payload.changes).toEqual([{ elementId: 'u-a', property: 'width', before: '200px', value: '260px' }]);
+    rt.send('apply-transaction', { transaction: transacao('260px'), gestureId: g.gestureId });
+    const ok = rt.messages.filter((m) => m.type === 'transaction-committed').pop();
+    expect(ok.payload.transaction.patches[0].before).toBe('200px');
+    expect(a.style.width).toBe('260px');
+  });
+  it('confirmação que chega depois do cancelamento é recusada com o id da transação (r2 #2)', () => {
+    rt = boot(); const a = document.getElementById('a');
+    const g = ponte().iniciarGesto([{ el: a, property: 'width' }]);
+    ponte().terminarGesto(g.gestureId, [{ el: a, property: 'width', value: '300px' }]);
+    ponte().cancelarGesto(g.gestureId, 'escape');
+    expect(a.style.width).toBe('200px');
+    const tardia = transacao('300px');
+    rt.send('apply-transaction', { transaction: tardia, gestureId: g.gestureId });
+    const nao = rt.messages.filter((m) => m.type === 'transaction-rejected').pop();
+    expect(nao.payload.transactionId).toBe(tardia.id);
+    expect(nao.payload.code).toBe('gesture_inactive');
+    expect(a.style.width).toBe('200px');
+  });
+  it('um gesto vivo por vez (r4)', () => {
+    rt = boot(); const a = document.getElementById('a');
+    const g = ponte().iniciarGesto([{ el: a, property: 'width' }]);
+    ponte().terminarGesto(g.gestureId, [{ el: a, property: 'width', value: '300px' }]);
+    expect(ponte().iniciarGesto([{ el: a, property: 'width' }])).toEqual({ ok: false, motivo: 'gesture_busy' });
+  });
+  it('gesto órfão por 10 s volta sozinho', () => {
+    vi.useFakeTimers(); rt = boot(); const a = document.getElementById('a');
+    const g = ponte().iniciarGesto([{ el: a, property: 'width' }]);
+    ponte().previa(g.gestureId, [{ el: a, property: 'width', value: '300px' }]);
+    ponte().terminarGesto(g.gestureId, [{ el: a, property: 'width', value: '300px' }]);
+    vi.advanceTimersByTime(10_001);
+    expect(a.style.width).toBe('200px'); expect(ponte().gestoVivo()).toBe(false);
+    vi.useRealTimers();
+  });
+  // Astra (Task 5) #1: a prévia escrevia num par fora da lista capturada e o cancelamento deixava o valor na página
+  it('par novo na prévia tem o antes capturado antes da 1ª escrita', () => {
+    rt = boot(); const a = document.getElementById('a'); const b = document.getElementById('b');
+    b.style.height = '50px';
+    const g = ponte().iniciarGesto([{ el: a, property: 'width' }]);
+    ponte().previa(g.gestureId, [{ el: b, property: 'height', value: '80px' }]);
+    ponte().cancelarGesto(g.gestureId, 'escape');
+    expect(b.style.height).toBe('50px');
+  });
+  // Astra (Task 5) #2: confirmação recusada pela ponte deixava o gesto "confirmado" sem cancelamento
+  it('confirmação que falha na ponte vira cancelamento com o motivo', () => {
+    rt = boot(); const a = document.getElementById('a');
+    const g = ponte().iniciarGesto([{ el: a, property: 'width' }]);
+    ponte().previa(g.gestureId, [{ el: a, property: 'width', value: '300px' }]);
+    ponte().terminarGesto(g.gestureId, [{ el: a, property: 'width', value: '300px' }]);
+    const quebrada = createTransaction({ patches: [createPatch({ elementId: 'u-nao-existe', kind: 'style', property: 'width', before: '', value: '1px' })], source: 'overlay' });
+    rt.send('apply-transaction', { transaction: quebrada, gestureId: g.gestureId });
+    expect(rt.messages.some((m) => m.type === 'transaction-rejected')).toBe(true);
+    expect(rt.messages.some((m) => m.type === 'overlay-gesture-canceled' && m.payload.gestureId === g.gestureId && m.payload.reason === 'transaction_rejected')).toBe(true);
+    expect(ponte().gestoVivo()).toBe(false);
+    expect(a.style.width).toBe('200px');
   });
 });

@@ -59,6 +59,91 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
   const ehNossoRef = { fn: () => false };
   const ouvintesDaCamada = [];
   function notificarCamada() { ouvintesDaCamada.forEach((cb) => { try { cb(); } catch (_) { /* a camada nunca derruba a ponte */ } }); }
+  let ponteAtual = null;
+
+  // Gestos da camada (spec §6.2): ativo → aguardando → confirmado | cancelado, sem volta. No máximo UM vivo (§6.2.7).
+  // A camada só faz PRÉVIA; ao soltar, o editor de fora monta a edição e a manda de volta com o gestureId.
+  const gestosDaCamada = new Map();
+  let gestoVivoId = null;
+  function gestoVivo() {
+    const g = gestoVivoId && gestosDaCamada.get(gestoVivoId);
+    return !!g && (g.estado === 'ativo' || g.estado === 'aguardando');
+  }
+  function devolverAntes(g) {
+    for (let i = g.antes.length - 1; i >= 0; i -= 1) {
+      const a = g.antes[i];
+      try { if (a.valor === '') a.el.style.removeProperty(a.property); else a.el.style.setProperty(a.property, a.valor); } catch (_) { /* elemento saiu da página */ }
+    }
+  }
+  function encerrarGesto(g, estado) {
+    g.estado = estado;
+    if (g.relogio) clearTimeout(g.relogio);
+    g.relogio = null;
+    if (gestoVivoId === g.id) gestoVivoId = null;
+  }
+  // O `antes` de cada par elemento × propriedade é capturado ANTES da 1ª escrita dele — inclusive de par que só
+  // aparece depois do início (Astra, Task 5 #1): nunca se fabrica um antes, e o cancelamento devolve tudo.
+  function capturarAntes(g, pares) {
+    (pares || []).forEach(({ el, property }) => {
+      if (!el || !property) return;
+      if (g.antes.some((a) => a.el === el && a.property === property)) return;
+      g.antes.push({ el, property, valor: el.style.getPropertyValue(property) });
+    });
+  }
+  // preenchida na etapa 6 (o tocador fica parado durante o gesto)
+  function pausarTocadorParaGesto() {}
+  function iniciarGestoDaCamada(alvos) {
+    if (gestoVivo()) return { ok: false, motivo: 'gesture_busy' };
+    pausarTocadorParaGesto();
+    const id = randomIdentity('overlay-gesture');
+    const g = { id, estado: 'ativo', antes: [], relogio: null };
+    capturarAntes(g, alvos);
+    gestosDaCamada.set(id, g);
+    gestoVivoId = id;
+    return { ok: true, gestureId: id };
+  }
+  function previaDoGesto(id, changes) {
+    const g = gestosDaCamada.get(id);
+    if (!g || g.estado !== 'ativo') return;
+    capturarAntes(g, changes);
+    (changes || []).forEach(({ el, property, value }) => { try { el.style.setProperty(property, value); } catch (_) { /* elemento saiu */ } });
+  }
+  function terminarGestoDaCamada(id, changes) {
+    const g = gestosDaCamada.get(id);
+    if (!g || g.estado !== 'ativo') return;
+    capturarAntes(g, changes);
+    g.estado = 'aguardando';
+    g.relogio = setTimeout(() => cancelarGestoDaCamada(id, 'timeout'), 10000);
+    const antesDe = (el, property) => { const a = g.antes.find((x) => x.el === el && x.property === property); return a ? a.valor : ''; };
+    emit('overlay-gesture-ended', {
+      gestureId: id,
+      changes: (changes || []).map(({ el, property, value }) => ({ elementId: ensureElementId(el), property, before: antesDe(el, property), value })),
+    }, { protocol: PROTOCOL_V2 });
+  }
+  function cancelarGestoDaCamada(id, motivo) {
+    const g = gestosDaCamada.get(id);
+    if (!g || (g.estado !== 'ativo' && g.estado !== 'aguardando')) return;
+    devolverAntes(g);
+    encerrarGesto(g, 'cancelado');
+    emit('overlay-gesture-canceled', { gestureId: id, reason: motivo }, { protocol: PROTOCOL_V2 });
+    notificarCamada();
+  }
+  function aplicarGestoDaCamada(message, payload) {
+    const g = gestosDaCamada.get(payload.gestureId);
+    if (!g || g.estado !== 'aguardando') {
+      rejectTransaction(message, payload.transaction?.id || null, bridgeError('gesture_inactive', 'The gesture is no longer active.'));
+      return;
+    }
+    devolverAntes(g);          // MESMO turno: sem pintura entre devolver e aplicar; o `before` sai o de antes do gesto
+    // só vira `confirmado` se a ponte aplicou; recusa = cancelamento com motivo (Astra, Task 5 #2) — a página já está
+    // no antes (devolvido acima; o que a transação chegou a aplicar foi desfeito por applyAtomicTransaction)
+    if (commitTransaction(message, payload.transaction, 'apply')) encerrarGesto(g, 'confirmado');
+    else {
+      encerrarGesto(g, 'cancelado');
+      emit('overlay-gesture-canceled', { gestureId: g.id, reason: 'transaction_rejected' }, { protocol: PROTOCOL_V2 });
+    }
+    notificarCamada();
+  }
   const SELECTABLE = [
     '[data-w-id]', '[data-wf-target]',
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'blockquote',
@@ -7896,8 +7981,10 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
         operation,
         ...(element ? { element } : {}),
       });
+      return true;
     } catch (error) {
       rejectTransaction(message, transaction?.id, error);
+      return false;
     }
   }
 
@@ -8652,7 +8739,8 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
       return;
     }
     if (message.type === 'apply-transaction') {
-      commitTransaction(message, payload.transaction, 'apply');
+      if (payload.gestureId) aplicarGestoDaCamada(message, payload);
+      else commitTransaction(message, payload.transaction, 'apply');
     } else if (message.type === 'rollback-transaction') {
       let transaction = payload.transaction;
       if (!transaction && payload.targetTransactionId) {
@@ -8871,6 +8959,11 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
         if (el) select(el);
       },
       elegivel: () => ({ ok: false, motivo: 'not_ready' }),
+      iniciarGesto: (alvos) => iniciarGestoDaCamada(alvos),
+      previa: (id, changes) => previaDoGesto(id, changes),
+      terminarGesto: (id, changes) => terminarGestoDaCamada(id, changes),
+      cancelarGesto: (id, motivo) => cancelarGestoDaCamada(id, motivo),
+      gestoVivo: () => gestoVivo(),
     };
   }
 
@@ -9084,7 +9177,8 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
     // a camada entra DEPOIS do desmonte da instância anterior (reinjeção) — Astra (Task 4) #2
     if (typeof instalarCamadaFn === 'function' && M) {
       try {
-        camada = instalarCamadaFn(ponteDaCamada(), M);
+        ponteAtual = ponteDaCamada();
+        camada = instalarCamadaFn(ponteAtual, M);
         const raiz = camada && camada.raiz;
         ehNossoRef.fn = (no) => {
           if (!raiz || !no) return false;
@@ -9152,8 +9246,9 @@ function nativeMotionRuntimeBridge(instalarCamadaFn, M) {
       });
     }, 1000);
     window.__uncraftMotionBridge = {
-      overlay: camada ? { estado: () => camada.estado() } : null,
+      overlay: camada ? { estado: () => camada.estado(), ponteParaTeste: () => ponteAtual } : null,
       teardown() {
+        if (gestoVivo()) cancelarGestoDaCamada(gestoVivoId, 'teardown');
         try { camada?.destruir(); } catch (_) { /* a camada nunca derruba o desmonte */ }
         camada = null;
         releaseEditState();
