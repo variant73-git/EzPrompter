@@ -126,6 +126,9 @@ próprio texto (r1 #6).
 - Região travada pela cena 3D: quadradinhos e guias somem; fica só a caixa (como `rb-sel-locked` do antigo).
 - Propriedade dirigida por animação ou prioritária no site: só aquele quadradinho/guia apagado, com o motivo ao passar
   o mouse (mesma regra dos campos travados do painel).
+- Animação com `clearProps:'all'` (ou que limpa aquela propriedade) no elemento: conta como DONA de todas as
+  propriedades que limpa — o fim dela apagaria o que foi arrastado (medido pelo Astra: `100px → 150px → ""`). Os
+  quadradinhos/guias afetados ficam apagados com o motivo (r5 #1).
 
 ## 6. Caminho das informações
 
@@ -142,7 +145,12 @@ Com seleção: um laço por quadro (`requestAnimationFrame`) mede o selecionado,
    elemento × propriedade resolve sozinho a chave da tabela por tela, o `beforeEntry/afterEntry` real, o dono da
    animação e a regra de tela — o `applyResponsiveEdit` de hoje usa `selected.id` e a marca de UMA propriedade para todos
    os patches, e ao reabrir a altura voltaria ao valor antigo (r2 #1). O lote inteiro entra num ÚNICO `applyPatches` →
-   um `apply-transaction` com várias propriedades e elementos, levando o `gestureId`. **Escopo de tela:** o mesmo que o painel
+   um `apply-transaction` com várias propriedades e elementos, levando o `gestureId`.
+   **Tabela por tela sem perda de edição (Astra r5 #2):** cada transação guarda só a SUA mudança na tabela (a lista
+   `{chave, afterEntry}`), e a confirmação aplica essa mudança sobre a tabela ATUAL — nunca troca a tabela inteira por um
+   retrato tirado na hora de montar. Hoje `applyPatches` guarda o retrato completo e a confirmação o substitui (1277,
+   920): uma edição do painel montada enquanto a do gesto ainda não confirmou apagaria a do gesto ao reabrir (vale
+   também para duas edições rápidas do painel — o conserto cobre as duas). **Escopo de tela:** o mesmo que o painel
    decide para aquela edição na tela atual (hoje `shared`; com a cópia só de desktop da T1, Tablet/Mobile nem abrem) —
    a camada nunca escolhe escopo.
 4. A ponte, ao receber o `apply-transaction` com `gestureId`, NO MESMO TURNO: devolve os valores de antes guardados e
@@ -166,7 +174,11 @@ Com seleção: um laço por quadro (`requestAnimationFrame`) mede o selecionado,
      `gestureId`), **replay** ao reabrir/trocar de tela, **troca de seleção, de modo ou de tela** → a ponte PRIMEIRO
      cancela o gesto vivo (para as prévias pendentes, devolve os valores de antes, marca `cancelado`, invalida a
      confirmação) e só então executa;
-   - no editor de fora, desfazer/refazer ficam bloqueados enquanto houver gesto `aguardando`.
+   - no editor de fora, desfazer/refazer ficam bloqueados enquanto houver gesto `aguardando`;
+   - **o tocador de animação também é escritor** (Astra r5 #1): `seekTimeline`, `scrubIntroTo`, `controlPlayback`, o
+     replay disparado pela rolagem, o assentamento e o desmonte. Gesto vivo → o tocador fica PARADO (pausa, sem seek,
+     sem scrub, sem replay por rolagem) até o gesto virar `confirmado` ou `cancelado`; e um gesto só começa com o tocador
+     parado (começar o gesto para o tocador antes de capturar os valores de antes).
    Consequência garantida: um valor de antes só é capturado quando NENHUM outro gesto está vivo, então devolvê-lo nunca
    ressuscita uma edição cancelada ou desfeita.
 
@@ -207,7 +219,10 @@ reaplicadas pelo replay de sempre. A camada só redesenha.
   segundo gesto tentado durante confirmação pendente não começa; depois recusa/expiração do primeiro e Esc → a página
   volta ao valor de antes do primeiro. Um teste por porta da regra única (§6.2.7): novo gesto, desfazer, refazer, edição
   do painel, replay, troca de seleção, de modo e de tela — cada uma no meio de `ativo` E de `aguardando`, sempre com o
-  histórico conferindo com a página.
+  histórico conferindo com a página. Astra r5: (#1) tocador iniciado durante o gesto não anda; gesto com o tocador
+  rodando para o tocador antes de capturar; elemento com `clearProps:'all'` tem os quadradinhos apagados; (#2) gesto
+  confirmado na ponte com a confirmação atrasada no editor de fora + edição do painel no meio → salvar e reabrir mantém
+  as duas.
 - **Ao vivo:** a cópia do farmminerals no canvas — fotos lado a lado com o editor antigo no mesmo elemento, item por item
   de §5.2-§5.5; reabrir depois de salvar.
 - **Auditoria do Astra** na spec e no código antes de cada commit.
