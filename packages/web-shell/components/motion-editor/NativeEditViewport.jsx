@@ -55,6 +55,24 @@ function NativeEditViewportRuntime({
     commands.changeDevice(device.id);
   }, [commands, device.id]);
 
+  // Zoom do canvas → camada de alças e guias (spec 2026-10-20 §4.4): quadradinhos e rótulos mantêm o tamanho na tela.
+  // O canvas guarda o zoom em `--canvas-scale` no <html> (lib/canvas-scale.js).
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof commands.setOverlayScale !== 'function') return undefined;
+    const ler = () => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--canvas-scale')) || 1;
+    let ultima = null;
+    const enviar = () => {
+      const escala = ler();
+      if (escala === ultima) return;
+      ultima = escala;
+      commands.setOverlayScale(escala);
+    };
+    enviar();
+    const observador = new MutationObserver(enviar);
+    observador.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
+    return () => observador.disconnect();
+  }, [commands, status]);
+
   // Ponte de upload (Task 12): o parent (com cookie de login) recebe os bytes do
   // editor completo do clone e chama a rota app-authed. Só o parent conhece o
   // nodeId, por isso o handler mora aqui.

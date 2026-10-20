@@ -52,6 +52,7 @@ import {
   withResponsiveMetadata,
 } from '../../lib/motion-editor/responsive-manifest.js';
 import { responsiveBindingFromPatch, responsivePropertyName, responsiveStoredValue } from '../../lib/motion-editor/responsive-edit.js';
+import { buildOverlayBatch } from '../../lib/motion-editor/overlay-batch.js';
 import {
   EDIT_STATES,
   createEditState,
@@ -248,6 +249,11 @@ export function useNativeMotionController({
   const deviceIdRef = useRef(deviceId);
   const lastResponsiveDeviceRef = useRef(deviceId);
   const selectedRef = useRef(selected);
+  // gesto da camada de alças esperando a confirmação (spec 2026-10-20 §6.2): desfazer/refazer ficam parados
+  const overlayPendingRef = useRef(null);
+  // funções da renderização ATUAL para o tratador de mensagens (criado uma vez): desfazer pelo teclado da página não
+  // pode usar o histórico de uma renderização velha
+  const ultimosRef = useRef({});
   const viewportPageRef = useRef(viewportPage);
   const timelineStateRef = useRef(timelineState);
   const activeMotionIdRef = useRef(activeMotionId);
@@ -839,6 +845,7 @@ export function useNativeMotionController({
     function releaseSettled(entries) {
       let recoveryReplayFailed = false;
       entries.forEach((entry) => {
+        if (entry.meta.gestureId && overlayPendingRef.current === entry.meta.gestureId) overlayPendingRef.current = null;
         if (entry.meta.controlUpdate?.controlId) {
           inFlightControlTransactionsRef.current.delete(entry.transaction.id);
         }
@@ -984,6 +991,9 @@ export function useNativeMotionController({
           setPatchError('The website restarted before a change was confirmed. The previous value was restored.');
         }
         transactionLedgerRef.current = createTransactionLedger();
+        // livro novo = gesto da camada esperando confirmação some junto (Astra, Task 7): senão desfazer/refazer
+        // ficavam travados para sempre depois de recarregar o runtime
+        overlayPendingRef.current = null;
         setPendingTransactions(0);
         const supportsV2 = Array.isArray(payload.supportedProtocols) && payload.supportedProtocols.includes(MOTION_EDITOR_PROTOCOL_V2);
         if (supportsV2) {
@@ -1069,6 +1079,32 @@ export function useNativeMotionController({
           }
           setStatus('ready');
         }
+      }
+      if (type === 'overlay-gesture-ended') {
+        const ultimos = ultimosRef.current;
+        const atual = selectedRef.current;
+        const result = buildOverlayBatch({
+          manifest: responsiveManifestRef.current,
+          deviceId: deviceIdRef.current,
+          changes: payload.changes || [],
+          descriptorFor: (elementId, property) => (atual?.id === elementId ? ultimos.descriptorFor?.(property) || null : null),
+        });
+        if (!result.ok) {
+          send('overlay-gesture-cancel', { gestureId: payload.gestureId, reason: result.reason });
+          return;
+        }
+        overlayPendingRef.current = payload.gestureId;
+        ultimos.applyPatches(result.patches, { source: 'overlay', responsiveManifest: result.nextManifest, gestureId: payload.gestureId });
+        return;
+      }
+      if (type === 'overlay-gesture-canceled') {
+        if (overlayPendingRef.current === payload.gestureId) overlayPendingRef.current = null;
+        return;
+      }
+      if (type === 'history-key') {
+        if (payload.action === 'undo') ultimosRef.current.undo?.();
+        else if (payload.action === 'redo') ultimosRef.current.redo?.();
+        return;
       }
       if (type === 'transaction-committed') {
         const transaction = payload.transaction;
@@ -1257,6 +1293,7 @@ export function useNativeMotionController({
     source = activePanel,
     responsiveManifest: nextResponsiveManifest = null,
     controlUpdate = null,
+    gestureId = null,
   } = {}) {
     const changed = patches.filter((patch) => !patchValuesEqual(patch.before, patch.value));
     if (!changed.length) return;
@@ -1268,6 +1305,7 @@ export function useNativeMotionController({
         operation: 'apply',
         ...(nextResponsiveManifest ? { responsiveManifest: nextResponsiveManifest } : {}),
         ...(controlUpdate ? { controlUpdate } : {}),
+        ...(gestureId ? { gestureId } : {}),
       });
       if (controlUpdate?.controlId) {
         inFlightControlTransactionsRef.current.set(transaction.id, {
@@ -1278,7 +1316,7 @@ export function useNativeMotionController({
         });
       }
       setPendingTransactions(transactionLedgerRef.current.size);
-      send('apply-transaction', { transaction }, { requestId: transaction.requestId });
+      send('apply-transaction', { transaction, ...(gestureId ? { gestureId } : {}) }, { requestId: transaction.requestId });
       return;
     }
     if (grouped.length === 1) send('apply-patch', { patch: grouped[0] });
@@ -1658,7 +1696,7 @@ export function useNativeMotionController({
   }
 
   function undo() {
-    if (pendingTransactions) return;
+    if (pendingTransactions || overlayPendingRef.current) return;
     const latest = historyState.past.at(-1);
     if (!latest) return;
     const nextResponsiveManifest = responsiveManifestAfterPatches(
@@ -1692,7 +1730,7 @@ export function useNativeMotionController({
   }
 
   function redo() {
-    if (pendingTransactions) return;
+    if (pendingTransactions || overlayPendingRef.current) return;
     const next = historyState.future[0];
     if (!next) return;
     const nextResponsiveManifest = responsiveManifestAfterPatches(
@@ -1964,6 +2002,9 @@ export function useNativeMotionController({
     announceRequestsRef.current = 0;
     announcePendingRef.current = false;
     transactionLedgerRef.current = createTransactionLedger();
+    // livro novo = gesto da camada esperando confirmação some junto (Astra, Task 7): senão desfazer/refazer
+    // ficavam travados para sempre depois de recarregar o runtime
+    overlayPendingRef.current = null;
     lastAutoExpandedRef.current = null;
     setStatus('loading');
     setRuntime(null);
@@ -2018,6 +2059,8 @@ export function useNativeMotionController({
     const desce = (event) => {
       if (event.metaKey || event.ctrlKey || event.altKey || digitando(event.target)) return;
       if (String(event.key).toLowerCase() === 'l') setLinksHold(true);
+      // G mostra/esconde as guias de espaçamento com o foco no editor de fora (na página, a ponte escuta)
+      if (String(event.key).toLowerCase() === 'g' && !event.shiftKey && !event.repeat) send('toggle-guides', {});
     };
     const sobe = (event) => { if (String(event.key).toLowerCase() === 'l') setLinksHold(false); };
     const solta = () => setLinksHold(false);
@@ -2086,6 +2129,8 @@ export function useNativeMotionController({
     // O viewport registra aqui o upload app-authed (conhece o nodeId). Recebe
     // os bytes do clone via postMessage validado e devolve `{ path }`.
     setUploadHandler: (fn) => { uploadHandlerRef.current = typeof fn === 'function' ? fn : null; },
+    setOverlayScale: (scale) => send('set-overlay-scale', { scale }),
+    toggleGuides: () => send('toggle-guides', {}),
     send,
     describeElement: (elementId) => send('describe-element', { elementId }),
     selectElement: (elementId) => send('select-element', { elementId }),
@@ -2136,6 +2181,7 @@ export function useNativeMotionController({
     changeStepValue,
   };
 
+  ultimosRef.current = { applyPatches, undo, redo, descriptorFor: responsiveDescriptorFor };
   return {
     iframeRef,
     status,

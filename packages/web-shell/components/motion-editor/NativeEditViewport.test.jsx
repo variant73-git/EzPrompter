@@ -7,6 +7,7 @@ const resetSession = vi.fn();
 const reportRuntimeRecoveryFailure = vi.fn();
 const reloadRuntime = vi.fn();
 const failRuntime = vi.fn();
+const setOverlayScale = vi.fn();
 const iframeRef = { current: null };
 let controllerStatus = 'loading';
 let runtimeRecovery = null;
@@ -23,7 +24,7 @@ vi.mock('./useNativeMotionController.js', () => ({
     patchError,
     mode: 'edit',
     editState,
-    commands: { changeDevice, markRuntimeLoaded, resetSession, reportRuntimeRecoveryFailure, reloadRuntime, failRuntime },
+    commands: { changeDevice, markRuntimeLoaded, resetSession, reportRuntimeRecoveryFailure, reloadRuntime, failRuntime, setOverlayScale },
   })),
 }));
 
@@ -50,6 +51,8 @@ beforeEach(() => {
   reportRuntimeRecoveryFailure.mockReset();
   reloadRuntime.mockReset();
   failRuntime.mockReset();
+  setOverlayScale.mockReset();
+  document.documentElement.style.removeProperty('--canvas-scale');
   iframeRef.current = null;
   controllerStatus = 'loading';
   runtimeRecovery = null;
@@ -253,5 +256,16 @@ describe('NativeEditViewport', () => {
     rerender(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
     await waitFor(() => expect(reportRuntimeRecoveryFailure).toHaveBeenCalled());
     expect(screen.queryByRole('button', { name: /retry|repair|regenerate/i })).toBeNull();
+  });
+});
+
+// Alças e guias (spec 2026-10-20 §4.4): o zoom do canvas chega à camada para os quadradinhos manterem o tamanho
+describe('escala do canvas para a camada', () => {
+  it('manda a escala inicial e cada mudança de --canvas-scale', async () => {
+    document.documentElement.style.setProperty('--canvas-scale', '0.75');
+    render(<NativeEditViewport nodeId="node-a" deviceId="desktop" />);
+    await waitFor(() => expect(setOverlayScale).toHaveBeenCalledWith(0.75));
+    document.documentElement.style.setProperty('--canvas-scale', '0.5');
+    await waitFor(() => expect(setOverlayScale).toHaveBeenLastCalledWith(0.5));
   });
 });

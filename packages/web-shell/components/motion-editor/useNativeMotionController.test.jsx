@@ -1895,4 +1895,113 @@ describe('useNativeMotionController', () => {
       hook.unmount();
     }
   });
+
+  // Etapa 7 do plano das alças (spec 2026-10-20 §6.2): o editor de fora confirma o gesto da camada
+  describe('gestos da camada de alças e guias', () => {
+    async function montar() {
+      const frame = runtimeFrame();
+      const iframeRef = createRef();
+      iframeRef.current = frame;
+      const persistenceAdapter = { autosave: true, load: vi.fn(async () => ({ transactions: [] })), save: vi.fn(async () => {}), subscribe: vi.fn(() => () => {}) };
+      const hook = renderHook(() => useNativeMotionController({ iframeRef, persistenceAdapter }));
+      await act(async () => window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow, origin: 'https://runtime.uncraft.test',
+        data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'runtime', type: 'runtime-ready', payload: { title: 'V2', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...V2_CONTEXT } },
+      })));
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated')));
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'selection-changed', { element: { id: 'hero', label: 'Hero', motion: [] } })));
+      const enviadas = (tipo) => frame.contentWindow.postMessage.mock.calls.map(([m]) => m).filter((m) => m?.type === tipo);
+      return { frame, hook, persistenceAdapter, enviadas };
+    }
+    const terminou = (frame, gestureId, changes) => runtimeV2Message(frame, 'overlay-gesture-ended', { gestureId, changes }, `ended-${gestureId}`);
+
+    it('UM apply-transaction com o gestureId, cada patch com a chave do SEU elemento', async () => {
+      const { frame, enviadas } = await montar();
+      await act(async () => window.dispatchEvent(terminou(frame, 'g1', [
+        { elementId: 'hero', property: 'width', before: '', value: '240px' },
+        { elementId: 'hero-pai', property: 'overflow', before: '', value: 'visible' },
+      ])));
+      const aplicar = enviadas('apply-transaction');
+      expect(aplicar).toHaveLength(1);
+      expect(aplicar[0].payload.gestureId).toBe('g1');
+      expect(aplicar[0].payload.transaction.patches.map((p) => [p.elementId, p.responsive.propertyKey])).toEqual([
+        ['hero', 'hero:width'], ['hero-pai', 'hero-pai:overflow'],
+      ]);
+    });
+
+    it('lote recusado pelo montador devolve overlay-gesture-cancel', async () => {
+      const { frame, enviadas } = await montar();
+      await act(async () => window.dispatchEvent(terminou(frame, 'g2', [{ elementId: 'hero', property: 'width', before: '10px', value: '10px' }])));
+      expect(enviadas('apply-transaction')).toHaveLength(0);
+      expect(enviadas('overlay-gesture-cancel').at(-1).payload).toEqual({ gestureId: 'g2', reason: 'no_effect' });
+    });
+
+    it('enquanto espera a confirmação, desfazer não sai; recusa gesture_inactive libera o livro', async () => {
+      const { frame, hook, enviadas } = await montar();
+      act(() => hook.result.current.commands.applyStyle('opacity', '0.5', '1'));
+      const primeira = enviadas('apply-transaction').at(-1);
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', { transaction: primeira.payload.transaction }, primeira.requestId)));
+      await waitFor(() => expect(hook.result.current.historyCount).toBe(1));
+      await act(async () => window.dispatchEvent(terminou(frame, 'g3', [{ elementId: 'hero', property: 'width', before: '', value: '240px' }])));
+      act(() => hook.result.current.commands.undo());
+      expect(enviadas('rollback-transaction')).toHaveLength(0);
+      const doGesto = enviadas('apply-transaction').at(-1);
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-rejected', { transactionId: doGesto.payload.transaction.id, code: 'gesture_inactive' }, doGesto.requestId)));
+      expect(hook.result.current.pendingTransactions).toBe(0);
+      act(() => hook.result.current.commands.undo());
+      expect(enviadas('rollback-transaction')).toHaveLength(1);
+    });
+
+    it('a confirmação entra no histórico, salva, e a seleção não muda', async () => {
+      const { frame, hook, persistenceAdapter, enviadas } = await montar();
+      persistenceAdapter.save.mockClear();
+      await act(async () => window.dispatchEvent(terminou(frame, 'g4', [{ elementId: 'hero-pai', property: 'column-gap', before: '', value: '24px' }])));
+      const doGesto = enviadas('apply-transaction').at(-1);
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', { transaction: doGesto.payload.transaction }, doGesto.requestId)));
+      await waitFor(() => expect(hook.result.current.historyCount).toBe(1));
+      expect(persistenceAdapter.save).toHaveBeenCalled();
+      expect(hook.result.current.selected?.id).toBe('hero');
+    });
+
+    it('history-key vindo da página desfaz pelo mesmo caminho', async () => {
+      const { frame, hook, enviadas } = await montar();
+      act(() => hook.result.current.commands.applyStyle('opacity', '0.5', '1'));
+      const primeira = enviadas('apply-transaction').at(-1);
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', { transaction: primeira.payload.transaction }, primeira.requestId)));
+      await waitFor(() => expect(hook.result.current.historyCount).toBe(1));
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'history-key', { action: 'undo' }, 'hk-1')));
+      expect(enviadas('rollback-transaction')).toHaveLength(1);
+    });
+
+    // Astra (Task 7): recarregar a página com um gesto esperando confirmação deixava o desfazer travado para sempre
+    it('runtime recarregado com gesto pendente libera o desfazer depois da nova negociação', async () => {
+      const { frame, hook, enviadas } = await montar();
+      act(() => hook.result.current.commands.applyStyle('opacity', '0.5', '1'));
+      const primeira = enviadas('apply-transaction').at(-1);
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', { transaction: primeira.payload.transaction }, primeira.requestId)));
+      await waitFor(() => expect(hook.result.current.historyCount).toBe(1));
+      await act(async () => window.dispatchEvent(terminou(frame, 'g9', [{ elementId: 'hero', property: 'width', before: '', value: '240px' }])));
+      // o iframe recarrega antes da confirmação: novo anúncio + nova negociação
+      const marca = enviadas('apply-transaction').length;
+      await act(async () => window.dispatchEvent(new MessageEvent('message', {
+        source: frame.contentWindow, origin: 'https://runtime.uncraft.test',
+        data: { protocol: MOTION_EDITOR_PROTOCOL, source: 'runtime', type: 'runtime-ready', payload: { title: 'V2', supportedProtocols: SUPPORTED_MOTION_EDITOR_PROTOCOLS, ...V2_CONTEXT, runtimeGeneration: 2 } },
+      })));
+      await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'protocol-negotiated', {}, 'neg-2', { ...V2_CONTEXT, runtimeGeneration: 2 })));
+      // confirma o que a recuperação reenviar (replay) até não sobrar nada pendente
+      for (const pend of enviadas('apply-transaction').slice(marca)) {
+        await act(async () => window.dispatchEvent(runtimeV2Message(frame, 'transaction-committed', { transaction: pend.payload.transaction }, pend.requestId, { ...V2_CONTEXT, runtimeGeneration: 2 })));
+      }
+      expect(hook.result.current.pendingTransactions).toBe(0);
+      const antes = enviadas('rollback-transaction').length;
+      act(() => hook.result.current.commands.undo());
+      expect(enviadas('rollback-transaction').length).toBe(antes + 1);
+    });
+
+    it('setOverlayScale manda a escala para a camada', async () => {
+      const { hook, enviadas } = await montar();
+      act(() => hook.result.current.commands.setOverlayScale(0.5));
+      expect(enviadas('set-overlay-scale').at(-1).payload).toEqual({ scale: 0.5 });
+    });
+  });
 });
